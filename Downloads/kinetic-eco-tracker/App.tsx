@@ -3,19 +3,25 @@ import { Tracker } from './components/Tracker';
 import { Analytics } from './components/Analytics';
 import { Profile } from './components/Profile';
 import { LoginForm } from './components/LoginForm';
-import { ActivityType, SessionStats, GeoPosition, UserProfile } from './types';
+import { SettingsPage } from './components/SettingsPage';
+import { FloatingMenu } from './components/FloatingMenu';
+import { ActivityType, SessionStats, GeoPosition, UserProfile, UnitSystem } from './types';
 import { SPEED_THRESHOLDS, CO2_FACTORS, CALORIE_FACTORS_PER_HOUR } from './constants';
 import { MapPin } from 'lucide-react';
 import { authenticateOrCreateProfile, getActiveUserEmail, loadProfile, logoutUser, saveSessionForUser } from './services/profileService';
 
+const UNIT_STORAGE_KEY = 'kinetic_unit_preference';
+
 const App: React.FC = () => {
   // State
-  const [view, setView] = useState<'TRACKER' | 'ANALYTICS' | 'PROFILE'>('TRACKER');
+  const [view, setView] = useState<'TRACKER' | 'ANALYTICS' | 'PROFILE' | 'SETTINGS'>('TRACKER');
   const [isTracking, setIsTracking] = useState(false);
   const [permissionGranted, setPermissionGranted] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [activeUser, setActiveUser] = useState<UserProfile | null>(null);
   const [authError, setAuthError] = useState<string | null>(null);
+  const [unitSystem, setUnitSystem] = useState<UnitSystem>('METRIC');
+  const [menuOpen, setMenuOpen] = useState(false);
 
   // Real-time tracking data
   const [currentSpeed, setCurrentSpeed] = useState(0); // m/s
@@ -187,6 +193,7 @@ const App: React.FC = () => {
       { label: 'Tracker', key: 'TRACKER' as const },
       { label: 'Analytics', key: 'ANALYTICS' as const },
       { label: 'Profile', key: 'PROFILE' as const },
+      { label: 'Settings', key: 'SETTINGS' as const },
     ];
   }, [activeUser]);
 
@@ -206,6 +213,20 @@ const App: React.FC = () => {
     logoutUser();
     setActiveUser(null);
     setView('TRACKER');
+    setMenuOpen(false);
+  };
+
+  const handleUnitChange = (unit: UnitSystem) => {
+    setUnitSystem(unit);
+    try {
+      localStorage.setItem(UNIT_STORAGE_KEY, unit);
+    } catch {
+      // ignore storage issues
+    }
+  };
+
+  const toggleUnitQuickly = () => {
+    handleUnitChange(unitSystem === 'METRIC' ? 'IMPERIAL' : 'METRIC');
   };
 
   useEffect(() => {
@@ -216,10 +237,60 @@ const App: React.FC = () => {
         setActiveUser(profile);
       }
     }
+    try {
+      const storedUnit = localStorage.getItem(UNIT_STORAGE_KEY) as UnitSystem | null;
+      if (storedUnit === 'METRIC' || storedUnit === 'IMPERIAL') {
+        setUnitSystem(storedUnit);
+      }
+    } catch {
+      // ignore
+    }
   }, []);
 
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onEsc = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setMenuOpen(false);
+    };
+    window.addEventListener('keydown', onEsc);
+    return () => window.removeEventListener('keydown', onEsc);
+  }, [menuOpen]);
+
+  const renderFloatingMenu = (isAuthenticated: boolean) => (
+    <FloatingMenu
+      open={menuOpen}
+      onToggle={() => setMenuOpen((prev) => !prev)}
+      onShowSettings={() => {
+        if (isAuthenticated) {
+          setView('SETTINGS');
+        }
+        setMenuOpen(false);
+      }}
+      onShowProfile={() => {
+        if (isAuthenticated) {
+          setView('PROFILE');
+        }
+        setMenuOpen(false);
+      }}
+      onLogout={() => {
+        if (isAuthenticated) {
+          handleLogout();
+        }
+      }}
+      unitSystem={unitSystem}
+      onUnitQuickToggle={toggleUnitQuickly}
+      isAuthenticated={isAuthenticated}
+      onLoginClick={() => window.scrollTo({ top: 0, behavior: 'smooth' })}
+    />
+  );
+
   if (!activeUser) {
-    return <LoginForm onSubmit={handleLogin} error={authError} />;
+    return (
+      <>
+        <LoginForm onSubmit={handleLogin} error={authError} />
+        {renderFloatingMenu(false)}
+      </>
+    );
   }
 
   return (
@@ -275,6 +346,7 @@ const App: React.FC = () => {
             currentCoords={currentCoords}
             duration={sessionDuration}
             distance={sessionDistance}
+            unitSystem={unitSystem}
           />
         )}
 
@@ -291,7 +363,18 @@ const App: React.FC = () => {
             onLogout={handleLogout}
           />
         )}
+
+        {view === 'SETTINGS' && (
+          <SettingsPage
+            unitSystem={unitSystem}
+            onUnitChange={handleUnitChange}
+            onNavigateProfile={() => setView('PROFILE')}
+            onLogout={handleLogout}
+            profile={activeUser}
+          />
+        )}
       </main>
+      {renderFloatingMenu(true)}
     </div>
   );
 };

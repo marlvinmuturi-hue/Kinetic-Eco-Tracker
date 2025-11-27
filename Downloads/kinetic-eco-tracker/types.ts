@@ -43,3 +43,5 @@ export interface UserProfile {
   lastLogin: string;
   sessions: StoredSession[];
 }
+
+export type UnitSystem = 'METRIC' | 'IMPERIAL';

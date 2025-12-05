@@ -1,0 +1,7 @@
+{
+  "name": "Kinetic Eco-Tracker",
+  "description": "An intelligent movement tracker that categorizes activities (Walking, Driving, Flying) using GPS sensors, calculates carbon footprint, and provides AI-powered health and eco-insights.",
+  "requestFramePermissions": [
+    "geolocation"
+  ]
+}

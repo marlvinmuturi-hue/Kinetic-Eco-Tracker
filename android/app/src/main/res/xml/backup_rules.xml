@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="utf-8"?>
+<full-backup-content>
+    <!-- Include Room database (session history) -->
+    <include domain="database" path="app_database" />
+    
+    <!-- Include SharedPreferences (user profile, settings) -->
+    <include domain="sharedpref" path="user_preferences.xml" />
+    <include domain="sharedpref" path="." />
+    
+    <!-- Exclude sensitive/temporary data -->
+    <exclude domain="file" path="temp/" />
+    <exclude domain="file" path="cache/" />
+</full-backup-content>

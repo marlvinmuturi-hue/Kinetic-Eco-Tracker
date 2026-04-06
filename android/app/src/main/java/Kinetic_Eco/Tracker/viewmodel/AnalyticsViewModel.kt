@@ -1,0 +1,177 @@
+package Kinetic_Eco.Tracker.viewmodel
+
+import android.app.Application
+import androidx.lifecycle.AndroidViewModel
+import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.launch
+import java.util.Locale
+import Kinetic_Eco.Tracker.R
+import Kinetic_Eco.Tracker.data.ActivityAnalysis
+import Kinetic_Eco.Tracker.data.SessionStats
+import Kinetic_Eco.Tracker.services.AIAnalysisService
+import Kinetic_Eco.Tracker.services.SessionManager
+import Kinetic_Eco.Tracker.services.UserPreferencesManager
+
+class AnalyticsViewModel(application: Application) : AndroidViewModel(application) {
+    private val sessionManager = SessionManager(application)
+    private val aiAnalysisService = AIAnalysisService.getInstance()
+    private val userPrefsManager = UserPreferencesManager(application)
+    
+    // AI Analysis State
+    private val _aiAnalysisState = MutableStateFlow<AIAnalysisState>(AIAnalysisState.Idle)
+    val aiAnalysisState: StateFlow<AIAnalysisState> = _aiAnalysisState.asStateFlow()
+    
+    /** Rolling window for AI analysis (1–366 days). Single-day mode uses [analysisSessionDateKey] instead. */
+    private val _rollingAnalysisDays = MutableStateFlow(30)
+    val rollingAnalysisDays: StateFlow<Int> = _rollingAnalysisDays.asStateFlow()
+
+    /** yyyy-MM-dd: AI uses sessions on this session date only (third mode vs rolling 7/30/90). */
+    private val _analysisSessionDateKey = MutableStateFlow<String?>(null)
+    val analysisSessionDateKey: StateFlow<String?> = _analysisSessionDateKey.asStateFlow()
+    
+    // One-shot flag: expand Session Summary when user lands on Analytics after ending a session
+    private val _shouldExpandSessionSummary = MutableStateFlow(false)
+    val shouldExpandSessionSummary: StateFlow<Boolean> = _shouldExpandSessionSummary.asStateFlow()
+
+    fun requestExpandSessionSummary() {
+        _shouldExpandSessionSummary.value = true
+    }
+
+    fun clearExpandSessionSummary() {
+        _shouldExpandSessionSummary.value = false
+    }
+
+    // Selected session for detail view
+    var selectedSession: SessionStats? = null
+        private set
+    
+    fun setSelectedSession(session: SessionStats) {
+        selectedSession = session
+    }
+    
+    fun clearSelectedSession() {
+        selectedSession = null
+    }
+    
+    fun getAllSessions(userId: String): Flow<List<SessionStats>> {
+        return sessionManager.getAllSessions(userId)
+    }
+    
+    suspend fun getLatestSession(userId: String): SessionStats? {
+        return sessionManager.getLatestSession(userId)
+    }
+    
+    /**
+     * Restore sessions from Firestore into Room.
+     * Called on login and app launch when user is logged in.
+     */
+    fun restoreSessionsFromFirestore(userId: String) {
+        viewModelScope.launch {
+            sessionManager.restoreSessionsFromFirestore(userId)
+        }
+    }
+    
+    fun getAggregatedStats(sessions: List<SessionStats>): SessionStats {
+        val folded = sessions.fold(SessionStats()) { acc, session ->
+            SessionStats(
+                totalDuration = acc.totalDuration + session.totalDuration,
+                totalDistance = acc.totalDistance + session.totalDistance,
+                caloriesBurned = acc.caloriesBurned + session.caloriesBurned,
+                co2Emissions = acc.co2Emissions + session.co2Emissions,
+                co2Conserved = acc.co2Conserved + session.co2Conserved,
+                totalSteps = acc.totalSteps + session.totalSteps,
+                topSpeedMps = maxOf(acc.topSpeedMps, session.topSpeedMps),
+                segments = acc.segments + session.segments,
+                breakdown = mergeBreakdowns(acc.breakdown, session.breakdown)
+            )
+        }
+        // Derive totalSteps from breakdown (source of truth for per-activity steps)
+        // Fixes undercount when session.totalSteps is 0 but breakdown has steps
+        val stepsFromBreakdown = folded.breakdown.values.sumOf { it.steps }
+        return folded.copy(
+            totalSteps = if (stepsFromBreakdown > 0) stepsFromBreakdown else folded.totalSteps
+        )
+    }
+    
+    private fun mergeBreakdowns(
+        breakdown1: Map<Kinetic_Eco.Tracker.data.ActivityType, Kinetic_Eco.Tracker.data.ActivityBreakdown>,
+        breakdown2: Map<Kinetic_Eco.Tracker.data.ActivityType, Kinetic_Eco.Tracker.data.ActivityBreakdown>
+    ): Map<Kinetic_Eco.Tracker.data.ActivityType, Kinetic_Eco.Tracker.data.ActivityBreakdown> {
+        val result = breakdown1.toMutableMap()
+        breakdown2.forEach { (activity, breakdown) ->
+            val existing = result[activity] ?: Kinetic_Eco.Tracker.data.ActivityBreakdown()
+            result[activity] = Kinetic_Eco.Tracker.data.ActivityBreakdown(
+                time = existing.time + breakdown.time,
+                distance = existing.distance + breakdown.distance,
+                steps = existing.steps + breakdown.steps
+            )
+        }
+        return result
+    }
+    
+    // AI Analysis Functions
+    fun setAnalysisSessionDay(dateKey: String) {
+        _analysisSessionDateKey.value = dateKey
+    }
+
+    /** Clears single-day selection so rolling-window analysis is used again. */
+    fun clearAnalysisSessionDay() {
+        _analysisSessionDateKey.value = null
+    }
+
+    fun setRollingAnalysisDays(days: Int) {
+        _analysisSessionDateKey.value = null
+        _rollingAnalysisDays.value = days.coerceIn(1, 366)
+    }
+
+    fun analyzeActivity(userId: String) {
+        viewModelScope.launch {
+            val day = _analysisSessionDateKey.value
+            if (day != null) {
+                val sessions = sessionManager.getAllSessions(userId).first()
+                if (sessions.none { it.date == day }) {
+                    _aiAnalysisState.value = AIAnalysisState.Error(
+                        getApplication<Application>().getString(Kinetic_Eco.Tracker.R.string.analysis_no_sessions_this_day)
+                    )
+                    return@launch
+                }
+            }
+
+            _aiAnalysisState.value = AIAnalysisState.Loading
+
+            val locale = resolveLocaleForAnalysis()
+            val result = aiAnalysisService.analyzeActivity(_rollingAnalysisDays.value, locale, sessionDateKey = day)
+
+            _aiAnalysisState.value = result.fold(
+                onSuccess = { analysis -> AIAnalysisState.Success(analysis) },
+                onFailure = { error -> AIAnalysisState.Error(error.message ?: "Unknown error") }
+            )
+        }
+    }
+    
+    fun resetAIAnalysis() {
+        _aiAnalysisState.value = AIAnalysisState.Idle
+    }
+    
+    /** Resolves locale for AI analysis: "auto" -> device locale, else user preference. Returns en/fr/de/es/zh. */
+    private fun resolveLocaleForAnalysis(): String {
+        val pref = userPrefsManager.getLocalePreference()
+        if (pref != "auto" && pref in setOf("en", "fr", "de", "es", "zh")) return pref
+        val deviceLang = Locale.getDefault().language
+        return when (deviceLang) {
+            "fr", "de", "es", "zh" -> deviceLang
+            else -> "en"
+        }
+    }
+}
+
+sealed class AIAnalysisState {
+    object Idle : AIAnalysisState()
+    object Loading : AIAnalysisState()
+    data class Success(val analysis: ActivityAnalysis) : AIAnalysisState()
+    data class Error(val message: String) : AIAnalysisState()
+}
+
+
+

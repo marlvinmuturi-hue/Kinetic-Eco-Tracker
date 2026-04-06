@@ -1,6 +1,8 @@
 {
   "projects": {
-    "default": "your-project-id"
-  }
+    "default": "your-project-id",
+    "Kinetic With API": "gen-lang-client-0114974661"
+  },
+  "targets": {},
+  "etags": {}
 }
-

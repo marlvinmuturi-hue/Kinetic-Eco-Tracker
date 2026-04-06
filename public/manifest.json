@@ -1,0 +1,22 @@
+{
+  "name": "Kinetic Eco Tracker",
+  "short_name": "Kinetic",
+  "description": "Track your movement, calculate carbon footprint, and get AI-powered health and eco-insights",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0f172a",
+  "theme_color": "#0f172a",
+  "orientation": "portrait-primary",
+  "scope": "/",
+  "dir": "ltr",
+  "lang": "en",
+  "icons": [],
+  "categories": ["health", "fitness", "lifestyle"],
+  "screenshots": [],
+  "related_applications": [],
+  "prefer_related_applications": false,
+  "shortcuts": [],
+  "iarc_rating_id": "",
+  "prefer_related_applications": false
+}
+

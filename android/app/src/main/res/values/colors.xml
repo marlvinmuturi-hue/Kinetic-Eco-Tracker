@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Dark theme colors matching web app -->
+    <color name="background_dark">#0f172a</color>
+    <color name="background_card">#1e293b</color>
+    <color name="background_card_dark">#0f172a</color>
+    
+    <color name="text_primary">#f8fafc</color>
+    <color name="text_secondary">#94a3b8</color>
+    <color name="text_tertiary">#64748b</color>
+    
+    <color name="green_primary">#4ade80</color>
+    <color name="blue_primary">#60a5fa</color>
+    <color name="red_primary">#ef4444</color>
+    <color name="indigo_primary">#818cf8</color>
+    
+    <color name="divider">#334155</color>
+    <color name="border">#475569</color>
+    
+    <!-- Material Design colors -->
+    <color name="purple_200">#FFBB86FC</color>
+    <color name="purple_500">#FF6200EE</color>
+    <color name="purple_700">#FF3700B3</color>
+    <color name="teal_200">#FF03DAC5</color>
+    <color name="teal_700">#FF018786</color>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+
+    <!-- Crown/Trophy tier colors -->
+    <color name="crown_gold">#FFD700</color>
+    <color name="crown_silver">#C0C0C0</color>
+    <color name="crown_bronze">#CD7F32</color>
+</resources>
+
+
+
+
+
+
+
+
+
+
+
+
+
+

@@ -15,22 +15,23 @@ const apiKey =
 const ai = new GoogleGenAI({ apiKey });
 
 export const generateEcoInsight = async (stats: SessionStats): Promise<string> => {
-  if (!apiKey) {
-    return "API Key is missing. Unable to generate AI insights.";
+  if (!apiKey || apiKey === 'your-gemini-api-key-here') {
+    console.warn("Gemini API Key is missing. Please add VITE_GEMINI_API_KEY to your .env file.");
+    return "**AI Coach Insights Unavailable**\n\nTo enable AI-powered insights, please add your Gemini API key to the `.env` file:\n\n1. Get your API key from: https://aistudio.google.com/app/apikey\n2. Create a `.env` file in the project root\n3. Add: `VITE_GEMINI_API_KEY=your-actual-api-key-here`\n4. Restart the development server";
   }
 
   const prompt = `
     Analyze the following movement data from a user's tracking session:
     
-    Total Duration: ${(stats.totalDuration / 60).toFixed(1)} minutes
+    Total Duration: ${Math.round(stats.totalDuration)} seconds
     Total Distance: ${(stats.totalDistance / 1000).toFixed(2)} km
     Calories Burned: ${Math.round(stats.caloriesBurned)} kcal
     CO2 Emissions: ${stats.co2Emissions.toFixed(2)} kg
     
     Breakdown:
-    - Walking: ${(stats.breakdown.WALKING.distance / 1000).toFixed(2)} km, ${(stats.breakdown.WALKING.time / 60).toFixed(1)} min
-    - Driving: ${(stats.breakdown.DRIVING.distance / 1000).toFixed(2)} km, ${(stats.breakdown.DRIVING.time / 60).toFixed(1)} min
-    - Flying: ${(stats.breakdown.FLYING.distance / 1000).toFixed(2)} km, ${(stats.breakdown.FLYING.time / 60).toFixed(1)} min
+    - Walking: ${(stats.breakdown.WALKING.distance / 1000).toFixed(2)} km, ${Math.round(stats.breakdown.WALKING.time)} sec
+    - Driving: ${(stats.breakdown.DRIVING.distance / 1000).toFixed(2)} km, ${Math.round(stats.breakdown.DRIVING.time)} sec
+    - Flying: ${(stats.breakdown.FLYING.distance / 1000).toFixed(2)} km, ${Math.round(stats.breakdown.FLYING.time)} sec
 
     Provide a short, engaging, and personalized summary (approx 100 words).
     Focus on the environmental impact and health benefits. 

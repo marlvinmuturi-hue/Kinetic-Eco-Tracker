@@ -1,0 +1,15 @@
+<!-- White silhouette for status bar - tree icon matching app's eco branding -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- Trunk -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M9.5,24 L9.5,14 L14.5,14 L14.5,24 Z"/>
+    <!-- Tree crown (rounded) -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M12,2 C7,2 4,6 4,10 C4,14 7,14 9,14 L9,14 C9,16 10.5,18 12,18 C13.5,18 15,16 15,14 L15,14 C17,14 20,14 20,10 C20,6 17,2 12,2 Z"/>
+</vector>

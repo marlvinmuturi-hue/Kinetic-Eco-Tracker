@@ -1,0 +1,304 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Kinetic Eco Tracker</string>
+
+    <!-- AdMob: App ID (~) is app-level; ad unit ID (/) is per placement. -->
+    <string name="admob_application_id" translatable="false">ca-app-pub-1244317007978137~2708452877</string>
+    <string name="admob_banner_unit_id" translatable="false">ca-app-pub-1244317007978137/5717030642</string>
+    <string name="nav_tracker">Tracker</string>
+    <string name="nav_analytics">Analytics</string>
+    <string name="nav_profile">Me</string>
+    <string name="nav_settings">Settings</string>
+    <string name="nav_start_activity">Start</string>
+    <string name="nav_pause_activity">Pause</string>
+
+    <string name="default_web_client_id">gen-lang-client-0114974661</string>
+
+    <!-- Theme -->
+    <string name="theme">Theme</string>
+    <string name="theme_system">System</string>
+    <string name="theme_light">Light</string>
+    <string name="theme_dark">Dark</string>
+    <string name="theme_subtitle">Follow device or choose Light/Dark</string>
+
+    <!-- Language -->
+    <string name="language">Language</string>
+    <string name="language_auto">Auto (system)</string>
+    <string name="language_en">English</string>
+    <string name="language_fr">Français</string>
+    <string name="language_de">Deutsch</string>
+    <string name="language_es">Español</string>
+    <string name="language_zh">简体中文</string>
+    <string name="language_subtitle">Use app language or follow device</string>
+
+    <!-- Login -->
+    <string name="login_title">Kinetic Eco Tracker</string>
+    <string name="login_subtitle">Sign in to track your daily impact</string>
+    <string name="kinetic">Kinetic</string>
+    <string name="eco_tracker">Eco Tracker</string>
+    <string name="btn_google_login">Continue with Google</string>
+    <string name="btn_email_login">Sign In</string>
+    <string name="hint_email">Email</string>
+    <string name="hint_password">Password</string>
+    <string name="forgot_password">Forgot password?</string>
+    <string name="sign_up_prompt">Don\'t have an account? Sign up</string>
+    <string name="reset_password">Reset Password</string>
+    <string name="reset_password_hint">Enter your email to receive a password reset link.</string>
+    <string name="send_link">Send Link</string>
+
+    <!-- Tracking -->
+    <string name="tracking_active">Tracking active…</string>
+    <string name="tap_to_start">Tap to start tracking</string>
+    <string name="start_tracking">Start tracking</string>
+    <string name="stop_tracking">Stop tracking</string>
+    <string name="duration">Duration</string>
+    <string name="distance">Distance</string>
+    <string name="altitude">Altitude</string>
+    <string name="steps">Steps</string>
+    <string name="altitude_prefix">Altitude: </string>
+    <string name="steps_prefix">Steps: </string>
+    <string name="manual_mode">Manual Mode: %1$s</string>
+    <string name="please_login_save">Please log in to save sessions</string>
+    <string name="failed_save_session">Failed to save session</string>
+    <string name="stop_tracking_title">Stop Tracking?</string>
+    <string name="stop_tracking_message">Your activity has been recorded. What would you like to do?</string>
+    <string name="saving">Saving…</string>
+    <string name="stop_save_session">Stop &amp; Save Session</string>
+    <string name="discard_data">Discard Data</string>
+    <string name="pause_resume">Pause (Resume later)</string>
+    <string name="cancel">Cancel</string>
+    <string name="success">Success</string>
+    <string name="session_summary">Session Summary</string>
+    <string name="session_saved">Session Saved!</string>
+    <string name="session_summary_intro">Great work! Here\'s your session summary:</string>
+    <string name="calories">Calories</string>
+    <string name="energy">Energy</string>
+    <string name="co2_saved">CO₂ Saved</string>
+    <string name="total_steps">Total Steps</string>
+    <string name="co2_emitted">CO₂ Emitted</string>
+    <string name="start_alt">Start Alt</string>
+    <string name="stop_alt">Stop Alt</string>
+    <string name="ascent">Ascent</string>
+    <string name="descent">Descent</string>
+    <string name="km_updates">Kilometer updates</string>
+    <string name="mile_updates">Mile updates</string>
+    <string name="continue_tracking">Continue Tracking</string>
+    <string name="select_activity">Select Activity</string>
+    <string name="stop">Stop</string>
+    <string name="start">Start</string>
+    <string name="manual">MANUAL</string>
+
+    <!-- Settings -->
+    <string name="settings">Settings</string>
+    <string name="unit_preference">Unit preference</string>
+    <string name="unit_preference_desc">Distance and energy units</string>
+    <string name="unit_km_kcal">km, kcal</string>
+    <string name="unit_km_wh">km, Wh</string>
+    <string name="unit_miles_wh">Miles, Wh</string>
+    <string name="unit_miles_kcal">Miles, kcal</string>
+    <string name="distance_alerts">Distance alerts</string>
+    <string name="distance_alerts_desc">Notify when you complete each km or mile during tracking</string>
+    <string name="notification_sounds">Notification sounds</string>
+    <string name="notification_sounds_desc">Play sound for milestones, tracking start/stop, and session summary. Respects Do Not Disturb.</string>
+    <string name="auto_start_walk">Auto-Start on movement</string>
+    <string name="auto_start_walk_desc">Automatically start tracking when movement is detected (works in background)</string>
+    <string name="auto_start_channel_name">Auto-start</string>
+    <string name="auto_start_channel_desc">Background monitoring for auto-start on walk</string>
+    <string name="auto_start_notification_title">Auto-start enabled</string>
+    <string name="auto_start_notification_text">Will start tracking when you walk</string>
+    <string name="idle_stop">Auto-stop on idle</string>
+    <string name="idle_stop_desc">Automatically stop tracking after this many minutes of inactivity</string>
+    <string name="idle_stop_minutes">%d min</string>
+    <string name="physical_profile">Physical Profile</string>
+    <string name="physical_profile_desc">For accurate calorie calculations</string>
+    <string name="collapse">Collapse</string>
+    <string name="expand">Expand</string>
+    <string name="weight_kg">Weight (kg)</string>
+    <string name="height_cm">Height (cm)</string>
+    <string name="age_years">Age (years)</string>
+    <string name="gender">Gender</string>
+    <string name="male">Male</string>
+    <string name="female">Female</string>
+    <string name="other">Other</string>
+    <string name="save_physical_profile">Save Physical Profile</string>
+    <string name="saved_success">✓ Saved successfully!</string>
+    <string name="why_physical_profile">Why do we need this?</string>
+    <string name="physical_profile_info">Your physical profile allows us to calculate calories with 80-95%% accuracy using MET values. Without it, we use defaults (40-60%% accurate). Your data stays on your device.</string>
+    <string name="cloud_sync">Cloud Sync</string>
+    <string name="leaderboard">Leaderboard</string>
+    <string name="leaderboard_opt_in_desc">Appear on the global leaderboard with your display name</string>
+    <string name="leaderboard_7d">7 Days</string>
+    <string name="leaderboard_30d">30 Days</string>
+    <string name="leaderboard_90d">90 Days</string>
+    <string name="leaderboard_all_time">All Time</string>
+    <string name="leaderboard_empty">No one on the leaderboard yet. Opt in from Settings to appear!</string>
+    <string name="leaderboard_daily_subtitle">Global #1 for %1$s (session date)</string>
+    <string name="leaderboard_daily_empty">No ranked activity for this day yet.</string>
+    <string name="leaderboard_category_combined">Combined</string>
+    <string name="leaderboard_category_distance">Distance</string>
+    <string name="leaderboard_category_top_speed">Top Speed</string>
+    <string name="leaderboard_category_walking">Walking</string>
+    <string name="leaderboard_category_running">Running</string>
+    <string name="leaderboard_category_cycling">Cycling</string>
+    <string name="leaderboard_period_label">Period</string>
+    <string name="cloud_sync_desc">Sync your activity sessions to the cloud to enable AI-powered analysis.</string>
+    <string name="syncing">Syncing…</string>
+    <string name="sync_sessions">Sync Sessions to Cloud</string>
+    <string name="sync_success">✓ Successfully synced %1$d session(s) to cloud!</string>
+    <string name="sync_failed">✗ Sync failed: %1$s</string>
+    <string name="note">Note</string>
+    <string name="sync_note">Future sessions will automatically sync to the cloud. This button is for syncing existing sessions.</string>
+    <string name="send_feedback">Send Feedback</string>
+    <string name="profile">Profile</string>
+    <string name="app_version">App Version</string>
+    <string name="logout">Logout</string>
+
+    <!-- Profile -->
+    <string name="user">User</string>
+    <string name="not_signed_in">Not signed in</string>
+    <string name="preferred_name">Preferred name</string>
+    <string name="preferred_name_hint">Add a display name (optional)</string>
+    <string name="edit_profile">Edit profile</string>
+    <string name="react_to_entry">React to %1$s</string>
+    <string name="edit_photo_and_name">Edit photo &amp; name</string>
+    <string name="add_photo">Add photo</string>
+    <string name="change_photo">Change photo</string>
+    <string name="take_photo">Take photo</string>
+    <string name="choose_from_gallery">Choose from gallery</string>
+    <string name="save">Save</string>
+    <string name="profile_photo_permission_rationale">Photo access is needed to set your profile picture.</string>
+    <string name="lifetime_stats">Lifetime Statistics</string>
+    <string name="total_sessions">Total Sessions</string>
+    <string name="total_distance">Total Distance</string>
+    <string name="total_time">Total Time</string>
+    <string name="net_impact">Net Impact</string>
+    <string name="co2_conserved">%1$.3f kg CO2 conserved</string>
+    <string name="co2_emitted_val">%1$.3f kg CO2 emitted</string>
+    <string name="equivalent_source">Data from Impact CO₂ / ADEME</string>
+    <string name="start_new_session">Start New Session</string>
+
+    <!-- Analytics / Sessions -->
+    <string name="session">Session</string>
+    <string name="ai_analysis">AI Analysis</string>
+    <string name="route">Route</string>
+    <string name="no_route_recorded">No route recorded</string>
+    <string name="co2_emitted_label">CO2 Emitted</string>
+    <string name="co2_conserved_label">CO2 Conserved</string>
+    <string name="co2_baseline_disclaimer">* CO2 emissions are based on a standard internal combustion passenger vehicle.</string>
+    <string name="calories_burned">Calories Burned</string>
+    <string name="energy_burned">Energy Burned</string>
+    <string name="starting_altitude">Starting Altitude</string>
+    <string name="stopping_altitude">Stopping Altitude</string>
+    <string name="total_from_sessions">Total from %1$d sessions</string>
+    <string name="co2_emissions">CO2 Emissions</string>
+    <string name="duration_label">Duration</string>
+    <string name="total_duration">Total Duration</string>
+    <string name="total_distance_label">Total Distance</string>
+
+    <!-- Sessions List -->
+    <string name="back">Back</string>
+    <string name="all_sessions">All Sessions</string>
+    <string name="sessions_count">%1$d total sessions</string>
+    <string name="date">Date</string>
+    <string name="completed_session">Completed Session</string>
+
+    <!-- Session Detail -->
+    <string name="session_details">Session Details</string>
+    <string name="all_sessions_overview">All Sessions Overview</string>
+    <string name="top_speed">Top Speed</string>
+    <string name="max_speed_label">Max.</string>
+
+    <!-- Feedback -->
+    <string name="category">Category</string>
+    <string name="general">General</string>
+    <string name="bug_report">Bug Report</string>
+    <string name="feature_request">Feature Request</string>
+    <string name="ui_ux">UI/UX</string>
+    <string name="performance">Performance</string>
+    <string name="your_feedback">Your Feedback</string>
+    <string name="feedback_hint">Tell us what you think…</string>
+    <string name="please_enter_feedback">Please enter your feedback</string>
+    <string name="feedback_failed">Failed to submit feedback. Please try again.</string>
+    <string name="feedback_helps">Your feedback helps us improve Kinetic for everyone.</string>
+    <string name="done">Done</string>
+    <string name="thank_you">Thank You!</string>
+    <string name="feedback_success">Your feedback has been submitted successfully. We appreciate your input!</string>
+
+    <!-- AI Analysis -->
+    <string name="close_banner_ad">Close ad</string>
+
+    <string name="ai">AI</string>
+    <string name="ai_powered_analysis">AI-Powered Analysis</string>
+    <string name="ai_subtitle">Get personalized insights from your activity data</string>
+    <string name="select_timeframe">Select Timeframe</string>
+    <string name="period_this_week">This week</string>
+    <string name="period_rolling_7_days">Last 7 days (rolling)</string>
+    <string name="period_longer_range">Longer range</string>
+    <string name="period_rolling_days_label">Rolling window (days)</string>
+    <string name="period_rolling_days_helper">1–366 days. Tap a day above for single-day analysis only.</string>
+    <string name="period_single_day_rolling_locked_hint">Single-day mode: rolling presets are off. Tap the same weekday again to clear, then choose a rolling window.</string>
+    <string name="period_preset_days">%1$d</string>
+    <string name="analyzing">Analyzing…</string>
+    <string name="analyze_activity">Analyze My Activity</string>
+    <string name="cached_analysis">Showing cached analysis from %1$d minutes ago</string>
+    <string name="activity_score">Activity Score</string>
+    <string name="out_of_10">out of 10</string>
+    <string name="motivation">Motivation</string>
+    <string name="key_insights">Key Insights</string>
+    <string name="recommendations">Recommendations</string>
+    <string name="environmental_impact">Environmental Impact</string>
+    <string name="highlights">Highlights</string>
+    <string name="best_day">Best Day</string>
+    <string name="top_activity">Top Activity</string>
+    <string name="improve">Improve</string>
+    <string name="analysis_error">Analysis Error</string>
+    <string name="click_analyze">Click \"Analyze My Activity\" to get AI-powered insights!</string>
+    <string name="track_first">Make sure you have tracked some activities first.</string>
+    <string name="analysis_no_sessions_this_day">No sessions on that day — nothing to analyze.</string>
+    <string name="timeframe_7_days">7 Days</string>
+    <string name="timeframe_30_days">30 Days</string>
+    <string name="timeframe_90_days">90 Days</string>
+
+    <!-- Activity Selector -->
+    <string name="auto_detect">Auto Detect</string>
+    <string name="auto_detect_desc">Automatically detect activity based on speed</string>
+    <string name="walking">Walking</string>
+    <string name="walking_desc">Track walking activity (saves CO2)</string>
+    <string name="running">Running</string>
+    <string name="running_desc">Track running activity (saves CO2)</string>
+    <string name="cycling">Cycling</string>
+    <string name="cycling_desc">Track cycling activity (saves CO2)</string>
+    <string name="train">Train</string>
+    <string name="train_desc">Track rail travel (low CO2 vs driving)</string>
+    <string name="driving">Driving</string>
+    <string name="driving_desc">Track gas/diesel vehicle (emits CO2)</string>
+    <string name="electric_vehicle">Electric Vehicle</string>
+    <string name="ev_desc">Track EV (70%% less CO2 than gas)</string>
+    <string name="flying">Flying</string>
+    <string name="flying_desc">Track air travel (high CO2)</string>
+    <string name="select_activity_mode">Select Activity Mode</string>
+    <string name="active">ACTIVE</string>
+
+    <!-- Activity Donut Chart -->
+    <string name="activity_idle">Idle</string>
+    <string name="activity_breakdown">Activity Breakdown</string>
+    <string name="by_time">By Time</string>
+    <string name="by_distance">By Distance</string>
+    <string name="no_activity_yet">No activity data yet.\nStart tracking to see breakdown.</string>
+
+    <!-- Notifications -->
+    <string name="notif_tracking_title">Kinetic Tracking</string>
+    <string name="notif_tracking_desc">Shows real-time tracking status</string>
+    <string name="notif_recording">Recording your activity…</string>
+    <string name="notif_milestones_title">Distance Milestones</string>
+    <string name="notif_milestones_desc">Notifications when you complete each km (metric) or mile (imperial) during tracking</string>
+    <string name="notif_segment_completed">%1$s %2$s completed</string>
+    <string name="notif_this_segment">This %1$s in %2$s</string>
+    <string name="notif_summary_title">Session Summary</string>
+    <string name="notif_summary_desc">Notification when a tracking session is saved</string>
+    <string name="notif_session_saved">Session saved</string>
+    <string name="notif_session_summary">%1$s in %2$d min • %3$d kcal</string>
+
+    <!-- Permissions -->
+    <string name="location_permission_rationale">Location permission is required for GPS tracking. Please enable it in settings.</string>
+</resources>

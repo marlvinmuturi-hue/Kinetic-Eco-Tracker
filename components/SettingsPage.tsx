@@ -1,6 +1,7 @@
-import React from 'react';
+import React, { useState, useCallback } from 'react';
 import { UnitSystem, UserProfile } from '../types';
-import { Settings, ThermometerSun, Footprints, User } from 'lucide-react';
+import { Settings, ThermometerSun, Footprints, User, Bell } from 'lucide-react';
+import { getKmNotificationsEnabled, setKmNotificationsEnabled, requestNotificationPermission } from '../services/kmNotificationService';
 
 interface SettingsPageProps {
   unitSystem: UnitSystem;
@@ -17,8 +18,28 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
   onLogout,
   profile,
 }) => {
+  const [kmNotificationsEnabled, setKmEnabledState] = useState(() => getKmNotificationsEnabled());
+  const [kmPermissionMsg, setKmPermissionMsg] = useState<string | null>(null);
+
+  const handleKmNotificationsToggle = useCallback(async (enabled: boolean) => {
+    if (enabled) {
+      const permission = await requestNotificationPermission();
+      if (permission === 'granted') {
+        setKmNotificationsEnabled(true);
+        setKmEnabledState(true);
+        setKmPermissionMsg(null);
+      } else {
+        setKmPermissionMsg('Notification permission denied. Enable in browser settings to get km alerts.');
+      }
+    } else {
+      setKmNotificationsEnabled(false);
+      setKmEnabledState(false);
+      setKmPermissionMsg(null);
+    }
+  }, []);
+
   return (
-    <div className="w-full max-w-3xl mx-auto p-6 space-y-6">
+    <div className="w-full max-w-3xl mx-auto p-4 sm:p-6 space-y-4 sm:space-y-6">
       <header className="flex items-center space-x-3">
         <div className="bg-slate-800 text-green-300 p-3 rounded-xl border border-slate-700">
           <Settings size={24} />
@@ -28,6 +49,29 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
           <p className="text-slate-400 text-sm">Customize how Kinetic feels for you.</p>
         </div>
       </header>
+
+      <section className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
+        <h3 className="text-lg font-semibold text-white mb-4">Profile</h3>
+        <div className="flex items-center justify-between mb-4">
+          <div>
+            <p className="text-white">{profile.email}</p>
+            <p className="text-slate-500 text-xs">Member since {new Date(profile.createdAt).toLocaleDateString()}</p>
+          </div>
+          <button
+            onClick={onNavigateProfile}
+            className="flex items-center space-x-2 text-sm bg-slate-800 px-4 py-2 rounded-lg border border-slate-700 hover:bg-slate-700 transition"
+          >
+            <User size={16} />
+            <span>View profile</span>
+          </button>
+        </div>
+        <button
+          onClick={onLogout}
+          className="w-full bg-red-500/20 text-red-300 border border-red-500/30 rounded-xl py-3 text-sm font-semibold hover:bg-red-500/30 transition"
+        >
+          Logout
+        </button>
+      </section>
 
       <section className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
         <div className="flex items-center justify-between mb-4">
@@ -54,26 +98,27 @@ export const SettingsPage: React.FC<SettingsPageProps> = ({
       </section>
 
       <section className="bg-slate-900 border border-slate-800 rounded-2xl p-5">
-        <h3 className="text-lg font-semibold text-white mb-4">Profile & sessions</h3>
-        <div className="flex items-center justify-between mb-4">
-          <div>
-            <p className="text-white">{profile.email}</p>
-            <p className="text-slate-500 text-xs">Member since {new Date(profile.createdAt).toLocaleDateString()}</p>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <Bell className="text-green-400" size={20} />
+            <div>
+              <p className="text-white font-semibold">Kilometer alerts</p>
+              <p className="text-slate-400 text-sm">Notify when you complete each km during tracking</p>
+            </div>
           </div>
-          <button
-            onClick={onNavigateProfile}
-            className="flex items-center space-x-2 text-sm bg-slate-800 px-4 py-2 rounded-lg border border-slate-700 hover:bg-slate-700 transition"
-          >
-            <User size={16} />
-            <span>View profile</span>
-          </button>
+          <label className="relative inline-flex items-center cursor-pointer">
+            <input
+              type="checkbox"
+              checked={kmNotificationsEnabled}
+              onChange={(e) => handleKmNotificationsToggle(e.target.checked)}
+              className="sr-only peer"
+            />
+            <div className="w-11 h-6 bg-slate-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-500"></div>
+          </label>
         </div>
-        <button
-          onClick={onLogout}
-          className="w-full bg-red-500/20 text-red-300 border border-red-500/30 rounded-xl py-3 text-sm font-semibold hover:bg-red-500/30 transition"
-        >
-          Logout
-        </button>
+        {kmPermissionMsg && (
+          <p className="mt-3 text-amber-400 text-sm">{kmPermissionMsg}</p>
+        )}
       </section>
 
       <section className="bg-slate-900 border border-slate-800 rounded-2xl p-5">

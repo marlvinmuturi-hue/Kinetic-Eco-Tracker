@@ -1,12 +1,16 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Users collection - users can only read/write their own data
+    // Users collection - users can only read/write their own document
     match /users/{userId} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
+      // Sessions subcollection - required for Cloud Sync and AI Analysis
+      match /sessions/{sessionId} {
+        allow read, write: if request.auth != null && request.auth.uid == userId;
+      }
     }
     
-    // Sessions collection - users can only read/write their own sessions
+    // Top-level sessions (legacy/unused) - keep for backward compatibility
     match /sessions/{sessionId} {
       allow read, write: if request.auth != null && 
         resource.data.userId == request.auth.uid;
@@ -14,10 +18,22 @@ service cloud.firestore {
         request.resource.data.userId == request.auth.uid;
     }
     
-    // Feedback collection - authenticated users can create feedback
+    // Feedback collection - authenticated users can create feedback, only admins can read
     match /feedback/{feedbackId} {
       allow create: if request.auth != null;
+      allow read: if false;  // Only admins can read via Firebase Console
+      allow update, delete: if false;  // Immutable feedback
+    }
+
+    // Leaderboard - opted-in users write their own entry, all auth users can read
+    match /leaderboard/{userId} {
       allow read: if request.auth != null;
+      allow write: if request.auth != null && request.auth.uid == userId;
+      // Reactions: users can only write their own reaction doc
+      match /reactions/{reactorUserId} {
+        allow read: if request.auth != null;
+        allow create, update, delete: if request.auth.uid == reactorUserId;
+      }
     }
   }
 }

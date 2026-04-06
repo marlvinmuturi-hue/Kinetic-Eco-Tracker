@@ -1,7 +1,10 @@
 export enum ActivityType {
   IDLE = 'IDLE',
   WALKING = 'WALKING',
+  RUNNING = 'RUNNING',
+  CYCLING = 'CYCLING',
   DRIVING = 'DRIVING',
+  ELECTRIC_VEHICLE = 'ELECTRIC_VEHICLE',
   FLYING = 'FLYING'
 }
 
@@ -17,7 +20,8 @@ export interface SessionStats {
   totalDuration: number; // seconds
   totalDistance: number; // meters
   caloriesBurned: number; // kcal
-  co2Emissions: number; // kg
+  co2Emissions: number; // kg (positive value = emissions)
+  co2Conserved: number; // kg (positive value = conservation/savings)
   segments: ActivitySegment[];
   breakdown: Record<ActivityType, { time: number; distance: number; }>;
 }
@@ -25,6 +29,7 @@ export interface SessionStats {
 export interface GeoPosition {
   latitude: number;
   longitude: number;
+  altitude: number | null; // meters
   speed: number | null; // m/s
   timestamp: number;
   accuracy: number;
@@ -39,6 +44,13 @@ export interface StoredSession {
    * breaking legacy data. Undefined implies the first version.
    */
   schemaVersion?: number;
+}
+
+export interface UserPhysicalProfile {
+  weight: number;        // kg
+  height: number;        // cm
+  age: number;           // years
+  gender: 'male' | 'female' | 'other';
 }
 
 export interface UserProfile {
@@ -57,6 +69,65 @@ export interface UserProfile {
    * so we can keep legacy behavior for them if needed.
    */
   isLegacy?: boolean;
+  /**
+   * Physical attributes for accurate calorie calculations.
+   * Defaults will be used if not provided.
+   */
+  physicalProfile?: UserPhysicalProfile;
+  /**
+   * User's achievements
+   */
+  achievements?: Achievement[];
+  /**
+   * User's active goals
+   */
+  goals?: Goal[];
 }
 
 export type UnitSystem = 'METRIC' | 'IMPERIAL';
+
+export type Timeframe = 'Daily' | 'Weekly' | 'Monthly' | 'Yearly' | 'Since Beginning';
+
+export interface Achievement {
+  id: string;
+  name: string;
+  description: string;
+  icon: string;
+  condition: (stats: AggregatedStats) => boolean;
+  unlocked: boolean;
+  unlockedAt?: string;
+  category: 'distance' | 'time' | 'carbon' | 'health' | 'streak';
+}
+
+export interface AggregatedStats {
+  totalSessions: number;
+  totalDistance: number;
+  totalDuration: number;
+  totalEmissions: number;
+  totalConserved: number;
+  totalCalories: number;
+  breakdown: Record<ActivityType, { time: number; distance: number }>;
+}
+
+export interface Goal {
+  id: string;
+  name: string;
+  description: string;
+  type: 'distance' | 'carbon' | 'calories' | 'sessions';
+  target: number;
+  current: number;
+  timeframe: 'daily' | 'weekly' | 'monthly';
+  startDate: string;
+  endDate?: string;
+  completed: boolean;
+  completedAt?: string;
+}
+
+export interface TrendData {
+  date: string;
+  distance: number;
+  co2Saved: number;
+  co2Emitted: number;
+  calories: number;
+  duration: number;
+}

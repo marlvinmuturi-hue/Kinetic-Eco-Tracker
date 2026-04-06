@@ -1,4 +1,18 @@
-import { SessionStats, StoredSession, UserProfile } from '../types';
+import { SessionStats, StoredSession, UserProfile, UserPhysicalProfile } from '../types';
+
+/** Get session date (YYYY-MM-DD) from stats: use sessionStartTimeMs, segments, or fallback to now. */
+function getSessionDateFromStats(stats: SessionStats, sessionStartTimeMs?: number): string {
+  if (sessionStartTimeMs && sessionStartTimeMs > 0) {
+    return new Date(sessionStartTimeMs).toISOString().split('T')[0];
+  }
+  const segments = stats.segments;
+  if (segments && segments.length > 0) {
+    const startMs = Math.min(...segments.map((s) => s.startTime));
+    return new Date(startMs).toISOString().split('T')[0];
+  }
+  return new Date().toISOString().split('T')[0];
+}
+import { saveSessionToFirestore } from './firestoreSessionService';
 
 const CURRENT_SCHEMA_VERSION = 1;
 
@@ -59,7 +73,10 @@ const persistProfiles = (profiles: ProfileRegistry) => {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(profiles));
 };
 
-const hashPassword = (password: string) => btoa(password);
+// SECURITY NOTE: Password hashing removed - passwords should NEVER be stored client-side
+// Use Firebase Authentication for all password management
+// This function is kept for backward compatibility with legacy profiles only
+const hashPasswordLegacy = (password: string) => btoa(password);
 
 export const getActiveUserEmail = (): string | null => {
   if (typeof window === 'undefined') return null;
@@ -75,6 +92,11 @@ export const setActiveUserEmail = (email: string | null) => {
   }
 };
 
+/**
+ * DEPRECATED: This function is kept for backward compatibility with legacy profiles only.
+ * New authentication should use Firebase Auth directly (see authService.ts).
+ * Passwords are NO LONGER stored locally for security reasons.
+ */
 export const authenticateOrCreateProfile = (email: string, password: string): { profile: UserProfile | null; error?: string; created?: boolean } => {
   const normalizedEmail = email.trim().toLowerCase();
   if (!normalizedEmail || !password) {
@@ -83,9 +105,10 @@ export const authenticateOrCreateProfile = (email: string, password: string): { 
 
   const profiles = readProfiles();
   const existing = profiles[normalizedEmail];
-  const passwordHash = hashPassword(password);
 
-  if (existing) {
+  // For legacy profiles only - check if password hash exists
+  if (existing && existing.passwordHash && existing.passwordHash !== 'SOCIAL_LOGIN_ONLY') {
+    const passwordHash = hashPasswordLegacy(password);
     if (existing.passwordHash !== passwordHash) {
       return { profile: null, error: 'Incorrect password.' };
     }
@@ -96,9 +119,20 @@ export const authenticateOrCreateProfile = (email: string, password: string): { 
     return { profile: existing };
   }
 
+  // For new profiles, do NOT store passwords locally
+  // Authentication should happen via Firebase Auth
+  if (existing) {
+    existing.lastLogin = new Date().toISOString();
+    profiles[normalizedEmail] = existing;
+    persistProfiles(profiles);
+    setActiveUserEmail(normalizedEmail);
+    return { profile: existing };
+  }
+
+  // Create new profile without password - Firebase Auth handles authentication
   const newProfile: UserProfile = {
     email: normalizedEmail,
-    passwordHash,
+    passwordHash: 'FIREBASE_AUTH', // Marker indicating Firebase-managed auth
     createdAt: new Date().toISOString(),
     lastLogin: new Date().toISOString(),
     sessions: [],
@@ -117,14 +151,18 @@ export const loadProfile = (email: string): UserProfile | null => {
   return profiles[email] ?? null;
 };
 
-export const saveSessionForUser = (email: string, stats: SessionStats): UserProfile | null => {
+export const saveSessionForUser = (
+  email: string,
+  stats: SessionStats,
+  sessionStartTimeMs?: number
+): UserProfile | null => {
   const profiles = readProfiles();
   const profile = profiles[email];
   if (!profile) return null;
 
   const session: StoredSession = {
     id: generateId(),
-    date: new Date().toISOString().split('T')[0],
+    date: getSessionDateFromStats(stats, sessionStartTimeMs),
     stats,
     schemaVersion: CURRENT_SCHEMA_VERSION,
   };
@@ -132,6 +170,12 @@ export const saveSessionForUser = (email: string, stats: SessionStats): UserProf
   profile.sessions = [session, ...profile.sessions];
   profiles[email] = profile;
   persistProfiles(profiles);
+  
+  // ALSO save to Firestore for cloud analysis (use same date/timestamp)
+  saveSessionToFirestore(stats, sessionStartTimeMs).catch(err => {
+    console.error('Failed to sync session to Firestore:', err);
+  });
+  
   return profile;
 };
 
@@ -139,3 +183,41 @@ export const logoutUser = () => {
   setActiveUserEmail(null);
 };
 
+export const syncSocialProfile = (email: string): UserProfile => {
+  const normalizedEmail = email.trim().toLowerCase();
+  const profiles = readProfiles();
+  const existing = profiles[normalizedEmail];
+
+  if (existing) {
+    existing.lastLogin = new Date().toISOString();
+    profiles[normalizedEmail] = existing;
+    persistProfiles(profiles);
+    setActiveUserEmail(normalizedEmail);
+    return existing;
+  }
+
+  const newProfile: UserProfile = {
+    email: normalizedEmail,
+    passwordHash: 'SOCIAL_LOGIN_ONLY', // Special marker
+    createdAt: new Date().toISOString(),
+    lastLogin: new Date().toISOString(),
+    sessions: [],
+    schemaVersion: CURRENT_SCHEMA_VERSION,
+    isLegacy: false,
+  };
+
+  profiles[normalizedEmail] = newProfile;
+  persistProfiles(profiles);
+  setActiveUserEmail(normalizedEmail);
+  return newProfile;
+};
+
+export const updatePhysicalProfile = (email: string, physicalProfile: UserPhysicalProfile): UserProfile | null => {
+  const normalizedEmail = email.trim().toLowerCase();
+  const profiles = readProfiles();
+  const profile = profiles[normalizedEmail];  if (!profile) {
+    return null;
+  }  profile.physicalProfile = physicalProfile;
+  profiles[normalizedEmail] = profile;
+  persistProfiles(profiles);  return profile;
+};

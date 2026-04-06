@@ -22,6 +22,12 @@ dist-ssr
 firebase-debug.log
 firestore-debug.log
 ui-debug.log
+google-services.json
+android/app/google-services.json
+
+# Android Gradle build outputs (never commit)
+android/app/build/
+android/.gradle/
 
 # Editor directories and files
 .vscode/*

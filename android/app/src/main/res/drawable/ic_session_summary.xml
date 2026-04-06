@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="430"
+    android:viewportHeight="430">
+    <!-- wired-outline-1142-form-sheet-questionnaire-hover-pinch -->
+    <path
+        android:fillColor="@android:color/transparent"
+        android:pathData="M352.712,375.12H77.288c-12.375,0 -22.407,-10.033 -22.407,-22.408V77.288c0,-12.375 10.032,-22.407 22.407,-22.407h275.424c12.375,0 22.407,10.032 22.407,22.407v275.424c0,12.375 -10.032,22.408 -22.407,22.408m20.407,-268.866H54.881"
+        android:strokeWidth="12"
+        android:strokeColor="#FFFFFF"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <path
+        android:fillColor="@android:color/transparent"
+        android:pathData="M142.864,80.567H143m-56.432,0h0.136m28.012,0h0.136"
+        android:strokeWidth="15"
+        android:strokeColor="#FFFFFF"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <path
+        android:fillColor="@android:color/transparent"
+        android:pathData="M135.301,268.465h-30.24v-30.24h30.24zm0,73.987h-30.24v-30.24h30.24z"
+        android:strokeWidth="12"
+        android:strokeColor="#FFFFFF"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <path
+        android:fillColor="@android:color/transparent"
+        android:pathData="M203.989,253.345h-34.656m145.667,0h-76m76,73.987H169.334m155.605,-178.331H105.061m66.986,36.001h-66.986"
+        android:strokeWidth="12"
+        android:strokeColor="#FFFFFF"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+</vector>

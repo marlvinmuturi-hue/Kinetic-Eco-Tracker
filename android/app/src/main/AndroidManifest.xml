@@ -20,6 +20,13 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.VIEW" />
+            <data android:mimeType="application/pdf" />
+        </intent>
+    </queries>
+
     <application
         android:name=".KineticEcoApplication"
         android:allowBackup="true"
@@ -49,9 +56,13 @@
         </provider>
 
         <!-- Main Activity (Compose) -->
+        <!-- launchMode=singleTop so notification PendingIntents (e.g. the
+             activity-confirm "Tap to choose" notification) deliver to the
+             existing instance via onNewIntent instead of stacking a new copy. -->
         <activity
             android:name=".MainActivity"
             android:exported="true"
+            android:launchMode="singleTop"
             android:configChanges="orientation|screenSize|keyboardHidden"
             android:hardwareAccelerated="true"
             android:theme="@style/Theme.KineticEcoTracker"
@@ -84,6 +95,24 @@
                 <action android:name="android.intent.action.BOOT_COMPLETED" />
             </intent-filter>
         </receiver>
+
+        <!-- Handles inline actions on the "What are you doing?" activity-confirm notification -->
+        <receiver
+            android:name=".services.ActivityConfirmReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="kinetic_eco.ACTION_CONFIRM_ACTIVITY" />
+            </intent-filter>
+        </receiver>
+
+        <!-- Firebase Cloud Messaging -->
+        <service
+            android:name=".services.KineticFirebaseMessagingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.google.firebase.MESSAGING_EVENT" />
+            </intent-filter>
+        </service>
 
     </application>
 

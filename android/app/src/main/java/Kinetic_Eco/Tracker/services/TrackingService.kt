@@ -576,6 +576,11 @@ class TrackingService : LifecycleService() {
     }
 
     fun stopTracking() {
+        // If this is a manual stop (NOT an idle-timeout auto-stop), record the timestamp so
+        // AutoStartMonitorService can suppress auto-restart for 30 seconds.
+        if (!userPrefsManager.getPendingResumeAfterIdleAutoStop()) {
+            userPrefsManager.setManualStopMs(System.currentTimeMillis())
+        }
         railLookupJob?.cancel()
         railLookupJob = null
         idleCheckJob?.cancel()
@@ -1438,7 +1443,9 @@ class TrackingService : LifecycleService() {
         } else 0f
         
         // Speed pipeline: raw GPS first, then Kalman fallback, then distance-based fallback
-        var speed = position.speed.coerceAtLeast(0f)
+        // On the first fix (no previous position), the GPS speed field may be stale from a
+        // prior session — ignore it so the first displayed speed is always 0.
+        var speed = if (lastPosition == null) 0f else position.speed.coerceAtLeast(0f)
         val kalmanSpeed = filtered.speed.coerceAtLeast(0f)
         val gpsUnreliable = speed < GPS_SPEED_UNRELIABLE_MAX || position.accuracy > POOR_ACCURACY_METERS
         if (gpsUnreliable) {

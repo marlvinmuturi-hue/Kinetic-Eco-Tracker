@@ -1,14 +1,23 @@
 package Kinetic_Eco.Tracker.services
 
+import android.Manifest
 import android.app.*
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.pm.ServiceInfo
+import android.hardware.Sensor
+import android.hardware.SensorEvent
+import android.hardware.SensorEventListener
+import android.hardware.SensorManager
 import android.os.Build
 import android.util.Log
+import androidx.core.app.ActivityCompat
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleService
+import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.ActivityTransition
 import com.google.android.gms.location.ActivityTransitionResult
 import com.google.android.gms.location.DetectedActivity
@@ -17,19 +26,64 @@ import Kinetic_Eco.Tracker.R
 
 /**
  * Foreground service that keeps auto-start on walk active in the background.
- * Registers for Activity Recognition transitions and starts TrackingService when walking is detected.
  *
- * **Important:** [ACTION_PROCESS_ACTIVITY_TRANSITION] is delivered via [PendingIntent.getForegroundService].
- * Every such start **must** call [startForegroundIfNeeded] immediately, or the app crashes
- * (ForegroundServiceDidNotStartInTimeException).
+ * Two parallel triggers feed [startTrackingFromAutoStart]:
+ *  1. **Hardware step counter** — [Sensor.TYPE_STEP_COUNTER] listener
+ *     registered while this service is alive. Fires after
+ *     [STEP_TRIGGER_THRESHOLD] steps. This is the primary trigger because
+ *     it's fast (a few seconds of walking) and reliable — Activity
+ *     Recognition transitions are often suppressed by aggressive OEM ROMs.
+ *  2. **Activity Recognition Transition API** — secondary, mainly useful for
+ *     `IN_VEHICLE` transitions where the step counter doesn't apply.
+ *
+ * **Important:** [ACTION_PROCESS_ACTIVITY_TRANSITION] is delivered via
+ * [PendingIntent.getForegroundService]. Every such start **must** call
+ * [startForegroundIfNeeded] immediately, or the app crashes
+ * (`ForegroundServiceDidNotStartInTimeException`).
  */
 class AutoStartMonitorService : LifecycleService() {
 
     private lateinit var activityTransitionManager: ActivityTransitionManager
 
+    // ── Background step-counter trigger ─────────────────────────────────────
+    //
+    // The hardware step counter (Sensor.TYPE_STEP_COUNTER) is the most reliable
+    // way to detect that the user has actually started walking — it fires
+    // within seconds, vs. the Activity Recognition Transition API which often
+    // takes 30+ seconds and is suppressed entirely on many OEM ROMs.
+    //
+    // Because this sensor listener is registered from a foreground service,
+    // it keeps delivering events while the app is closed, fixing the original
+    // bug where tracking only auto-started after the user manually opened the
+    // app (the in-app StepMonitor in NavGraph runs only while the Compose
+    // tree is alive).
+    private val sensorManager: SensorManager by lazy {
+        getSystemService(Context.SENSOR_SERVICE) as SensorManager
+    }
+    private val stepCounter: Sensor? by lazy {
+        sensorManager.getDefaultSensor(Sensor.TYPE_STEP_COUNTER)
+    }
+    private var stepListener: SensorEventListener? = null
+    /** Cumulative step counter value at the moment the listener was last (re-)registered. */
+    private var stepBaseline: Int = -1
+    /**
+     * Wall-clock time of the last successful auto-start trigger (from either
+     * the step counter or activity transitions). Used as a cooldown so a
+     * continuous walk doesn't repeatedly fire `startForegroundService` while
+     * `TrackingService` is already running.
+     */
+    private var lastTriggerTimeMs: Long = 0L
+
     override fun onCreate() {
         super.onCreate()
         activityTransitionManager = ActivityTransitionManager(this)
+    }
+
+    override fun onDestroy() {
+        // Defensive: the service may be killed without ACTION_STOP if the OS
+        // reclaims memory. Make sure we don't leave a dangling sensor listener.
+        unregisterStepListener()
+        super.onDestroy()
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -37,10 +91,12 @@ class AutoStartMonitorService : LifecycleService() {
             ACTION_START -> {
                 startForegroundIfNeeded()
                 activityTransitionManager.registerTransitions()
-                Log.d(TAG, "Auto-start monitor running in background")
+                registerStepListener()
+                Log.d(TAG, "Auto-start monitor running in background (transitions + step counter)")
             }
             ACTION_STOP -> {
                 activityTransitionManager.unregisterTransitions()
+                unregisterStepListener()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
                 Log.d(TAG, "Auto-start monitor stopped")
@@ -66,18 +122,22 @@ class AutoStartMonitorService : LifecycleService() {
      */
     private fun restoreIfNeededAfterStickyRestart() {
         val prefs = UserPreferencesManager(this)
-        if (prefs.getAutoStartOnWalkEnabled()) {
+        if (prefs.getAutoStartOnWalkEnabled() || prefs.getPendingResumeAfterIdleAutoStop()) {
             startForegroundIfNeeded()
             try {
                 activityTransitionManager.registerTransitions()
             } catch (e: Exception) {
                 Log.e(TAG, "restoreIfNeeded: registerTransitions failed", e)
             }
+            // Step listener may have been torn down with the previous process; restart it
+            // so the user gets fast (~15 step) auto-start even after a sticky restart.
+            registerStepListener()
         } else {
             try {
                 stopForeground(STOP_FOREGROUND_REMOVE)
             } catch (_: Exception) {
             }
+            unregisterStepListener()
             stopSelf()
         }
     }
@@ -89,14 +149,15 @@ class AutoStartMonitorService : LifecycleService() {
         }
         val result = ActivityTransitionResult.extractResult(intent) ?: return
         val prefs = UserPreferencesManager(this)
-        if (!prefs.getAutoStartOnWalkEnabled()) return
+        if (!prefs.getAutoStartOnWalkEnabled() && !prefs.getPendingResumeAfterIdleAutoStop()) return
 
         for (event in result.transitionEvents) {
             if (event.transitionType != ActivityTransition.ACTIVITY_TRANSITION_ENTER) continue
             val type = event.activityType
             if (type == DetectedActivity.WALKING ||
                 type == DetectedActivity.RUNNING ||
-                type == DetectedActivity.ON_FOOT
+                type == DetectedActivity.ON_FOOT ||
+                type == DetectedActivity.IN_VEHICLE
             ) {
                 Log.d(TAG, "Activity transition ENTER (type=$type) → starting tracking")
                 startTrackingFromAutoStart()
@@ -105,18 +166,108 @@ class AutoStartMonitorService : LifecycleService() {
         }
     }
 
+    /**
+     * Register a [Sensor.TYPE_STEP_COUNTER] listener so we can detect walking
+     * from the background. Idempotent — calling repeatedly while already
+     * registered is a no-op. Bails silently if the device has no step counter,
+     * if [Manifest.permission.ACTIVITY_RECOGNITION] is not granted (Android
+     * 10+), or if the user already has tracking running.
+     */
+    private fun registerStepListener() {
+        if (stepListener != null) return
+        if (stepCounter == null) {
+            Log.w(TAG, "No step counter sensor on device — relying on Activity Recognition transitions only")
+            return
+        }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val granted = ContextCompat.checkSelfPermission(
+                this, Manifest.permission.ACTIVITY_RECOGNITION
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!granted) {
+                Log.w(TAG, "ACTIVITY_RECOGNITION not granted — cannot use step counter for auto-start")
+                return
+            }
+        }
+
+        // Reset baseline on every (re-)registration so the threshold is
+        // measured from "now", not from device-boot cumulative steps.
+        stepBaseline = -1
+
+        val listener = object : SensorEventListener {
+            override fun onSensorChanged(event: SensorEvent) {
+                if (event.sensor.type != Sensor.TYPE_STEP_COUNTER) return
+                val raw = event.values.firstOrNull()?.toInt() ?: return
+                if (stepBaseline == -1) {
+                    stepBaseline = raw
+                    return
+                }
+                val delta = raw - stepBaseline
+                if (delta >= STEP_TRIGGER_THRESHOLD) {
+                    Log.d(TAG, "Step counter threshold reached ($delta steps) → starting tracking")
+                    // Reset baseline so we don't immediately re-fire on the
+                    // next sensor sample. TrackingService.startTracking() is
+                    // idempotent if tracking is already running.
+                    stepBaseline = raw
+                    handleStepTrigger()
+                }
+            }
+
+            override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
+        }
+
+        // SENSOR_DELAY_NORMAL is the right knob for a stepping detector — UI
+        // delay would burn battery for no benefit since we only care about
+        // the cumulative count, not per-step timing.
+        sensorManager.registerListener(listener, stepCounter, SensorManager.SENSOR_DELAY_NORMAL)
+        stepListener = listener
+        Log.d(TAG, "Step counter listener registered (threshold = $STEP_TRIGGER_THRESHOLD)")
+    }
+
+    private fun unregisterStepListener() {
+        stepListener?.let { sensorManager.unregisterListener(it) }
+        stepListener = null
+        stepBaseline = -1
+    }
+
+    /**
+     * Step-counter-triggered auto-start. Mirrors [handleActivityTransition]'s
+     * pref guard so toggling auto-start off mid-walk doesn't fire a stale
+     * trigger that's already in flight.
+     */
+    private fun handleStepTrigger() {
+        val prefs = UserPreferencesManager(this)
+        if (!prefs.getAutoStartOnWalkEnabled() && !prefs.getPendingResumeAfterIdleAutoStop()) return
+        startTrackingFromAutoStart()
+    }
+
     private fun startTrackingFromAutoStart() {
+        val now = System.currentTimeMillis()
+        if (now - lastTriggerTimeMs < TRIGGER_COOLDOWN_MS) {
+            return
+        }
+        // Respect manual stop: if the user explicitly stopped/discarded within the last 30 s,
+        // suppress auto-restart so the timer doesn't immediately restart after a discard.
+        val prefs = UserPreferencesManager(this)
+        if (!prefs.getPendingResumeAfterIdleAutoStop()) {
+            val msSinceManualStop = now - prefs.getManualStopMs()
+            if (msSinceManualStop < 30_000L) {
+                Log.d(TAG, "Suppressing auto-start: manual stop ${msSinceManualStop}ms ago")
+                return
+            }
+        }
+        lastTriggerTimeMs = now
+
         val ts = Intent(this, TrackingService::class.java).apply {
             action = TrackingService.ACTION_START_TRACKING
         }
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                startForegroundService(ts)
+                applicationContext.startForegroundService(ts)
             } else {
-                startService(ts)
+                applicationContext.startService(ts)
             }
         } catch (e: Exception) {
-            Log.e(TAG, "Failed to start TrackingService from auto-start", e)
+            Log.e(TAG, "Failed to start TrackingService from auto-start: ${e.javaClass.simpleName}", e)
         }
     }
 
@@ -157,12 +308,43 @@ class AutoStartMonitorService : LifecycleService() {
                 ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
             )
         }
+        // Android 14+ expects location-type FGS to interact with location APIs; keeps policy consistent on OEM builds.
+        pingFusedLocationForFgsCompliance()
+    }
+
+    private fun pingFusedLocationForFgsCompliance() {
+        val fine = ActivityCompat.checkSelfPermission(this, android.Manifest.permission.ACCESS_FINE_LOCATION) ==
+            PackageManager.PERMISSION_GRANTED
+        val coarse = ActivityCompat.checkSelfPermission(this, android.Manifest.permission.ACCESS_COARSE_LOCATION) ==
+            PackageManager.PERMISSION_GRANTED
+        if (!fine && !coarse) return
+        try {
+            LocationServices.getFusedLocationProviderClient(applicationContext).lastLocation
+                .addOnCompleteListener { }
+        } catch (e: Exception) {
+            Log.w(TAG, "FGS location compliance ping failed", e)
+        }
     }
 
     companion object {
         private const val TAG = "AutoStartMonitor"
         private const val CHANNEL_ID = "auto_start_monitor"
         private const val NOTIFICATION_ID = 3001
+
+        /**
+         * Number of steps (from the moment the listener registered) that
+         * triggers an auto-start. Matches the in-app `IN_APP_AUTO_START_STEP_THRESHOLD`
+         * in `NavGraph.kt` so the user gets the same behavior whether the app
+         * is open or closed.
+         */
+        private const val STEP_TRIGGER_THRESHOLD = 15
+
+        /**
+         * Cooldown between auto-start trigger attempts. Long enough that we
+         * won't keep poking [TrackingService] during a continuous walk, short
+         * enough that an idle-stop → walk-again cycle re-fires promptly.
+         */
+        private const val TRIGGER_COOLDOWN_MS = 30_000L
 
         const val ACTION_START = "kinetic_eco.ACTION_START_AUTO_MONITOR"
         const val ACTION_STOP = "kinetic_eco.ACTION_STOP_AUTO_MONITOR"

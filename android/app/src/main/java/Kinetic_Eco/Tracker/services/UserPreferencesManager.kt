@@ -14,6 +14,7 @@ import Kinetic_Eco.Tracker.data.UnitSystem
 import Kinetic_Eco.Tracker.data.VehicleBodyType
 import Kinetic_Eco.Tracker.data.VehicleProfile
 import Kinetic_Eco.Tracker.ui.utils.usesMetricDistance
+
 /**
  * Manages user preferences and physical profile data
  */
@@ -70,6 +71,9 @@ class UserPreferencesManager(context: Context) {
 
         /** One-shot: idle timeout auto-saved; allow movement to restart without toggling "auto-start on walk". */
         private const val KEY_PENDING_RESUME_AFTER_IDLE_AUTO_STOP = "pending_resume_after_idle_auto_stop"
+
+        /** Epoch-ms of the last MANUAL stop/discard. Used to suppress auto-restart for 30 s. */
+        private const val KEY_MANUAL_STOP_MS = "manual_stop_ms"
 
         // Auto-stop on idle: minutes of inactivity before stopping (3, 5, or 10)
         private const val KEY_IDLE_STOP_MINUTES = "idle_stop_minutes"
@@ -419,6 +423,12 @@ class UserPreferencesManager(context: Context) {
     fun getPendingResumeAfterIdleAutoStop(): Boolean {
         return prefs.getBoolean(KEY_PENDING_RESUME_AFTER_IDLE_AUTO_STOP, false)
     }
+
+    fun setManualStopMs(ms: Long) {
+        prefs.edit().putLong(KEY_MANUAL_STOP_MS, ms).apply()
+    }
+
+    fun getManualStopMs(): Long = prefs.getLong(KEY_MANUAL_STOP_MS, 0L)
 
     /**
      * Set idle stop timeout (minutes of inactivity before auto-stop). Valid: 3, 5, 10.

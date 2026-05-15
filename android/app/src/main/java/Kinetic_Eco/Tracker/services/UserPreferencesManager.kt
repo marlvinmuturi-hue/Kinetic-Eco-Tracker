@@ -3,9 +3,17 @@ package Kinetic_Eco.Tracker.services
 import android.content.Context
 import android.content.SharedPreferences
 import java.util.Locale
+import Kinetic_Eco.Tracker.data.AircraftCategory
+import Kinetic_Eco.Tracker.data.DrivingEngineCcBand
+import Kinetic_Eco.Tracker.data.ElectricMotorPowerBand
+import Kinetic_Eco.Tracker.data.ElectricVehicleClass
+import Kinetic_Eco.Tracker.data.IceFuel
+import Kinetic_Eco.Tracker.data.PrimaryFuelType
+import Kinetic_Eco.Tracker.data.TrainPropulsion
 import Kinetic_Eco.Tracker.data.UnitSystem
+import Kinetic_Eco.Tracker.data.VehicleBodyType
+import Kinetic_Eco.Tracker.data.VehicleProfile
 import Kinetic_Eco.Tracker.ui.utils.usesMetricDistance
-
 /**
  * Manages user preferences and physical profile data
  */
@@ -18,8 +26,37 @@ class UserPreferencesManager(context: Context) {
         // Physical Profile Keys
         private const val KEY_WEIGHT = "physical_profile_weight"
         private const val KEY_HEIGHT = "physical_profile_height"
+        /**
+         * UTC milliseconds at midnight of the user's date of birth. Canonical
+         * since the v2 profile rework — replaces [KEY_AGE] which went stale
+         * every birthday. Loaded back into [UserPhysicalProfile.birthDateMs].
+         */
+        private const val KEY_BIRTH_DATE_MS = "physical_profile_birth_date_ms"
+        /**
+         * Legacy raw age in years. Still read on first load by
+         * [loadPhysicalProfile] for the one-time migration to [KEY_BIRTH_DATE_MS],
+         * then deleted on the next save. Do not write to it from new code.
+         */
         private const val KEY_AGE = "physical_profile_age"
         private const val KEY_GENDER = "physical_profile_gender"
+
+        private const val KEY_VEHICLE_DRIVING_CC = "vehicle_profile_driving_cc"
+        private const val KEY_VEHICLE_ICE_FUEL = "vehicle_profile_ice_fuel"
+        /** Legacy (pre-fuel-type-redesign): EV class was Car or Motorcycle.
+         *  Read on first load and migrated to [KEY_VEHICLE_EV_CLASS]. */
+        private const val KEY_VEHICLE_EV_ROAD = "vehicle_profile_ev_road"
+        private const val KEY_VEHICLE_TRAIN = "vehicle_profile_train"
+        private const val KEY_VEHICLE_AIRCRAFT = "vehicle_profile_aircraft"
+        /** Top-level "your vehicle is petrol/diesel/electric" choice. The
+         *  source of truth for which sub-fields the UX surfaces. */
+        private const val KEY_VEHICLE_PRIMARY_FUEL = "vehicle_profile_primary_fuel"
+        /** Body type for combustion vehicles (sedan reference, SUV heavier, …). */
+        private const val KEY_VEHICLE_BODY_TYPE = "vehicle_profile_body_type"
+        /** Electric vehicle class (2-wheeler / 3-wheeler / car). Replaces
+         *  [KEY_VEHICLE_EV_ROAD]; legacy values are migrated on load. */
+        private const val KEY_VEHICLE_EV_CLASS = "vehicle_profile_ev_class"
+        /** Electric motor power band — multiplies the EV class baseline. */
+        private const val KEY_VEHICLE_EV_MOTOR_POWER = "vehicle_profile_ev_motor_power"
         
         // Unit preference (Metric = km, kcal | Imperial = miles, Wh)
         private const val KEY_UNIT_PREFERENCE = "unit_preference"
@@ -31,6 +68,9 @@ class UserPreferencesManager(context: Context) {
         // Auto-start tracking when walking detected
         private const val KEY_AUTO_START_ON_WALK_ENABLED = "auto_start_on_walk_enabled"
 
+        /** One-shot: idle timeout auto-saved; allow movement to restart without toggling "auto-start on walk". */
+        private const val KEY_PENDING_RESUME_AFTER_IDLE_AUTO_STOP = "pending_resume_after_idle_auto_stop"
+
         // Auto-stop on idle: minutes of inactivity before stopping (3, 5, or 10)
         private const val KEY_IDLE_STOP_MINUTES = "idle_stop_minutes"
         private const val DEFAULT_IDLE_STOP_MINUTES = 10
@@ -41,8 +81,25 @@ class UserPreferencesManager(context: Context) {
         // App language: "auto" = follow device locale, or "en", "fr", "de", "es", "zh"
         private const val KEY_APP_LOCALE = "app_locale"
 
-        // Theme: "system" = follow device, "light", "dark"
+        // Theme: "light" or "dark". The historical "system" value is migrated
+        // away by [migrateThemeIfNeeded] on first launch after the theme rework.
         private const val KEY_THEME_MODE = "theme_mode"
+
+        // Legacy accent customization key. The accent picker has been removed
+        // and the value is no longer read; we still know about the key so the
+        // migration can clear it and free the slot. Do not re-introduce.
+        private const val KEY_THEME_ACCENT_ARGB = "theme_accent_argb"
+
+        /**
+         * Tracks the on-device migration state for the theme system. v1 is the
+         * original 3-mode + accent-picker world; v2 is the simplified Light/Dark
+         * world introduced alongside this constant. See [migrateThemeIfNeeded].
+         */
+        private const val KEY_THEME_FLOW_VERSION = "theme_flow_version"
+        private const val CURRENT_THEME_FLOW_VERSION = 2
+
+        /** Accepted bundled terms version; bump when replacing assets/legal PDF to require re-acceptance. */
+        private const val KEY_TERMS_ACCEPTED_VERSION = "terms_accepted_version"
 
         // Floating play button position (0-1 fraction of screen width/height)
         private const val KEY_FLOATING_BUTTON_X = "floating_button_x"
@@ -60,45 +117,140 @@ class UserPreferencesManager(context: Context) {
         private const val DEFAULT_NOTIFICATION_SOUNDS = true
         
         private const val METERS_PER_MILE = 1609.344
+
+        /** Must match the document in assets/legal/user_terms_and_conditions.pdf when you update it. */
+        const val CURRENT_TERMS_DOCUMENT_VERSION = "1"
+
+        // Weekly digest notification opt-in (default: true)
+        private const val KEY_WEEKLY_DIGEST_ENABLED = "weekly_digest_enabled"
+
+        /**
+         * Personal weekly CO₂-saved goal in kilograms. Drives the dashboard's
+         * sprouting-plant scene and the progress ring around the hero number.
+         * Stored as a float because users typically pick whole/half kg values
+         * in onboarding (the slider snaps to 0.5 kg increments).
+         */
+        private const val KEY_WEEKLY_CO2_GOAL_KG = "weekly_co2_goal_kg"
+        private const val DEFAULT_WEEKLY_CO2_GOAL_KG = 5.0f
+        /** Hard caps so a stray value can't break the ring/plant maths. */
+        private const val MIN_WEEKLY_CO2_GOAL_KG = 0.5f
+        private const val MAX_WEEKLY_CO2_GOAL_KG = 50.0f
+
+        /** Kinetic Eco Tracker first-run onboarding completed flag. */
+        private const val KEY_ONBOARDING_DONE = "kinetic_onboarding_done"
+
+        /** True after the user has tapped "Get started" on the welcome splash. */
+        private const val KEY_WELCOME_SEEN = "kinetic_welcome_seen"
+
+        /**
+         * True once the user has discovered the dashboard's "tap-to-cycle"
+         * gesture on the hero card's CO₂ equivalency line — either by tapping
+         * it or by silently outliving the onboarding hint visibility window.
+         * Used to render a one-time pulse + caption ("Tap to switch comparison")
+         * that disappears for good after the first tap.
+         */
+        private const val KEY_HERO_EQUIVALENCY_HINT_SEEN = "kinetic_hero_equivalency_hint_seen"
+
+        /**
+         * Version of the onboarding flow this device has completed. Bumping
+         * [CURRENT_ONBOARDING_FLOW_VERSION] forces a one-time re-run of the
+         * onboarding flow for existing users on next launch (see
+         * [migrateOnboardingFlowIfNeeded]).
+         *
+         * v1 = original 3-step flow (Welcome+features / Permissions / Profile)
+         * v2 = split flow with pre-login Welcome, post-login Description, and
+         *      profile-photo capture in Profile setup
+         */
+        private const val KEY_ONBOARDING_FLOW_VERSION = "kinetic_onboarding_flow_version"
+        private const val CURRENT_ONBOARDING_FLOW_VERSION = 2
     }
     
     /**
-     * Save user's physical profile
+     * Save user's physical profile.
+     *
+     * Persists [UserPhysicalProfile.birthDateMs] under [KEY_BIRTH_DATE_MS] when
+     * present, and explicitly clears any legacy [KEY_AGE] entry so the
+     * one-time migration in [loadPhysicalProfile] doesn't keep firing on
+     * subsequent loads.
      */
     fun savePhysicalProfile(profile: UserPhysicalProfile) {
-        prefs.edit().apply {
-            putFloat(KEY_WEIGHT, profile.weight.toFloat())
-            putFloat(KEY_HEIGHT, profile.height.toFloat())
-            putInt(KEY_AGE, profile.age)
-            putString(KEY_GENDER, profile.gender.name)
-            apply()
+        val editor = prefs.edit()
+            .putFloat(KEY_WEIGHT, profile.weight.toFloat())
+            .putFloat(KEY_HEIGHT, profile.height.toFloat())
+            .putString(KEY_GENDER, profile.gender.name)
+            // Drop the legacy age entry on every save — once we own a birth
+            // date the raw int is dead weight.
+            .remove(KEY_AGE)
+
+        if (profile.birthDateMs != null) {
+            editor.putLong(KEY_BIRTH_DATE_MS, profile.birthDateMs)
+        } else {
+            editor.remove(KEY_BIRTH_DATE_MS)
         }
-        android.util.Log.d("UserPrefsManager", "Physical profile saved: $profile")
+
+        val ok = editor.commit()
+        if (!ok) {
+            android.util.Log.e("UserPrefsManager", "Physical profile commit() failed")
+        }
+        android.util.Log.d("UserPrefsManager", "Physical profile saved (committed=$ok): $profile")
     }
-    
+
     /**
-     * Load user's physical profile
-     * Returns saved profile or default values if not set
+     * Load user's physical profile.
+     *
+     * **Migration:** the v1 schema stored a raw integer age under [KEY_AGE].
+     * For pre-v2 users we synthesise an approximate birth date — July 1 of
+     * `currentYear − savedAge` — and surface it via [UserPhysicalProfile.birthDateMs].
+     * Mid-year is the lowest-error fallback when we don't know the actual
+     * month/day; the user can always refine it from Settings. The legacy
+     * key is wiped on the next [savePhysicalProfile] call.
+     *
+     * Returns the saved profile, or sensible defaults when nothing is stored.
      */
     fun loadPhysicalProfile(): UserPhysicalProfile {
         val weight = prefs.getFloat(KEY_WEIGHT, DEFAULT_WEIGHT.toFloat()).toDouble()
         val height = prefs.getFloat(KEY_HEIGHT, DEFAULT_HEIGHT.toFloat()).toDouble()
-        val age = prefs.getInt(KEY_AGE, DEFAULT_AGE)
         val genderString = prefs.getString(KEY_GENDER, DEFAULT_GENDER) ?: DEFAULT_GENDER
         val gender = try {
             Gender.valueOf(genderString)
         } catch (e: Exception) {
             Gender.MALE
         }
-        
+
+        val birthDateMs: Long? = when {
+            prefs.contains(KEY_BIRTH_DATE_MS) -> prefs.getLong(KEY_BIRTH_DATE_MS, 0L).takeIf { it > 0L }
+            prefs.contains(KEY_AGE) -> {
+                val legacyAge = prefs.getInt(KEY_AGE, DEFAULT_AGE)
+                approximateBirthDateMsFromAge(legacyAge)
+            }
+            else -> null
+        }
+
         val profile = UserPhysicalProfile(
             weight = weight,
             height = height,
-            age = age,
+            birthDateMs = birthDateMs,
             gender = gender
         )
         android.util.Log.d("UserPrefsManager", "Physical profile loaded: $profile")
         return profile
+    }
+
+    /**
+     * Estimate a birth date from a saved whole-year age. Uses July 1 (UTC) of
+     * `currentYear − age` so the resulting derived age round-trips back to
+     * the same value regardless of when in the year the migration runs —
+     * a January load of an age-30 record yields a birth date that still
+     * derives to 30 in July.
+     */
+    private fun approximateBirthDateMsFromAge(age: Int): Long {
+        val cal = java.util.Calendar.getInstance().apply {
+            val currentYear = get(java.util.Calendar.YEAR)
+            clear()
+            set(currentYear - age.coerceAtLeast(0), java.util.Calendar.JULY, 1, 0, 0, 0)
+            set(java.util.Calendar.MILLISECOND, 0)
+        }
+        return cal.timeInMillis
     }
     
     /**
@@ -106,6 +258,65 @@ class UserPreferencesManager(context: Context) {
      */
     fun hasPhysicalProfile(): Boolean {
         return prefs.contains(KEY_WEIGHT)
+    }
+
+    fun saveVehicleProfile(profile: VehicleProfile) {
+        prefs.edit()
+            .putString(KEY_VEHICLE_PRIMARY_FUEL, profile.primaryFuelType.name)
+            .putString(KEY_VEHICLE_ICE_FUEL, profile.iceFuel.name)
+            .putString(KEY_VEHICLE_DRIVING_CC, profile.drivingCcBand.name)
+            .putString(KEY_VEHICLE_BODY_TYPE, profile.bodyType.name)
+            .putString(KEY_VEHICLE_EV_CLASS, profile.electricVehicleClass.name)
+            .putString(KEY_VEHICLE_EV_MOTOR_POWER, profile.electricMotorPower.name)
+            .putString(KEY_VEHICLE_TRAIN, profile.trainPropulsion.name)
+            .putString(KEY_VEHICLE_AIRCRAFT, profile.aircraftCategory.name)
+            // Drop the legacy EV-class key on save so old installs don't keep
+            // a stale shadow value alongside the new one.
+            .remove(KEY_VEHICLE_EV_ROAD)
+            .apply()
+    }
+
+    fun loadVehicleProfile(): VehicleProfile {
+        val iceFuel = IceFuel.fromStoredName(prefs.getString(KEY_VEHICLE_ICE_FUEL, null))
+
+        // Primary fuel type was added in v2 of the vehicle profile. If it's
+        // missing, infer it from the legacy iceFuel — every legacy profile
+        // was either Petrol or Diesel (Electric was a separate per-activity
+        // setting), so this preserves intent for users upgrading the app.
+        val primaryFuelType = if (prefs.contains(KEY_VEHICLE_PRIMARY_FUEL)) {
+            PrimaryFuelType.fromStoredName(prefs.getString(KEY_VEHICLE_PRIMARY_FUEL, null))
+        } else {
+            PrimaryFuelType.fromLegacyIceFuel(iceFuel)
+        }
+
+        // Body type was added in v2; sedan (1.0× multiplier) is the safe
+        // default that leaves combustion factors visually unchanged for
+        // existing users until they pick something different.
+        val bodyType = VehicleBodyType.fromStoredName(prefs.getString(KEY_VEHICLE_BODY_TYPE, null))
+
+        // EV class is also v2. If the user had the old Car/Motorcycle key set,
+        // map Motorcycle → 2-wheeler and Car → Car. Brand-new installs land
+        // on the default (Car).
+        val electricVehicleClass = if (prefs.contains(KEY_VEHICLE_EV_CLASS)) {
+            ElectricVehicleClass.fromStoredName(prefs.getString(KEY_VEHICLE_EV_CLASS, null))
+        } else {
+            ElectricVehicleClass.fromLegacyElectricRoadVehicle(prefs.getString(KEY_VEHICLE_EV_ROAD, null))
+        }
+
+        val electricMotorPower = ElectricMotorPowerBand.fromStoredName(
+            prefs.getString(KEY_VEHICLE_EV_MOTOR_POWER, null)
+        )
+
+        return VehicleProfile(
+            primaryFuelType = primaryFuelType,
+            iceFuel = iceFuel,
+            drivingCcBand = DrivingEngineCcBand.fromStoredName(prefs.getString(KEY_VEHICLE_DRIVING_CC, null)),
+            bodyType = bodyType,
+            electricVehicleClass = electricVehicleClass,
+            electricMotorPower = electricMotorPower,
+            trainPropulsion = TrainPropulsion.fromStoredName(prefs.getString(KEY_VEHICLE_TRAIN, null)),
+            aircraftCategory = AircraftCategory.fromStoredName(prefs.getString(KEY_VEHICLE_AIRCRAFT, null))
+        )
     }
     
     /**
@@ -198,6 +409,18 @@ class UserPreferencesManager(context: Context) {
     }
 
     /**
+     * Set by tracking idle auto-stop; cleared when a new session starts. While true, [AutoStartMonitorService]
+     * and in-app step auto-start may resume tracking when movement is detected.
+     */
+    fun setPendingResumeAfterIdleAutoStop(pending: Boolean) {
+        prefs.edit().putBoolean(KEY_PENDING_RESUME_AFTER_IDLE_AUTO_STOP, pending).apply()
+    }
+
+    fun getPendingResumeAfterIdleAutoStop(): Boolean {
+        return prefs.getBoolean(KEY_PENDING_RESUME_AFTER_IDLE_AUTO_STOP, false)
+    }
+
+    /**
      * Set idle stop timeout (minutes of inactivity before auto-stop). Valid: 3, 5, 10.
      */
     fun setIdleStopMinutes(minutes: Int) {
@@ -248,17 +471,56 @@ class UserPreferencesManager(context: Context) {
     }
 
     /**
-     * Save theme preference. "system" = follow device, "light", "dark"
+     * Save theme preference. Only `"light"` or `"dark"` are accepted now —
+     * any other value is normalised to `"dark"` to match the migration that
+     * runs on launch.
      */
     fun setThemeMode(mode: String) {
-        prefs.edit().putString(KEY_THEME_MODE, mode).apply()
+        val normalised = if (mode == "light") "light" else "dark"
+        prefs.edit().putString(KEY_THEME_MODE, normalised).apply()
     }
 
     /**
-     * Load theme preference. Returns "system" if not set.
+     * Load theme preference. Returns `"dark"` by default. Existing devices
+     * with a stored `"system"` value will have already been migrated to a
+     * concrete `"light"` / `"dark"` by [migrateThemeIfNeeded].
      */
     fun getThemeMode(): String {
-        return prefs.getString(KEY_THEME_MODE, "system") ?: "system"
+        return when (prefs.getString(KEY_THEME_MODE, "dark")) {
+            "light" -> "light"
+            else -> "dark"
+        }
+    }
+
+    /**
+     * One-time migration from the old 3-mode + custom-accent world to the new
+     * Light/Dark-only world. Pass the device's *current* dark-mode state
+     * (resolved via `Configuration.UI_MODE_NIGHT_MASK` in `MainActivity`) so
+     * users previously on `"system"` get pinned to whatever System resolves to
+     * right now — exactly matching the visual experience they had a moment
+     * before opening the app.
+     *
+     * Safe to call on every launch; short-circuits when already migrated.
+     */
+    fun migrateThemeIfNeeded(systemIsDark: Boolean) {
+        val storedVersion = prefs.getInt(KEY_THEME_FLOW_VERSION, 0)
+        if (storedVersion >= CURRENT_THEME_FLOW_VERSION) return
+
+        val priorMode = prefs.getString(KEY_THEME_MODE, null)
+        val resolvedMode = when (priorMode) {
+            "light" -> "light"
+            "dark" -> "dark"
+            // Either explicitly "system" or unset (fresh install): snapshot to
+            // whatever the device is on right now. Fresh installs land here too,
+            // so the first launch already feels native to the user's device.
+            else -> if (systemIsDark) "dark" else "light"
+        }
+
+        prefs.edit()
+            .putString(KEY_THEME_MODE, resolvedMode)
+            .remove(KEY_THEME_ACCENT_ARGB)
+            .putInt(KEY_THEME_FLOW_VERSION, CURRENT_THEME_FLOW_VERSION)
+            .apply()
     }
 
     /** Save floating play button position (0-1 fraction of container). */
@@ -276,12 +538,110 @@ class UserPreferencesManager(context: Context) {
             prefs.getFloat(KEY_FLOATING_BUTTON_Y, DEFAULT_FLOATING_BUTTON_Y)
         )
     }
+
+    /** True if the user accepted the current in-app terms & privacy document version. */
+    fun hasAcceptedCurrentTerms(): Boolean {
+        return prefs.getString(KEY_TERMS_ACCEPTED_VERSION, null) == CURRENT_TERMS_DOCUMENT_VERSION
+    }
+
+    /** Persist acceptance of the bundled terms (call after checkbox + Continue). */
+    fun setTermsAccepted() {
+        prefs.edit()
+            .putString(KEY_TERMS_ACCEPTED_VERSION, CURRENT_TERMS_DOCUMENT_VERSION)
+            .commit()
+    }
     
+    // ── Kinetic onboarding ────────────────────────────────────────────────────
+
+    fun isOnboardingDone(): Boolean =
+        prefs.getBoolean(KEY_ONBOARDING_DONE, false)
+
+    fun setOnboardingDone() {
+        prefs.edit().putBoolean(KEY_ONBOARDING_DONE, true).apply()
+    }
+
+    /** Resets the onboarding-done flag so the user is sent through onboarding again. */
+    fun clearOnboardingDone() {
+        prefs.edit().remove(KEY_ONBOARDING_DONE).apply()
+    }
+
+    /** True after the user taps "Get started" on the pre-login welcome splash. */
+    fun hasSeenWelcome(): Boolean =
+        prefs.getBoolean(KEY_WELCOME_SEEN, false)
+
+    fun setWelcomeSeen() {
+        prefs.edit().putBoolean(KEY_WELCOME_SEEN, true).apply()
+    }
+
     /**
-     * Clear all preferences (for logout)
+     * True once the dashboard hero's "Tap to switch comparison" hint has been
+     * dismissed. The hint is rendered as a subtle pulse on the refresh icon
+     * plus a caption under the equivalency line; tapping the line marks it
+     * seen so it never reappears.
+     */
+    fun hasSeenHeroEquivalencyHint(): Boolean =
+        prefs.getBoolean(KEY_HERO_EQUIVALENCY_HINT_SEEN, false)
+
+    fun setHeroEquivalencyHintSeen() {
+        prefs.edit().putBoolean(KEY_HERO_EQUIVALENCY_HINT_SEEN, true).apply()
+    }
+
+    /**
+     * One-time migration: when the onboarding flow shape changes (a new
+     * version constant), reset the per-device flags so existing users walk
+     * through the new flow once. Call this once during MainActivity#onCreate.
+     */
+    fun migrateOnboardingFlowIfNeeded() {
+        val storedVersion = prefs.getInt(KEY_ONBOARDING_FLOW_VERSION, 0)
+        if (storedVersion >= CURRENT_ONBOARDING_FLOW_VERSION) return
+        prefs.edit()
+            .remove(KEY_ONBOARDING_DONE)
+            .remove(KEY_WELCOME_SEEN)
+            .putInt(KEY_ONBOARDING_FLOW_VERSION, CURRENT_ONBOARDING_FLOW_VERSION)
+            .apply()
+    }
+
+    // ── Weekly digest FCM preferences ─────────────────────────────────────────
+
+    fun isWeeklyDigestEnabled(): Boolean =
+        prefs.getBoolean(KEY_WEEKLY_DIGEST_ENABLED, true)
+
+    fun setWeeklyDigestEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_WEEKLY_DIGEST_ENABLED, enabled).apply()
+    }
+
+    // ── Personal weekly CO₂-saved goal ────────────────────────────────────────
+
+    /**
+     * Returns the user's weekly CO₂-saved goal in kilograms, clamped to the
+     * supported range. Defaults to 5 kg/week — the value used as the visual
+     * "fully grown" reference for the sprouting plant when no goal has been
+     * set yet, so behaviour is identical for first-launch users.
+     */
+    fun getWeeklyCo2GoalKg(): Float {
+        val raw = prefs.getFloat(KEY_WEEKLY_CO2_GOAL_KG, DEFAULT_WEEKLY_CO2_GOAL_KG)
+        return raw.coerceIn(MIN_WEEKLY_CO2_GOAL_KG, MAX_WEEKLY_CO2_GOAL_KG)
+    }
+
+    /**
+     * Persists the user's weekly CO₂-saved goal in kilograms, clamping to
+     * the supported range so accidental UI inputs (e.g. a slider scrolled
+     * past its label) can't poison the value.
+     */
+    fun setWeeklyCo2GoalKg(goalKg: Float) {
+        val clamped = goalKg.coerceIn(MIN_WEEKLY_CO2_GOAL_KG, MAX_WEEKLY_CO2_GOAL_KG)
+        prefs.edit().putFloat(KEY_WEEKLY_CO2_GOAL_KG, clamped).apply()
+    }
+
+    /**
+     * Clear all preferences (for logout). Preserves terms acceptance so users are not prompted again.
      */
     fun clearAll() {
+        val terms = prefs.getString(KEY_TERMS_ACCEPTED_VERSION, null)
         prefs.edit().clear().apply()
-        android.util.Log.d("UserPrefsManager", "All preferences cleared")
+        if (terms != null) {
+            prefs.edit().putString(KEY_TERMS_ACCEPTED_VERSION, terms).apply()
+        }
+        android.util.Log.d("UserPrefsManager", "All preferences cleared (terms acceptance preserved)")
     }
 }

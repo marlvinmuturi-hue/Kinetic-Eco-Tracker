@@ -83,7 +83,7 @@ class TrackingService : LifecycleService() {
     private var lastUpdateTime: Long = 0
     private var smoothedSpeed: Float = 0f
     private val activityHistory = mutableListOf<ActivityType>()
-    private val ACTIVITY_HISTORY_SIZE = 2  // Reduced to 2 for faster response (speed lag fix)
+    private val ACTIVITY_HISTORY_SIZE = 5
     
     // Activity persistence tracking - how long current activity has been ongoing
     private var activityStartTime: Long = System.currentTimeMillis()
@@ -1014,6 +1014,18 @@ class TrackingService : LifecycleService() {
         return speed
     }
     
+    // Returns outlier-gated raw speed for display (no EMA lag), matching the same outlier window
+    // used by smoothSpeedWithOutlierRejection so spikes are suppressed in both paths.
+    private fun rejectOutlierForDisplay(newSpeed: Float, activity: ActivityType): Float {
+        if (smoothedSpeed == 0f) return newSpeed
+        val maxChange = when {
+            activity == ActivityType.FLYING -> MAX_SPEED_CHANGE_FLYING
+            activity == ActivityType.WALKING || activity == ActivityType.IDLE -> MAX_SPEED_CHANGE_WALKING
+            else -> MAX_SPEED_CHANGE
+        }
+        return if (Math.abs(newSpeed - smoothedSpeed) > maxChange) smoothedSpeed else newSpeed
+    }
+
     private fun smoothSpeedWithOutlierRejection(newSpeed: Float, activity: ActivityType): Float {
         // First reading
         if (smoothedSpeed == 0f) {
@@ -1439,8 +1451,8 @@ class TrackingService : LifecycleService() {
             }
         }
         
-        // Get motion pattern for smart classification
         val motionPattern = sensorService.getMotionPattern()
+        val sensorHint = sensorService.getSensorHint()
         val hasAccelerometer = sensorService.hasAccelerometer()
         
         speed = applyPedestrianGpsSanityCap(
@@ -1451,16 +1463,12 @@ class TrackingService : LifecycleService() {
             horizontalAccuracyM = position.accuracy
         )
         
-        // === STEP 3: Classify activity with altitude awareness ===
         val preliminaryActivity = if (_manualActivityMode.value != null) {
             _manualActivityMode.value!!
         } else {
             locationService.classifyActivityWithAltitude(
-                speed,
-                currentAltitude,
-                previousAltitude,
-                motionPattern,
-                hasAccelerometer
+                speed, currentAltitude, previousAltitude,
+                motionPattern, hasAccelerometer, sensorHint
             )
         }
         
@@ -1490,20 +1498,18 @@ class TrackingService : LifecycleService() {
             }
         }
 
-        // Apply EMA smoothing with outlier rejection
+        // Display: outlier-gated raw GPS speed (no EMA lag) for real-time feel.
+        // Classification: EMA-smoothed speed for stable activity decisions.
+        _currentSpeed.value = rejectOutlierForDisplay(speed, preliminaryActivity)
         speed = smoothSpeedWithOutlierRejection(speed, preliminaryActivity)
-        _currentSpeed.value = speed
-        
+
         // Reclassify with smoothed speed
         var refinedActivity = if (_manualActivityMode.value != null) {
             _manualActivityMode.value!!
         } else {
             locationService.classifyActivityWithAltitude(
-                speed,
-                currentAltitude,
-                previousAltitude,
-                motionPattern,
-                hasAccelerometer
+                speed, currentAltitude, previousAltitude,
+                motionPattern, hasAccelerometer, sensorHint
             )
         }
         
@@ -1513,9 +1519,12 @@ class TrackingService : LifecycleService() {
             refinedActivity = when {
                 speed < SpeedThresholds.IDLE_SPEED_MAX -> ActivityType.IDLE
                 speed >= SpeedThresholds.DRIVING_MIN -> {
-                    // >= 18 km/h: Never RUNNING/WALKING/IDLE (strict gate)
-                    if (refinedActivity == ActivityType.FLYING) ActivityType.FLYING
-                    else ActivityType.DRIVING
+                    // >= 18 km/h: FLYING, CYCLING (sensor-confirmed), or DRIVING
+                    when (refinedActivity) {
+                        ActivityType.FLYING -> ActivityType.FLYING
+                        ActivityType.CYCLING -> ActivityType.CYCLING
+                        else -> ActivityType.DRIVING
+                    }
                 }
                 else -> enforceActivitySpeedConsistency(refinedActivity, speed, currentAltitude)
             }
@@ -1548,6 +1557,7 @@ class TrackingService : LifecycleService() {
                 previousAltitude = previousAltitude,
                 motionPattern = motionPattern,
                 hasAccelerometer = hasAccelerometer,
+                sensorHint = sensorHint,
                 now = now
             )
             evaluateManualOverrideMismatch(shadow, manual, now)
@@ -1784,16 +1794,16 @@ class TrackingService : LifecycleService() {
         if (_manualActivityMode.value == null) {
             when (activity) {
                 ActivityType.DRIVING, ActivityType.ELECTRIC_VEHICLE, ActivityType.MOTORCYCLE, ActivityType.TRAIN -> {
-                    if (_currentActivity.value != activity) {
+                    activityHistory.add(activity)
+                    if (activityHistory.size > ACTIVITY_HISTORY_SIZE) activityHistory.removeAt(0)
+                    val motorCount = activityHistory.count { it == activity }
+                    if (motorCount >= 2 && _currentActivity.value != activity) {
                         activityStartTime = System.currentTimeMillis()
                         activityDurationSeconds = 0
                         idleStartTimeMs = 0L
                         _currentActivity.value = activity
-                        android.util.Log.d("TrackingService", "Activity immediate: → $activity (motor mode, no debounce)")
+                        android.util.Log.d("TrackingService", "Activity: → $activity (2-reading motor confirm)")
                     }
-                    activityHistory.clear()
-                    activityHistory.add(activity)
-                    activityHistory.add(activity)
                     return
                 }
                 ActivityType.FLYING -> {
@@ -1877,22 +1887,22 @@ class TrackingService : LifecycleService() {
                 (currentActivity == ActivityType.ELECTRIC_VEHICLE && mostCommon == ActivityType.MOTORCYCLE) ||
                 (currentActivity == ActivityType.MOTORCYCLE && mostCommon == ActivityType.ELECTRIC_VEHICLE)
             var requiredConsistency = when {
-                isStartupPhase -> 1  // First 10s: fast convergence
-                mostCommon == ActivityType.IDLE -> 1  // Speed < 0.5 km/h → IDLE immediately
-                isAdjacentTransition -> 1  // WALKING↔RUNNING, RUNNING↔DRIVING → immediate switch
+                isStartupPhase -> 1          // First 10s: fast convergence
+                mostCommon == ActivityType.IDLE -> 1  // Below 0.5 km/h → IDLE immediately
+                isAdjacentTransition -> 2    // WALKING↔RUNNING, RUNNING↔DRIVING: 2/5
                 activityDurationSeconds > 120 -> {
                     android.util.Log.d("TrackingService",
-                        "Activity persistence: $currentActivity ongoing for ${activityDurationSeconds}s - requiring 3/3 consistency")
-                    3
+                        "Activity persistence: $currentActivity for ${activityDurationSeconds}s — requiring 4/5")
+                    4
                 }
-                else -> if (isSignificantChange) 2 else 3
+                else -> if (isSignificantChange) 3 else 4
             }
 
-            // Incompatible transitions require ALL readings to be consistent, regardless of duration
+            // Incompatible transitions require full agreement
             if (!isCompatible && mostCommon != ActivityType.IDLE) {
-                requiredConsistency = 3
-                android.util.Log.d("TrackingService", 
-                    "Incompatible transition: $currentActivity -> $mostCommon - requiring 3/3 consistency")
+                requiredConsistency = 5
+                android.util.Log.d("TrackingService",
+                    "Incompatible transition: $currentActivity -> $mostCommon — requiring 5/5")
             }
             
             // Check if we have enough consistent readings to switch
@@ -2467,19 +2477,19 @@ class TrackingService : LifecycleService() {
         previousAltitude: Double,
         motionPattern: MotionPattern,
         hasAccelerometer: Boolean,
+        sensorHint: SensorHint,
         @Suppress("UNUSED_PARAMETER") now: Long
     ): ActivityType {
         val raw = locationService.classifyActivityWithAltitude(
-            speed,
-            currentAltitude,
-            previousAltitude,
-            motionPattern,
-            hasAccelerometer
+            speed, currentAltitude, previousAltitude,
+            motionPattern, hasAccelerometer, sensorHint
         )
         return when {
             speed < SpeedThresholds.IDLE_SPEED_MAX -> ActivityType.IDLE
-            speed >= SpeedThresholds.DRIVING_MIN -> {
-                if (raw == ActivityType.FLYING) ActivityType.FLYING else ActivityType.DRIVING
+            speed >= SpeedThresholds.DRIVING_MIN -> when (raw) {
+                ActivityType.FLYING -> ActivityType.FLYING
+                ActivityType.CYCLING -> ActivityType.CYCLING
+                else -> ActivityType.DRIVING
             }
             else -> raw
         }

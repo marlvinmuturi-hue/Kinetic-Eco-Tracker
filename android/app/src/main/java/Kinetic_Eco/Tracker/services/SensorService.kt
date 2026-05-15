@@ -19,7 +19,11 @@ data class SensorData(
     val accelY: Float = 0f,
     val accelZ: Float = 0f,
     val isAccelerometerReading: Boolean = false,
+    val gyroX: Float = 0f,
+    val gyroY: Float = 0f,
+    val gyroZ: Float = 0f,
     val stepCount: Int = 0,
+    /** Angular rate magnitude (rad/s) from gyro X/Y/Z — used together with accel for fusion heuristics. */
     val rotationRate: Float = 0f,
     val pressure: Float = 0f,  // Barometric pressure in hPa
     val timestamp: Long = System.currentTimeMillis()
@@ -35,12 +39,91 @@ data class AccelerometerSample(
 )
 
 /**
- * Describes the motion pattern detected from acceleration data
+ * Describes the motion pattern detected from acceleration data (legacy — used for backward compat).
  */
 enum class MotionPattern {
-    UNKNOWN,    // Not enough data yet
-    BOUNCY,     // High variance - likely running/walking
-    SMOOTH      // Low variance - likely driving
+    UNKNOWN,
+    BOUNCY,
+    SMOOTH
+}
+
+/**
+ * Rich activity hint from fusing accelerometer + gyroscope + step counter.
+ * Gives [LocationService.classifyActivitySmart] enough signal to auto-detect cycling
+ * and reliably separate pedestrian from motor motion.
+ */
+enum class SensorHint {
+    UNKNOWN,        // Not enough data yet
+    STILL,          // Near-zero motion — stationary
+    ON_FOOT,        // Steps active OR high body accel/rotation → walking or running
+    CYCLING_LIKELY, // Medium rhythmic accel, low gyro, no steps → cyclist pedalling
+    MOTOR_LIKELY    // Low smooth accel, low gyro, no steps → car / motorcycle / train
+}
+
+/**
+ * Multi-feature activity classifier using accelerometer magnitude variance,
+ * gyroscope mean, and step-counter events together.
+ *
+ * Key insight: the step counter is the most reliable on-foot signal.
+ * Without steps, accel variance and gyro magnitude distinguish
+ * cycling (medium rhythmic accel, low gyro) from motor travel (very low accel + gyro).
+ */
+class SensorActivityClassifier(private val deviceHasGyro: Boolean = true) {
+    companion object {
+        private const val WINDOW_MS   = 5_000L
+        private const val MIN_SAMPLES = 20
+
+        // Accel variance thresholds (m/s² squared)
+        private const val ACCEL_STILL       = 0.10f
+        private const val ACCEL_MOTOR_MAX   = 0.70f  // below = motor-smooth or still
+        private const val ACCEL_CYCLING_MAX = 5.0f   // above = foot activity (running)
+
+        // Gyro mean thresholds (rad/s)
+        private const val GYRO_STILL     = 0.06f
+        private const val GYRO_MOTOR_MAX = 0.18f     // below + no steps = cycling or motor
+
+        private const val STEP_ACTIVE_WINDOW_MS = 5_000L
+    }
+
+    private data class Sample(val ms: Long, val accel: Float, val gyro: Float)
+    private val samples   = mutableListOf<Sample>()
+    private var lastStepMs = 0L
+
+    fun addSample(accel: Float, gyro: Float, nowMs: Long = System.currentTimeMillis()) {
+        val cutoff = nowMs - WINDOW_MS
+        samples.removeAll { it.ms < cutoff }
+        samples.add(Sample(nowMs, accel, gyro))
+    }
+
+    fun recordStep(nowMs: Long = System.currentTimeMillis()) { lastStepMs = nowMs }
+
+    fun classify(): SensorHint {
+        if (samples.size < MIN_SAMPLES) return SensorHint.UNKNOWN
+
+        val accelVar  = variance(samples.map { it.accel })
+        val gyroMean  = if (deviceHasGyro) samples.map { it.gyro }.average().toFloat() else 0f
+        val stepActive = lastStepMs > 0 &&
+            (System.currentTimeMillis() - lastStepMs) < STEP_ACTIVE_WINDOW_MS
+
+        if (stepActive) return SensorHint.ON_FOOT
+
+        val gyroOk = !deviceHasGyro || gyroMean < GYRO_MOTOR_MAX
+        val gyroStill = !deviceHasGyro || gyroMean < GYRO_STILL
+
+        if (accelVar < ACCEL_STILL && gyroStill) return SensorHint.STILL
+        if (accelVar < ACCEL_MOTOR_MAX && gyroOk)  return SensorHint.MOTOR_LIKELY
+        if (accelVar < ACCEL_CYCLING_MAX && gyroOk) return SensorHint.CYCLING_LIKELY
+        return SensorHint.ON_FOOT
+    }
+
+    fun reset() { samples.clear(); lastStepMs = 0L }
+    fun hasEnoughData() = samples.size >= MIN_SAMPLES
+
+    private fun variance(v: List<Float>): Float {
+        if (v.isEmpty()) return 0f
+        val mean = v.average().toFloat()
+        return v.map { (it - mean) * (it - mean) }.average().toFloat()
+    }
 }
 
 /**
@@ -121,9 +204,9 @@ class SensorService(private val context: Context) {
     private val gyroscope = sensorManager.getDefaultSensor(Sensor.TYPE_GYROSCOPE)
     private val barometer = sensorManager.getDefaultSensor(Sensor.TYPE_PRESSURE)
 
-    // Pattern analyzer for detecting running vs driving
     val patternAnalyzer = AccelerationPatternAnalyzer()
-    
+    val sensorClassifier = SensorActivityClassifier(deviceHasGyro = gyroscope != null)
+
     // Barometric altitude tracking
     private var currentPressure: Float = 1013.25f  // Standard sea level pressure
     private var referenceAltitude: Double? = null
@@ -132,6 +215,35 @@ class SensorService(private val context: Context) {
     fun getSensorUpdates(): Flow<SensorData> = callbackFlow {
         var currentSteps = 0
         var initialSteps = -1
+
+        var lastLax = 0f
+        var lastLay = 0f
+        var lastLaz = 0f
+        var lastAccelMag = 0f
+
+        var lastGyroX = 0f
+        var lastGyroY = 0f
+        var lastGyroZ = 0f
+        var lastGyroMag = 0f
+
+        fun emitSnapshot(isAccelerometerReading: Boolean, eventTimestampNs: Long) {
+            trySend(
+                SensorData(
+                    acceleration = lastAccelMag,
+                    accelX = lastLax,
+                    accelY = lastLay,
+                    accelZ = lastLaz,
+                    isAccelerometerReading = isAccelerometerReading,
+                    gyroX = lastGyroX,
+                    gyroY = lastGyroY,
+                    gyroZ = lastGyroZ,
+                    rotationRate = lastGyroMag,
+                    stepCount = currentSteps,
+                    pressure = currentPressure,
+                    timestamp = eventTimestampNs / 1_000_000L
+                )
+            )
+        }
         
         // Log step counter availability
         android.util.Log.d("SensorService", "Step counter available: ${stepCounter != null}")
@@ -145,19 +257,16 @@ class SensorService(private val context: Context) {
                         val y = event.values[1]
                         val z = event.values[2]
                         val magnitude = sqrt(x * x + y * y + z * z)
-                        
-                        // Add sample to pattern analyzer
+
+                        lastLax = x
+                        lastLay = y
+                        lastLaz = z
+                        lastAccelMag = magnitude
+
                         patternAnalyzer.addSample(magnitude)
-                        
-                        trySend(SensorData(
-                            acceleration = magnitude,
-                            accelX = x,
-                            accelY = y,
-                            accelZ = z,
-                            isAccelerometerReading = true,
-                            stepCount = currentSteps,
-                            pressure = currentPressure
-                        ))
+                        sensorClassifier.addSample(magnitude, lastGyroMag)
+
+                        emitSnapshot(isAccelerometerReading = true, event.timestamp)
                     }
                     Sensor.TYPE_STEP_COUNTER -> {
                         val steps = event.values[0].toInt()
@@ -167,28 +276,23 @@ class SensorService(private val context: Context) {
                         }
                         currentSteps = steps - initialSteps
                         android.util.Log.d("SensorService", "Step counter event - Raw: $steps, Current: $currentSteps")
-                        trySend(SensorData(
-                            stepCount = currentSteps,
-                            pressure = currentPressure
-                        ))
+                        sensorClassifier.recordStep()
+                        emitSnapshot(isAccelerometerReading = false, event.timestamp)
                     }
                     Sensor.TYPE_GYROSCOPE -> {
-                        val x = event.values[0]
-                        val y = event.values[1]
-                        val z = event.values[2]
-                        val rotationRate = sqrt(x * x + y * y + z * z)
-                        trySend(SensorData(
-                            rotationRate = rotationRate, 
-                            stepCount = currentSteps,
-                            pressure = currentPressure
-                        ))
+                        val gx = event.values[0]
+                        val gy = event.values[1]
+                        val gz = event.values[2]
+                        val rotationRate = sqrt(gx * gx + gy * gy + gz * gz)
+                        lastGyroX = gx
+                        lastGyroY = gy
+                        lastGyroZ = gz
+                        lastGyroMag = rotationRate
+                        emitSnapshot(isAccelerometerReading = false, event.timestamp)
                     }
                     Sensor.TYPE_PRESSURE -> {
                         currentPressure = event.values[0]
-                        trySend(SensorData(
-                            stepCount = currentSteps,
-                            pressure = currentPressure
-                        ))
+                        emitSnapshot(isAccelerometerReading = false, event.timestamp)
                     }
                 }
             }
@@ -196,16 +300,16 @@ class SensorService(private val context: Context) {
             override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
         }
 
-        accelerometer?.let { 
-            sensorManager.registerListener(listener, it, SensorManager.SENSOR_DELAY_UI)
+        accelerometer?.let {
+            sensorManager.registerListener(listener, it, SensorManager.SENSOR_DELAY_GAME)
             android.util.Log.d("SensorService", "Accelerometer registered")
         }
-        stepCounter?.let { 
+        stepCounter?.let {
             sensorManager.registerListener(listener, it, SensorManager.SENSOR_DELAY_UI)
             android.util.Log.d("SensorService", "Step counter registered")
         } ?: android.util.Log.w("SensorService", "Step counter not available!")
-        gyroscope?.let { 
-            sensorManager.registerListener(listener, it, SensorManager.SENSOR_DELAY_UI)
+        gyroscope?.let {
+            sensorManager.registerListener(listener, it, SensorManager.SENSOR_DELAY_GAME)
             android.util.Log.d("SensorService", "Gyroscope registered")
         }
         barometer?.let { 
@@ -225,23 +329,20 @@ class SensorService(private val context: Context) {
     fun hasAccelerometer(): Boolean {
         return accelerometer != null
     }
+
+    fun hasGyroscope(): Boolean = gyroscope != null
     
     fun hasBarometer(): Boolean {
         return barometer != null
     }
 
-    /**
-     * Get the current motion pattern (BOUNCY = running, SMOOTH = driving)
-     */
-    fun getMotionPattern(): MotionPattern {
-        return patternAnalyzer.analyzePattern()
-    }
+    fun getMotionPattern(): MotionPattern = patternAnalyzer.analyzePattern()
 
-    /**
-     * Reset the pattern analyzer (call when tracking stops)
-     */
+    fun getSensorHint(): SensorHint = sensorClassifier.classify()
+
     fun resetPatternAnalyzer() {
         patternAnalyzer.reset()
+        sensorClassifier.reset()
     }
     
     /**

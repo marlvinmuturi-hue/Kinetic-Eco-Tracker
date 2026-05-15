@@ -15,13 +15,14 @@ import Kinetic_Eco.Tracker.data.*
 import java.util.concurrent.TimeUnit
 
 // Speed thresholds for ambiguous zone (15-22 km/h in m/s)
-// Motion pattern helps distinguish running vs driving near the 18 km/h boundary.
-// Above 22 km/h, speed always wins - DRIVING.
 private const val AMBIGUOUS_SPEED_MIN = 4.17f   // 15 km/h
-private const val AMBIGUOUS_SPEED_MAX = 6.11f   // 22 km/h (narrowed from 28)
+private const val AMBIGUOUS_SPEED_MAX = 6.11f   // 22 km/h
 
 // Minimum speed to never classify as IDLE (user requirement)
-private const val IDLE_OVERRIDE_THRESHOLD = 0.833f  // 3 km/h - never IDLE above this speed
+private const val IDLE_OVERRIDE_THRESHOLD = 0.833f  // 3 km/h
+
+// Cycling speed ceiling: sensor hint wins up to 50 km/h; above that → driving
+private const val MAX_CYCLING_SPEED = 13.9f  // 50 km/h
 
 class LocationService(private val context: Context) {
     private val fusedLocationClient: FusedLocationProviderClient =
@@ -113,11 +114,21 @@ class LocationService(private val context: Context) {
             }
         }
         
-        fusedLocationClient.requestLocationUpdates(
-            locationRequest,
-            locationCallback!!,
-            Looper.getMainLooper()
-        )
+        try {
+            fusedLocationClient.requestLocationUpdates(
+                locationRequest,
+                locationCallback!!,
+                Looper.getMainLooper()
+            )
+        } catch (e: SecurityException) {
+            android.util.Log.e(
+                "LocationService",
+                "requestLocationUpdates denied (grant location, including All the time for background tracking)",
+                e
+            )
+            close()
+            return@callbackFlow
+        }
         
         awaitClose {
             locationCallback?.let {
@@ -147,11 +158,17 @@ class LocationService(private val context: Context) {
             }
         }
         
-        fusedLocationClient.requestLocationUpdates(
-            warmUpLocationRequest,
-            locationCallback!!,
-            Looper.getMainLooper()
-        )
+        try {
+            fusedLocationClient.requestLocationUpdates(
+                warmUpLocationRequest,
+                locationCallback!!,
+                Looper.getMainLooper()
+            )
+        } catch (e: SecurityException) {
+            android.util.Log.e("LocationService", "Warm-up requestLocationUpdates denied", e)
+            close()
+            return@callbackFlow
+        }
         
         awaitClose {
             locationCallback?.let {
@@ -242,70 +259,54 @@ class LocationService(private val context: Context) {
         @Suppress("UNUSED_PARAMETER") currentAltitude: Double?,
         @Suppress("UNUSED_PARAMETER") previousAltitude: Double?,
         motionPattern: MotionPattern,
-        hasAccelerometer: Boolean
+        hasAccelerometer: Boolean,
+        sensorHint: SensorHint = SensorHint.UNKNOWN
     ): ActivityType {
-        // Below flying speed threshold - use smart classification (walking/running/driving)
         if (speed < SpeedThresholds.FLYING_MIN) {
-            return classifyActivitySmart(speed, motionPattern, hasAccelerometer)
+            return classifyActivitySmart(speed, motionPattern, hasAccelerometer, sensorHint)
         }
-        
-        // At or above flying speed threshold (~200 km/h) - FLYING (speed-only, no altitude check)
         return ActivityType.FLYING
     }
 
-    /**
-     * Smart activity classification that uses acceleration patterns in the ambiguous speed zone (15-28 km/h).
-     * - BOUNCY pattern (high variance) = Running
-     * - SMOOTH pattern (low variance) = Driving
-     * - Above 28 km/h: speed always wins → DRIVING (prevents bumpy roads misclassified as running)
-     * - UNKNOWN pattern or no accelerometer = Driving (default assumption)
-     * 
-     * @param speed Current speed in m/s
-     * @param motionPattern The detected motion pattern from accelerometer data
-     * @param hasAccelerometer Whether the device has an accelerometer
-     */
     fun classifyActivitySmart(
         speed: Float,
         motionPattern: MotionPattern,
-        hasAccelerometer: Boolean
+        hasAccelerometer: Boolean,
+        sensorHint: SensorHint = SensorHint.UNKNOWN
     ): ActivityType {
-        // Speed override: above 18 km/h is always driving.
-        // Prevents bumpy roads from being misclassified as running via BOUNCY motion pattern.
+        // Cycling: sensor classifier wins when speed is in the plausible cycling range
+        if (sensorHint == SensorHint.CYCLING_LIKELY &&
+            speed >= SpeedThresholds.CYCLING_MIN && speed < MAX_CYCLING_SPEED) {
+            return ActivityType.CYCLING
+        }
+
+        // Above 18 km/h without a cycling hint → driving
         if (speed >= SpeedThresholds.DRIVING_MIN) {
             return ActivityType.DRIVING
         }
-        // Outside ambiguous zone, use simple speed-based classification
+
+        // Outside the ambiguous zone, fall back to speed-only
         if (speed < AMBIGUOUS_SPEED_MIN || speed >= AMBIGUOUS_SPEED_MAX) {
-            return classifyActivity(speed)  // Already has IDLE override
+            return classifyActivity(speed)
         }
 
-        // In ambiguous zone (15-22 km/h), use acceleration pattern
+        // Ambiguous zone (15-22 km/h): use motion pattern
         val baseActivity = when {
             speed < SpeedThresholds.WALKING_MIN -> ActivityType.IDLE
             speed < SpeedThresholds.RUNNING_MIN -> ActivityType.WALKING
-            // Ambiguous zone: 15-22 km/h
-            else -> {
-                if (!hasAccelerometer) {
-                    // No accelerometer available, default to DRIVING
-                    ActivityType.DRIVING
-                } else {
-                    when (motionPattern) {
-                        MotionPattern.BOUNCY -> ActivityType.RUNNING  // High variance = running
-                        MotionPattern.SMOOTH -> ActivityType.DRIVING  // Low variance = driving
-                        MotionPattern.UNKNOWN -> ActivityType.DRIVING // Not enough data, assume driving
-                    }
-                }
+            else -> if (!hasAccelerometer) {
+                ActivityType.DRIVING
+            } else when (motionPattern) {
+                MotionPattern.BOUNCY -> ActivityType.RUNNING
+                MotionPattern.SMOOTH -> ActivityType.DRIVING
+                MotionPattern.UNKNOWN -> ActivityType.DRIVING
             }
         }
-        
-        // OVERRIDE: Never classify as IDLE if speed > 3 km/h
-        // This prevents showing IDLE when user is clearly moving
+
         if (baseActivity == ActivityType.IDLE && speed >= IDLE_OVERRIDE_THRESHOLD) {
-            android.util.Log.d("LocationService", 
-                "🚶 IDLE Override (Smart): Speed ${String.format("%.1f", speed * 3.6f)} km/h → WALKING (> 3 km/h threshold)")
             return ActivityType.WALKING
         }
-        
+
         return baseActivity
     }
     

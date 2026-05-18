@@ -9,11 +9,15 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.CalendarToday
+import androidx.compose.material.icons.filled.FitnessCenter
+import androidx.compose.material.icons.filled.Straighten
+import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -23,14 +27,13 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import Kinetic_Eco.Tracker.data.SessionStats
 import Kinetic_Eco.Tracker.data.UnitSystem
-import Kinetic_Eco.Tracker.ui.utils.usesMetricDistance
-import Kinetic_Eco.Tracker.ui.theme.*
-import Kinetic_Eco.Tracker.ui.utils.EnergyUnit
 import Kinetic_Eco.Tracker.ui.utils.format
 import Kinetic_Eco.Tracker.ui.utils.formatEnergy
 import Kinetic_Eco.Tracker.ui.components.SingleLineValueText
 import Kinetic_Eco.Tracker.ui.utils.formatTime
 import Kinetic_Eco.Tracker.viewmodel.AnalyticsViewModel
+import Kinetic_Eco.Tracker.ui.utils.EnergyUnit
+import Kinetic_Eco.Tracker.ui.utils.usesMetricDistance
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -64,7 +67,7 @@ fun SessionsListScreen(
             .fillMaxSize()
             .background(colorScheme.background)
             .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(12.dp)
+        verticalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         item {
             Row(
@@ -125,19 +128,21 @@ fun SessionCard(
         shape = RoundedCornerShape(12.dp)
     ) {
         Column(
-            modifier = Modifier.padding(16.dp)
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 14.dp, vertical = 12.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
+                verticalAlignment = Alignment.Top
             ) {
                 Column(modifier = Modifier.weight(1f)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(
                             imageVector = Icons.Default.CalendarToday,
                             contentDescription = stringResource(R.string.date),
-                            tint = colorScheme.primary,
+                            tint = colorScheme.onSurfaceVariant,
                             modifier = Modifier.size(16.dp)
                         )
                         Spacer(modifier = Modifier.width(8.dp))
@@ -154,62 +159,135 @@ fun SessionCard(
                         style = MaterialTheme.typography.labelSmall,
                         color = colorScheme.onSurfaceVariant
                     )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    SingleLineValueText(
-                        text = formatTime(session.totalDuration),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = colorScheme.onSurfaceVariant,
-                        modifier = Modifier.fillMaxWidth(),
-                        textAlign = TextAlign.Start
-                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.Timer,
+                            contentDescription = stringResource(R.string.duration_label),
+                            tint = colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Column {
+                            Text(
+                                text = stringResource(R.string.duration_label),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = colorScheme.onSurfaceVariant
+                            )
+                            SingleLineValueText(
+                                text = formatTime(session.totalDuration),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = colorScheme.onSurface,
+                                modifier = Modifier.fillMaxWidth(),
+                                textAlign = TextAlign.Start
+                            )
+                        }
+                    }
                 }
                 
-                Column(horizontalAlignment = Alignment.End) {
-                    SingleLineValueText(
-                        text = if (unitSystem.usesMetricDistance()) {
-                            "${(session.totalDistance / 1000.0).format(2)} km"
-                        } else {
-                            "${(session.totalDistance / 1609.344).format(2)} mi"
-                        },
-                        style = MaterialTheme.typography.titleMedium,
-                        color = colorScheme.secondary,
-                        fontWeight = FontWeight.Bold,
-                        modifier = Modifier.fillMaxWidth(),
-                        textAlign = TextAlign.End
-                    )
-                    SingleLineValueText(
-                        text = formatEnergy(session.caloriesBurned, energyUnit),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colorScheme.onSurfaceVariant,
-                        modifier = Modifier.fillMaxWidth(),
-                        textAlign = TextAlign.End
-                    )
+                // Must not use fillMaxWidth() here — it can measure as full row width and squeeze
+                // the weighted left column to zero (hiding date, duration, labels).
+                Column(
+                    horizontalAlignment = Alignment.End,
+                    modifier = Modifier.wrapContentWidth(Alignment.End)
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text(
+                                text = stringResource(R.string.distance),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = colorScheme.onSurfaceVariant
+                            )
+                            SingleLineValueText(
+                                text = if (unitSystem.usesMetricDistance()) {
+                                    "${(session.totalDistance / 1000.0).format(2)} km"
+                                } else {
+                                    "${(session.totalDistance / 1609.344).format(2)} mi"
+                                },
+                                style = MaterialTheme.typography.titleMedium,
+                                color = colorScheme.onSurface,
+                                fontWeight = FontWeight.Bold,
+                                textAlign = TextAlign.End
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Icon(
+                            imageVector = Icons.Default.Straighten,
+                            contentDescription = stringResource(R.string.distance),
+                            tint = colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(6.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        Column(horizontalAlignment = Alignment.End) {
+                            Text(
+                                text = stringResource(R.string.calories_burned),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = colorScheme.onSurfaceVariant
+                            )
+                            SingleLineValueText(
+                                text = formatEnergy(session.caloriesBurned, energyUnit),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colorScheme.onSurface,
+                                textAlign = TextAlign.End
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Icon(
+                            imageVector = Icons.Default.FitnessCenter,
+                            contentDescription = stringResource(R.string.calories_burned),
+                            tint = colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
                 }
             }
             
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(8.dp))
             
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(
-                        text = stringResource(R.string.co2_saved),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = colorScheme.onSurfaceVariant
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(
+                        painter = painterResource(R.drawable.ic_co2_carbon_neutral),
+                        contentDescription = stringResource(R.string.co2_saved),
+                        tint = colorScheme.secondary,
+                        modifier = Modifier.size(22.dp)
                     )
-                    SingleLineValueText(
-                        text = "${session.co2Conserved.format(2)} kg",
-                        style = MaterialTheme.typography.titleMedium,
-                        color = colorScheme.secondary,
-                        fontWeight = FontWeight.SemiBold,
-                        modifier = Modifier.fillMaxWidth(),
-                        textAlign = TextAlign.Start
-                    )
-                }
-                if (session.co2Emissions > 0) {
+                    Spacer(modifier = Modifier.width(10.dp))
                     Column {
+                        Text(
+                            text = stringResource(R.string.co2_saved),
+                            style = MaterialTheme.typography.labelMedium,
+                            color = colorScheme.onSurfaceVariant
+                        )
+                        SingleLineValueText(
+                            text = "${session.co2Conserved.format(2)} kg",
+                            style = MaterialTheme.typography.titleMedium,
+                            color = colorScheme.onSurface,
+                            fontWeight = FontWeight.SemiBold,
+                            textAlign = TextAlign.Start
+                        )
+                    }
+                }
+                Column(
+                    modifier = Modifier.weight(1f),
+                    horizontalAlignment = Alignment.End
+                ) {
+                    if (session.co2Emissions > 0) {
                         Text(
                             text = stringResource(R.string.co2_emitted),
                             style = MaterialTheme.typography.labelSmall,
@@ -219,9 +297,8 @@ fun SessionCard(
                         SingleLineValueText(
                             text = "${session.co2Emissions.format(2)} kg",
                             style = MaterialTheme.typography.bodySmall,
-                            color = Red500,
-                            modifier = Modifier.fillMaxWidth(),
-                            textAlign = TextAlign.Start
+                            color = colorScheme.onSurfaceVariant,
+                            textAlign = TextAlign.End
                         )
                     }
                 }

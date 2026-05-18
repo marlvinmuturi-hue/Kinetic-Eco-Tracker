@@ -1,10 +1,13 @@
 package Kinetic_Eco.Tracker.services
 
+import android.Manifest
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
 import android.util.Log
+import androidx.core.content.ContextCompat
 import com.google.android.gms.location.ActivityRecognition
 import com.google.android.gms.location.ActivityTransition
 import com.google.android.gms.location.ActivityTransitionRequest
@@ -22,6 +25,17 @@ class ActivityTransitionManager(private val context: Context) {
      * Register for activity transitions. Call when auto-start is enabled.
      */
     fun registerTransitions() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val ok = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.ACTIVITY_RECOGNITION
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!ok) {
+                Log.w(TAG, "ACTIVITY_RECOGNITION not granted — cannot register walking transitions for auto-start")
+                return
+            }
+        }
+
         val transitions = listOf(
             ActivityTransition.Builder()
                 .setActivityType(DetectedActivity.WALKING)
@@ -60,13 +74,16 @@ class ActivityTransitionManager(private val context: Context) {
             )
         }
 
-        client.requestActivityTransitionUpdates(request, pendingIntent)
-            .addOnSuccessListener {
-                Log.d(TAG, "Activity transitions registered successfully")
-            }
-            .addOnFailureListener { e ->
-                Log.e(TAG, "Failed to register activity transitions", e)
-            }
+        // Remove stale registration so retries after failure / process death do not stack duplicates.
+        client.removeActivityTransitionUpdates(pendingIntent).addOnCompleteListener {
+            client.requestActivityTransitionUpdates(request, pendingIntent)
+                .addOnSuccessListener {
+                    Log.d(TAG, "Activity transitions registered successfully")
+                }
+                .addOnFailureListener { e ->
+                    Log.e(TAG, "Failed to register activity transitions", e)
+                }
+        }
     }
 
     /**

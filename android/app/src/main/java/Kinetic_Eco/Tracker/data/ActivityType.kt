@@ -5,6 +5,7 @@ enum class ActivityType {
     WALKING,
     RUNNING,
     CYCLING,
+    MOTORCYCLE,
     TRAIN,
     DRIVING,
     ELECTRIC_VEHICLE,

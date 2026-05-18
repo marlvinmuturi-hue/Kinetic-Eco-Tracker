@@ -1,7 +1,14 @@
 package Kinetic_Eco.Tracker.ui.screens
 
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.*
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.Orientation
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.border
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -17,15 +24,16 @@ import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.painter.Painter
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -37,7 +45,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import Kinetic_Eco.Tracker.data.*
 import Kinetic_Eco.Tracker.ui.components.SingleLineMetricValueText
 import Kinetic_Eco.Tracker.ui.components.SingleLineValueText
-import Kinetic_Eco.Tracker.ui.components.VideoBackground
+import Kinetic_Eco.Tracker.ui.components.DynamicTrackerBackground
 import Kinetic_Eco.Tracker.ui.theme.*
 import Kinetic_Eco.Tracker.ui.utils.EnergyUnit
 import Kinetic_Eco.Tracker.ui.utils.format
@@ -52,6 +60,7 @@ private fun ActivityType.toActivityStringResId(): Int = when (this) {
     ActivityType.WALKING -> R.string.walking
     ActivityType.RUNNING -> R.string.running
     ActivityType.CYCLING -> R.string.cycling
+    ActivityType.MOTORCYCLE -> R.string.motorcycle
     ActivityType.TRAIN -> R.string.train
     ActivityType.DRIVING -> R.string.driving
     ActivityType.ELECTRIC_VEHICLE -> R.string.electric_vehicle
@@ -91,14 +100,13 @@ fun TrackerScreen(
     
     val currentActivity by viewModel.currentActivity.collectAsStateWithLifecycle()
     val manualActivityMode by viewModel.manualActivityMode.collectAsStateWithLifecycle()
+    val leanActivityHint by viewModel.leanActivityHint.collectAsStateWithLifecycle()
     val sessionDuration by viewModel.sessionDuration.collectAsStateWithLifecycle()
     val sessionDistance by viewModel.sessionDistance.collectAsStateWithLifecycle()
     val sessionSteps by viewModel.sessionSteps.collectAsStateWithLifecycle()
     val errorMessage by viewModel.errorMessage.collectAsStateWithLifecycle()
     val currentPosition by viewModel.currentPosition.collectAsStateWithLifecycle()
     val warmUpPosition by viewModel.warmUpPosition.collectAsStateWithLifecycle()
-    val sessionStats by viewModel.sessionStats.collectAsStateWithLifecycle()
-    
     var showStopDialog by remember { mutableStateOf(false) }
     var showSessionSummary by remember { mutableStateOf(false) }
     var savedSessionStats by remember { mutableStateOf<SessionStats?>(null) }
@@ -106,7 +114,6 @@ fun TrackerScreen(
     var saveError by remember { mutableStateOf<String?>(null) }
 
     val context = LocalContext.current
-    val activityColor = ActivityColors.getColor(currentActivity)
     val speedDisplay = if (unitSystem.usesMetricDistance()) {
         "${(animatedSpeed * 3.6f).format(1)} km/h"
     } else {
@@ -117,12 +124,6 @@ fun TrackerScreen(
         "${(sessionDistance / 1000.0).format(2)} km"
     } else {
         "${(sessionDistance / 1609.34).format(2)} mi"
-    }
-    
-    val maxSpeedDisplay = if (unitSystem.usesMetricDistance()) {
-        "${(sessionStats.topSpeedMps * 3.6).format(1)} km/h"
-    } else {
-        "${(sessionStats.topSpeedMps * 2.23694).format(1)} mph"
     }
     
     // Altitude display - from warm-up (before Start) or tracking (after Start)
@@ -137,29 +138,41 @@ fun TrackerScreen(
         if (unitSystem.usesMetricDistance()) "-- m" else "-- ft"
     }
     
-    // Show altitude in stats for Flying mode (manual or auto-detected)
-    val isFlying = currentActivity == ActivityType.FLYING
-    val showAltitudeInStats = isFlying
-    
     // Show steps for Walking and Running activities (show even if 0 to indicate tracking)
     val isWalkingOrRunning = currentActivity == ActivityType.WALKING || currentActivity == ActivityType.RUNNING
-    val showStepsInStats = isWalkingOrRunning  // Show step counter when walking or running, even if 0
     val colorScheme = MaterialTheme.colorScheme
     
     Box(modifier = Modifier.fillMaxSize()) {
-        VideoBackground(modifier = Modifier.matchParentSize())
+        // Animated, code-driven background: time-of-day base with a tint
+        // that follows the current activity. Replaces the old looped MP4.
+        DynamicTrackerBackground(
+            currentActivity = currentActivity,
+            modifier = Modifier.matchParentSize()
+        )
+        // Soft darken at the bottom only — keeps the dial/stats legible
+        // without flattening the gradient like the old full-screen scrim did.
         Box(
             modifier = Modifier
                 .matchParentSize()
-                .background(Color.Black.copy(alpha = 0.5f))
+                .background(
+                    Brush.verticalGradient(
+                        0.6f to Color.Transparent,
+                        1.0f to Color.Black.copy(alpha = 0.35f)
+                    )
+                )
         )
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center
-        ) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            // Main content — vertically centred in the space above the activity panel
+            Box(
+                modifier = Modifier.weight(1f).fillMaxWidth(),
+                contentAlignment = Alignment.Center
+            ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
+            ) {
         // Error message
         errorMessage?.let { error ->
             Card(
@@ -167,12 +180,12 @@ fun TrackerScreen(
                     .fillMaxWidth()
                     .padding(bottom = 16.dp),
                 colors = CardDefaults.cardColors(
-                    containerColor = Red500.copy(alpha = 0.2f)
+                    containerColor = colorScheme.surfaceVariant.copy(alpha = 0.72f)
                 )
             ) {
                 Text(
                     text = error,
-                    color = Red500,
+                    color = colorScheme.error,
                     modifier = Modifier.padding(16.dp),
                     style = MaterialTheme.typography.bodyMedium
                 )
@@ -184,79 +197,96 @@ fun TrackerScreen(
             speed = animatedSpeed,
             speedDisplay = speedDisplay,
             activity = currentActivity,
-            activityColor = activityColor,
             isTracking = isTracking,
             manualMode = manualActivityMode != null
         )
         
-        Spacer(modifier = Modifier.height(32.dp))
-        
-        // Stats Row - Dynamically adjust layout based on activity
-        when {
-            showAltitudeInStats -> {
-                // Three cards layout for Flying mode
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly
-                ) {
-                    StatCard(stringResource(R.string.duration), formatTime(sessionDuration), modifier = Modifier.weight(1f))
-                    StatCard(stringResource(R.string.distance), distanceDisplay, modifier = Modifier.weight(1f))
-                    StatCard(
-                        label = stringResource(R.string.altitude),
-                        value = altitudeDisplay,
-                        modifier = Modifier.weight(1f),
-                        highlightColor = colorScheme.tertiary
-                    )
-                }
-            }
-            showStepsInStats -> {
-                // Three cards layout for Walking/Running mode with steps
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly
-                ) {
-                    StatCard(stringResource(R.string.duration), formatTime(sessionDuration), modifier = Modifier.weight(1f))
-                    StatCard(stringResource(R.string.distance), distanceDisplay, modifier = Modifier.weight(1f))
-                    StatCard(
-                        label = stringResource(R.string.steps),
-                        value = sessionSteps.toString(),
-                        modifier = Modifier.weight(1f),
-                        highlightColor = colorScheme.secondary
-                    )
-                }
-            }
-            else -> {
-                // Two cards layout for other modes
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceEvenly
-                ) {
-                    StatCard(stringResource(R.string.duration), formatTime(sessionDuration), modifier = Modifier.weight(1f))
-                    StatCard(stringResource(R.string.distance), distanceDisplay, modifier = Modifier.weight(1f))
-                }
+        Spacer(modifier = Modifier.height(24.dp))
+
+        // Stats Row 1: Duration / Distance / Steps (walking/running only)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceEvenly
+        ) {
+            StatCard(stringResource(R.string.duration), formatTime(sessionDuration), modifier = Modifier.weight(1f))
+            StatCard(stringResource(R.string.distance), distanceDisplay, modifier = Modifier.weight(1f))
+            if (isWalkingOrRunning) {
+                StatCard(
+                    label = stringResource(R.string.steps),
+                    value = sessionSteps.toString(),
+                    modifier = Modifier.weight(1f)
+                )
             }
         }
-        
+
         // Manual mode indicator
         manualActivityMode?.let { mode ->
             Spacer(modifier = Modifier.height(16.dp))
             Card(
                 colors = CardDefaults.cardColors(
-                    containerColor = colorScheme.primary.copy(alpha = 0.2f)
+                    containerColor = colorScheme.surfaceVariant.copy(alpha = 0.55f)
                 ),
                 modifier = Modifier.fillMaxWidth()
             ) {
                 Text(
                     text = stringResource(R.string.manual_mode, stringResource(mode.toActivityStringResId())),
-                    color = colorScheme.primary,
+                    color = colorScheme.onSurface,
                     modifier = Modifier.padding(12.dp),
                     style = MaterialTheme.typography.bodySmall
                 )
             }
         }
         
-        Spacer(modifier = Modifier.height(48.dp))
+        // Lean hint (manual mode only — never overrides pinned activity)
+        val hint = leanActivityHint
+        if (isTracking && hint != null && manualActivityMode != null) {
+            Spacer(modifier = Modifier.height(12.dp))
+            Card(
+                colors = CardDefaults.cardColors(
+                    containerColor = colorScheme.secondaryContainer.copy(alpha = 0.92f)
+                ),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Column(modifier = Modifier.padding(12.dp)) {
+                    Text(
+                        text = stringResource(R.string.lean_hint_title),
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = colorScheme.onSecondaryContainer
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = stringResource(
+                            R.string.lean_hint_message,
+                            stringResource(manualActivityMode!!.toActivityStringResId()),
+                            stringResource(hint.toActivityStringResId())
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colorScheme.onSecondaryContainer
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.End
+                    ) {
+                        TextButton(onClick = { viewModel.dismissLeanActivityHint() }) {
+                            Text(stringResource(R.string.lean_hint_dismiss))
+                        }
+                        Spacer(modifier = Modifier.width(8.dp))
+                        TextButton(
+                            onClick = {
+                                viewModel.setManualActivityMode(hint)
+                            }
+                        ) {
+                            Text(stringResource(R.string.lean_hint_switch))
+                        }
+                    }
+                }
+            }
+        }
         
+        Spacer(modifier = Modifier.height(28.dp))
+
         // Play/Stop Button with Pulsating Animation
         PulsatingButton(
             isTracking = isTracking,
@@ -276,151 +306,27 @@ fun TrackerScreen(
             color = colorScheme.onSurfaceVariant,
             style = MaterialTheme.typography.bodySmall
         )
-        
-        // Row: Top speed (left) | Altitude (centre) | Activity selector (right)
+
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = "${stringResource(R.string.altitude)}: $altitudeDisplay",
+            color = colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
+            style = MaterialTheme.typography.labelSmall
+        )
+
         Spacer(modifier = Modifier.height(12.dp))
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 8.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            // Top speed - circular badge (left)
-            // Size and font scale with accessibility: larger circle + capped font when user uses large text
-            val config = LocalConfiguration.current
-            val fontScale = config.fontScale
-            val badgeSize = (64 * kotlin.math.min(1f + (fontScale - 1f) * 0.5f, 1.25f)).dp
-            val valueFontSize = (11f / kotlin.math.max(1f, fontScale)).sp
-            val labelFontSize = (9f / kotlin.math.max(1f, fontScale)).sp
-            Surface(
-                modifier = Modifier.size(badgeSize),
-                shape = CircleShape,
-                color = colorScheme.primary,
-                shadowElevation = 6.dp,
-                tonalElevation = 6.dp
-            ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(horizontal = 4.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    verticalArrangement = Arrangement.Center
-                ) {
-                    Text(
-                        text = maxSpeedDisplay,
-                        fontSize = valueFontSize,
-                        color = colorScheme.onPrimary,
-                        fontWeight = FontWeight.Bold,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = stringResource(R.string.max_speed_label),
-                        fontSize = labelFontSize,
-                        color = colorScheme.onPrimary.copy(alpha = 0.9f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
-            }
-            
-            // Altitude - card (centre)
-            Box(
-                modifier = Modifier.weight(1f),
-                contentAlignment = Alignment.Center
-            ) {
-                Card(
-                    colors = CardDefaults.cardColors(
-                        containerColor = colorScheme.surface.copy(alpha = 0.6f)
-                    ),
-                    shape = RoundedCornerShape(8.dp)
-                ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Terrain,
-                        contentDescription = stringResource(R.string.altitude),
-                        tint = colorScheme.tertiary,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    SingleLineMetricValueText(
-                        text = stringResource(R.string.altitude_prefix) + altitudeDisplay,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = colorScheme.onSurface,
-                        fontWeight = FontWeight.Bold,
-                        baseFontSize = 14.sp,
-                        textAlign = TextAlign.Start,
-                        modifier = Modifier.weight(1f)
-                    )
-                }
-                }
-            }
-            
-            // Activity selector - circular FAB (right)
-            FloatingActionButton(
-                onClick = onActivitySelectorClick,
-                modifier = Modifier.size(64.dp),
-                containerColor = colorScheme.primary,
-                shape = CircleShape,
-                elevation = FloatingActionButtonDefaults.elevation(
-                    defaultElevation = 6.dp,
-                    pressedElevation = 12.dp
-                )
-            ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.DirectionsRun,
-                    contentDescription = stringResource(R.string.select_activity),
-                    tint = colorScheme.onPrimary,
-                    modifier = Modifier.size(24.dp)
-                )
-            }
-        }
-        
-        // Show steps for Walking/Running activities (show even if 0)
-        if (isWalkingOrRunning) {
-            Spacer(modifier = Modifier.height(8.dp))
-            
-            Card(
-                colors = CardDefaults.cardColors(
-                    containerColor = colorScheme.secondary.copy(alpha = 0.15f)
-                ),
-                shape = RoundedCornerShape(8.dp),
-                border = androidx.compose.foundation.BorderStroke(1.dp, colorScheme.secondary.copy(alpha = 0.3f))
-            ) {
-                Row(
-                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Icon(
-                        imageVector = Icons.AutoMirrored.Filled.DirectionsWalk,
-                        contentDescription = stringResource(R.string.steps),
-                        tint = colorScheme.secondary,
-                        modifier = Modifier.size(16.dp)
-                    )
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = stringResource(R.string.steps_prefix),
-                        color = colorScheme.secondary,
-                        style = MaterialTheme.typography.labelSmall,
-                        fontSize = 12.sp
-                    )
-                    Text(
-                        text = sessionSteps.toString(),
-                        color = colorScheme.onSurface,
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 14.sp
-                    )
-                }
-            }
-        }
-        }
+        } // end inner Column
+        } // end Box(weight = 1f)
+
+        // Activity grid panel — drag handle collapses/expands; swipe up to reveal, swipe down to hide
+        ActivityGridPanel(
+            manualActivityMode = manualActivityMode,
+            onActivitySelected = { viewModel.setManualActivityMode(it) },
+            onAutoSelected = { viewModel.setManualActivityMode(null) }
+        )
+        } // end outer Column
     }
-    
+
     // Stop Dialog
     if (showStopDialog) {
         StopTrackingDialog(
@@ -519,16 +425,264 @@ fun TrackerScreenWithFAB(
     )
 }
 
+// ── Activity grid panel ───────────────────────────────────────────────────────
+
+@Composable
+private fun ActivityGridPanel(
+    manualActivityMode: ActivityType?,
+    onActivitySelected: (ActivityType) -> Unit,
+    onAutoSelected: () -> Unit
+) {
+    val colorScheme = MaterialTheme.colorScheme
+    var expanded by rememberSaveable { mutableStateOf(false) }
+
+    val draggableState = rememberDraggableState { delta ->
+        if (delta > 0f && expanded) expanded = false
+        else if (delta < 0f && !expanded) expanded = true
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(colorScheme.surface.copy(alpha = 0.88f))
+    ) {
+        // Drag handle row — tap or drag to expand/collapse
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(36.dp)
+                .draggable(orientation = Orientation.Vertical, state = draggableState)
+                .clickable { expanded = !expanded },
+            contentAlignment = Alignment.Center
+        ) {
+            // Pill handle
+            Box(
+                modifier = Modifier
+                    .size(width = 36.dp, height = 4.dp)
+                    .background(
+                        colorScheme.onSurfaceVariant.copy(alpha = 0.35f),
+                        RoundedCornerShape(2.dp)
+                    )
+            )
+            // Current selection label (shown when collapsed)
+            if (!expanded) {
+                Row(
+                    modifier = Modifier
+                        .align(Alignment.CenterStart)
+                        .padding(start = 12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    Icon(
+                        imageVector = manualActivityMode?.let { activityTileIcon(it) }
+                            ?: Icons.Default.Autorenew,
+                        contentDescription = null,
+                        tint = colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(14.dp)
+                    )
+                    Text(
+                        text = manualActivityMode?.let { activityTileShortName(it) } ?: "Auto",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            // Chevron indicator
+            Icon(
+                imageVector = if (expanded) Icons.Default.KeyboardArrowDown
+                              else Icons.Default.KeyboardArrowUp,
+                contentDescription = if (expanded) "Collapse" else "Expand activities",
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .padding(end = 12.dp)
+                    .size(20.dp),
+                tint = colorScheme.onSurfaceVariant
+            )
+        }
+
+        // Grid — slides in/out
+        AnimatedVisibility(
+            visible = expanded,
+            enter = expandVertically(expandFrom = Alignment.Top),
+            exit = shrinkVertically(shrinkTowards = Alignment.Top)
+        ) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 12.dp)
+                    .padding(bottom = 12.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                // Auto-detect (full-width row above the grid)
+                ActivityAutoTile(
+                    isSelected = manualActivityMode == null,
+                    onClick = onAutoSelected,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                // 3 × 3 activity grid
+                listOf(
+                    listOf(ActivityType.IDLE,    ActivityType.WALKING, ActivityType.RUNNING),
+                    listOf(ActivityType.CYCLING, ActivityType.MOTORCYCLE, ActivityType.TRAIN),
+                    listOf(ActivityType.DRIVING, ActivityType.ELECTRIC_VEHICLE, ActivityType.FLYING)
+                ).forEach { row ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        row.forEach { activity ->
+                            ActivityTile(
+                                activity = activity,
+                                isSelected = manualActivityMode == activity,
+                                onClick = { onActivitySelected(activity) },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ActivityTile(
+    activity: ActivityType,
+    isSelected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val colorScheme = MaterialTheme.colorScheme
+    val accent = activityTileAccentColor(activity)
+    val containerColor = if (isSelected) accent.copy(alpha = 0.82f)
+                         else colorScheme.surfaceVariant.copy(alpha = 0.55f)
+    val contentColor = if (isSelected) Color.White else colorScheme.onSurface
+    val border = if (isSelected)
+        androidx.compose.foundation.BorderStroke(1.5.dp, accent) else null
+
+    Surface(
+        onClick = onClick,
+        modifier = modifier.aspectRatio(1f),
+        shape = RoundedCornerShape(12.dp),
+        color = containerColor,
+        border = border
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(6.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center
+        ) {
+            Icon(
+                imageVector = activityTileIcon(activity),
+                contentDescription = null,
+                tint = contentColor,
+                modifier = Modifier.size(22.dp)
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+            Text(
+                text = activityTileShortName(activity),
+                style = MaterialTheme.typography.labelSmall,
+                color = contentColor,
+                maxLines = 1,
+                textAlign = TextAlign.Center,
+                fontSize = 10.sp
+            )
+        }
+    }
+}
+
+@Composable
+private fun ActivityAutoTile(
+    isSelected: Boolean,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val colorScheme = MaterialTheme.colorScheme
+    val containerColor = if (isSelected) colorScheme.primary.copy(alpha = 0.82f)
+                         else colorScheme.surfaceVariant.copy(alpha = 0.55f)
+    val contentColor = if (isSelected) colorScheme.onPrimary else colorScheme.onSurface
+    val border = if (isSelected)
+        androidx.compose.foundation.BorderStroke(1.5.dp, colorScheme.primary) else null
+
+    Surface(
+        onClick = onClick,
+        modifier = modifier.height(44.dp),
+        shape = RoundedCornerShape(12.dp),
+        color = containerColor,
+        border = border
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = 16.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = Icons.Default.Autorenew,
+                contentDescription = null,
+                tint = contentColor,
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = "Auto-detect",
+                style = MaterialTheme.typography.labelMedium,
+                color = contentColor,
+                fontWeight = FontWeight.SemiBold
+            )
+        }
+    }
+}
+
+private fun activityTileIcon(activity: ActivityType): ImageVector = when (activity) {
+    ActivityType.IDLE             -> Icons.Default.Accessibility
+    ActivityType.WALKING          -> Icons.AutoMirrored.Filled.DirectionsWalk
+    ActivityType.RUNNING          -> Icons.AutoMirrored.Filled.DirectionsRun
+    ActivityType.CYCLING          -> Icons.Default.DirectionsBike
+    ActivityType.MOTORCYCLE       -> Icons.Default.Motorcycle
+    ActivityType.TRAIN            -> Icons.Default.Train
+    ActivityType.DRIVING          -> Icons.Default.DirectionsCar
+    ActivityType.ELECTRIC_VEHICLE -> Icons.Default.ElectricCar
+    ActivityType.FLYING           -> Icons.Default.Flight
+}
+
+private fun activityTileShortName(activity: ActivityType): String = when (activity) {
+    ActivityType.IDLE             -> "Idle"
+    ActivityType.WALKING          -> "Walk"
+    ActivityType.RUNNING          -> "Run"
+    ActivityType.CYCLING          -> "Cycle"
+    ActivityType.MOTORCYCLE       -> "Moto"
+    ActivityType.TRAIN            -> "Train"
+    ActivityType.DRIVING          -> "Drive"
+    ActivityType.ELECTRIC_VEHICLE -> "EV"
+    ActivityType.FLYING           -> "Fly"
+}
+
+private fun activityTileAccentColor(activity: ActivityType): Color = when (activity) {
+    ActivityType.IDLE             -> Color(0xFF708090)
+    ActivityType.WALKING          -> Color(0xFF4CAF80)
+    ActivityType.RUNNING          -> Color(0xFFFF7043)
+    ActivityType.CYCLING          -> Color(0xFF29B6F6)
+    ActivityType.MOTORCYCLE       -> Color(0xFFAB47BC)
+    ActivityType.TRAIN            -> Color(0xFF5C8EE8)
+    ActivityType.DRIVING          -> Color(0xFFEF5350)
+    ActivityType.ELECTRIC_VEHICLE -> Color(0xFF26C6DA)
+    ActivityType.FLYING           -> Color(0xFF90CAF9)
+}
+
 @Composable
 fun SpeedometerCircle(
     @Suppress("UNUSED_PARAMETER") speed: Float,
     speedDisplay: String,
     activity: ActivityType,
-    activityColor: androidx.compose.ui.graphics.Color,
     isTracking: Boolean,
     manualMode: Boolean
 ) {
     val colorScheme = MaterialTheme.colorScheme
+    val ringColor = colorScheme.outline.copy(alpha = if (isTracking) 0.9f else 0.52f)
     val infiniteTransition = rememberInfiniteTransition(label = "pulse")
     val scale by infiniteTransition.animateFloat(
         initialValue = 1f,
@@ -552,7 +706,7 @@ fun SpeedometerCircle(
                     .scale(scale)
                     .border(
                         width = 8.dp,
-                        color = activityColor.copy(alpha = 0.3f),
+                        color = ringColor.copy(alpha = 0.28f),
                         shape = CircleShape
                     )
             )
@@ -564,7 +718,7 @@ fun SpeedometerCircle(
                 .size(256.dp)
                 .border(
                     width = 8.dp,
-                    color = (if (isTracking) activityColor else colorScheme.surfaceVariant).copy(alpha = 0.85f),
+                    color = ringColor.copy(alpha = 0.92f),
                     shape = CircleShape
                 )
                 .background(
@@ -616,13 +770,13 @@ fun SpeedometerCircle(
                         if (manualMode) {
                             Spacer(modifier = Modifier.width(8.dp))
                             Surface(
-                                color = colorScheme.primary.copy(alpha = 0.3f),
+                                color = colorScheme.surfaceVariant.copy(alpha = 0.9f),
                                 shape = RoundedCornerShape(8.dp)
                             ) {
                                 Text(
                                     text = stringResource(R.string.manual),
                                     fontSize = 10.sp,
-                                    color = colorScheme.primary,
+                                    color = colorScheme.onSurface,
                                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                                 )
                             }
@@ -643,7 +797,7 @@ fun StatCard(
 ) {
     val colorScheme = MaterialTheme.colorScheme
     Card(
-        modifier = modifier.padding(horizontal = 4.dp),
+        modifier = modifier.padding(horizontal = 2.dp),
         colors = CardDefaults.cardColors(
             containerColor = colorScheme.surface.copy(alpha = 0.75f)
         ),
@@ -652,7 +806,7 @@ fun StatCard(
         } else null
     ) {
         Column(
-            modifier = Modifier.padding(12.dp),
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 10.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
             Text(
@@ -695,7 +849,11 @@ fun PulsatingButton(
         modifier = Modifier
             .size(80.dp)
             .scale(scale),
-        containerColor = (if (isTracking) Red500 else colorScheme.primary).copy(alpha = 0.85f),
+        containerColor = if (isTracking) {
+            Red500.copy(alpha = 0.88f)
+        } else {
+            colorScheme.surfaceVariant.copy(alpha = 0.92f)
+        },
         shape = CircleShape
     ) {
         if (isTracking) {
@@ -703,14 +861,14 @@ fun PulsatingButton(
                 imageVector = Icons.Default.Stop,
                 contentDescription = stringResource(R.string.stop),
                 modifier = Modifier.size(32.dp),
-                tint = colorScheme.onPrimary
+                tint = colorScheme.surface
             )
         } else {
             Icon(
                 painter = painterResource(R.drawable.ic_play),
                 contentDescription = stringResource(R.string.start),
                 modifier = Modifier.size(32.dp),
-                tint = colorScheme.onPrimary
+                tint = colorScheme.onSurface
             )
         }
     }
@@ -756,14 +914,16 @@ fun StopTrackingDialog(
                     modifier = Modifier.fillMaxWidth(),
                     enabled = !isSaving,
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = colorScheme.secondary,
-                        disabledContainerColor = colorScheme.secondary.copy(alpha = 0.6f)
+                        containerColor = colorScheme.surfaceVariant.copy(alpha = 0.95f),
+                        contentColor = colorScheme.onSurface,
+                        disabledContainerColor = colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                        disabledContentColor = colorScheme.onSurfaceVariant
                     )
                 ) {
                     if (isSaving) {
                         CircularProgressIndicator(
                             modifier = Modifier.size(20.dp),
-                            color = colorScheme.onPrimary,
+                            color = colorScheme.onSurface,
                             strokeWidth = 2.dp
                         )
                         Spacer(modifier = Modifier.width(8.dp))
@@ -783,9 +943,9 @@ fun StopTrackingDialog(
                     enabled = !isSaving,
                     modifier = Modifier.fillMaxWidth(),
                     colors = ButtonDefaults.outlinedButtonColors(
-                        contentColor = Red500
+                        contentColor = colorScheme.onSurfaceVariant
                     ),
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Red500.copy(alpha = 0.5f))
+                    border = androidx.compose.foundation.BorderStroke(1.dp, colorScheme.outline.copy(alpha = 0.45f))
                 ) {
                     Text(
                         text = stringResource(R.string.discard_data),
@@ -802,7 +962,8 @@ fun StopTrackingDialog(
                     enabled = !isSaving,
                     modifier = Modifier.fillMaxWidth(),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = colorScheme.primary
+                        containerColor = colorScheme.surfaceVariant.copy(alpha = 0.88f),
+                        contentColor = colorScheme.onSurface
                     )
                 ) {
                     Text(
@@ -868,13 +1029,13 @@ fun SessionSummaryDialog(
                 Box(
                     modifier = Modifier
                         .size(64.dp)
-                        .background(colorScheme.secondary.copy(alpha = 0.2f), CircleShape),
+                        .background(colorScheme.surfaceVariant.copy(alpha = 0.55f), CircleShape),
                     contentAlignment = Alignment.Center
                 ) {
                     Icon(
                         painter = painterResource(R.drawable.ic_session_summary),
                         contentDescription = stringResource(R.string.session_summary),
-                        tint = colorScheme.secondary,
+                        tint = colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(32.dp)
                     )
                 }
@@ -892,7 +1053,7 @@ fun SessionSummaryDialog(
                     Text(
                         text = error,
                         style = MaterialTheme.typography.bodyMedium,
-                        color = Red500,
+                        color = colorScheme.error,
                         textAlign = androidx.compose.ui.text.style.TextAlign.Center,
                         modifier = Modifier.padding(top = 8.dp)
                     )
@@ -920,7 +1081,7 @@ fun SessionSummaryDialog(
                             label = stringResource(R.string.duration),
                             value = formatTime(stats.totalDuration),
                             icon = Icons.Default.Timer,
-                            color = colorScheme.primary,
+                            color = colorScheme.onSurfaceVariant,
                             modifier = Modifier.weight(1f)
                         )
                         SummaryStatCard(
@@ -931,7 +1092,7 @@ fun SessionSummaryDialog(
                                 "${(stats.totalDistance / 1609.344).format(2)} mi"
                             },
                             icon = Icons.Default.Straighten,
-                            color = colorScheme.tertiary,
+                            color = colorScheme.onSurfaceVariant,
                             modifier = Modifier.weight(1f)
                         )
                     }
@@ -941,7 +1102,7 @@ fun SessionSummaryDialog(
                         label = stringResource(R.string.top_speed),
                         value = formatSpeedMax(stats.topSpeedMps, unitSystem),
                         icon = Icons.Default.ShowChart,
-                        color = colorScheme.tertiary,
+                        color = colorScheme.onSurfaceVariant,
                         modifier = Modifier.fillMaxWidth()
                     )
                     
@@ -950,7 +1111,7 @@ fun SessionSummaryDialog(
                         label = stringResource(R.string.co2_saved),
                         value = "${stats.co2Conserved.format(2)} kg",
                         iconPainter = painterResource(R.drawable.ic_co2_carbon_neutral),
-                        color = colorScheme.secondary,
+                        color = colorScheme.onSurfaceVariant,
                         modifier = Modifier.fillMaxWidth(),
                         emphasizeValue = true
                     )
@@ -960,7 +1121,7 @@ fun SessionSummaryDialog(
                         label = if (energyUnit == EnergyUnit.KCAL) stringResource(R.string.calories) else stringResource(R.string.energy),
                         value = formatEnergy(stats.caloriesBurned, energyUnit),
                         icon = Icons.Default.FitnessCenter,
-                        color = Amber500,
+                        color = colorScheme.onSurfaceVariant,
                         modifier = Modifier.fillMaxWidth()
                     )
                     
@@ -975,7 +1136,7 @@ fun SessionSummaryDialog(
                                     label = stringResource(R.string.total_steps),
                                     value = String.format("%,d", stats.totalSteps),
                                     icon = Icons.AutoMirrored.Filled.DirectionsWalk,
-                                    color = colorScheme.secondary,
+                                    color = colorScheme.onSurfaceVariant,
                                     modifier = Modifier.weight(1f)
                                 )
                             }
@@ -984,7 +1145,7 @@ fun SessionSummaryDialog(
                                     label = stringResource(R.string.co2_emitted),
                                     value = "${stats.co2Emissions.format(2)} kg",
                                     icon = Icons.Default.LocalFireDepartment,
-                                    color = Red500,
+                                    color = colorScheme.onSurfaceVariant,
                                     modifier = Modifier.weight(1f)
                                 )
                             }
@@ -1029,14 +1190,14 @@ fun SessionSummaryDialog(
                                     label = stringResource(R.string.ascent),
                                     value = formatElevation(stats.elevationGain, unitSystem),
                                     icon = Icons.AutoMirrored.Filled.TrendingUp,
-                                    color = colorScheme.secondary,
+                                    color = colorScheme.onSurfaceVariant,
                                     modifier = Modifier.weight(1f)
                                 )
                                 SummaryStatCard(
                                     label = stringResource(R.string.descent),
                                     value = formatElevation(stats.elevationLoss, unitSystem),
                                     icon = Icons.AutoMirrored.Filled.TrendingDown,
-                                    color = colorScheme.tertiary,
+                                    color = colorScheme.onSurfaceVariant,
                                     modifier = Modifier.weight(1f)
                                 )
                             }
@@ -1094,7 +1255,8 @@ fun SessionSummaryDialog(
                     onClick = onClose,
                     modifier = Modifier.fillMaxWidth(),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = colorScheme.primary
+                        containerColor = colorScheme.surfaceVariant.copy(alpha = 0.95f),
+                        contentColor = colorScheme.onSurface
                     )
                 ) {
                     Text(

@@ -1,5 +1,6 @@
 package Kinetic_Eco.Tracker.services
 
+import java.util.Calendar
 import Kinetic_Eco.Tracker.data.ActivityType
 
 /**
@@ -14,12 +15,65 @@ import Kinetic_Eco.Tracker.data.ActivityType
  * - Pandolf Equation for walking/running
  */
 
+/**
+ * User's physical attributes used for calorie / BMR calculations.
+ *
+ * The user-facing input is a **date of birth** (collected via a date picker
+ * in onboarding & settings) rather than a raw age in years, because:
+ *  - Birth dates don't go stale — your age advances naturally on each
+ *    birthday without the user re-entering it.
+ *  - It's a single piece of canonical data; "age" can always be derived.
+ *
+ * [age] is exposed as a derived property so callers like [CalorieEngine]
+ * keep working unchanged. When [birthDateMs] is null (user hasn't set a
+ * birth date yet, e.g. skipped onboarding) we fall back to
+ * [DEFAULT_AGE_FALLBACK] for calculation purposes.
+ */
 data class UserPhysicalProfile(
-    val weight: Double = 70.0,      // kg
-    val height: Double = 170.0,     // cm
-    val age: Int = 30,              // years
+    val weight: Double = 70.0,        // kg
+    val height: Double = 170.0,       // cm
+    /**
+     * UTC milliseconds at midnight of the user's date of birth, or null when
+     * not provided. Material 3's `DatePickerState.selectedDateMillis` is
+     * already in this format, which keeps wiring simple.
+     */
+    val birthDateMs: Long? = null,
     val gender: Gender = Gender.MALE
-)
+) {
+    /**
+     * Derived whole-year age. Returns [DEFAULT_AGE_FALLBACK] when no birth
+     * date has been recorded yet so existing math (BMR, correction factor)
+     * still produces a sane number for skip-onboarding users.
+     */
+    val age: Int
+        get() = birthDateMs?.let { ageInYearsFromBirthMs(it, System.currentTimeMillis()) }
+            ?: DEFAULT_AGE_FALLBACK
+
+    companion object {
+        const val DEFAULT_AGE_FALLBACK = 30
+    }
+}
+
+/**
+ * Whole-year age between [birthMs] (UTC midnight of birth date) and [nowMs]
+ * (any timestamp). Uses [Calendar] rather than `java.time` so the helper is
+ * safe on every API level the app supports (minSdk 24, no desugaring needed).
+ *
+ * Caps at zero — a birth date in the future just yields age 0 rather than
+ * a negative number, which would otherwise flow into the BMR formula and
+ * produce unhelpful values.
+ */
+fun ageInYearsFromBirthMs(birthMs: Long, nowMs: Long): Int {
+    val birth = Calendar.getInstance().apply { timeInMillis = birthMs }
+    val today = Calendar.getInstance().apply { timeInMillis = nowMs }
+    var years = today.get(Calendar.YEAR) - birth.get(Calendar.YEAR)
+    val notReached =
+        today.get(Calendar.MONTH) < birth.get(Calendar.MONTH) ||
+        (today.get(Calendar.MONTH) == birth.get(Calendar.MONTH) &&
+         today.get(Calendar.DAY_OF_MONTH) < birth.get(Calendar.DAY_OF_MONTH))
+    if (notReached) years--
+    return years.coerceAtLeast(0)
+}
 
 enum class Gender {
     MALE, FEMALE, OTHER
@@ -60,12 +114,16 @@ object CalorieEngine {
         // Base calorie calculation: MET × weight × duration × correction factor
         val baseCalories = met * profile.weight * durationHours * k
         
-        // Add elevation adjustments
-        val elevationCalories = calculateElevationBonus(
-            elevationGainMeters,
-            elevationLossMeters,
-            profile.weight
-        )
+        // Passengers: altitude changes are not "hiking" — GPS altitude on aircraft is noisy and must not add huge kcal.
+        val elevationCalories = if (activityType == ActivityType.FLYING) {
+            0.0
+        } else {
+            calculateElevationBonus(
+                elevationGainMeters,
+                elevationLossMeters,
+                profile.weight
+            )
+        }
         
         return baseCalories + elevationCalories
     }
@@ -79,6 +137,10 @@ object CalorieEngine {
             ActivityType.WALKING -> getWalkingMET(speedMps)
             ActivityType.RUNNING -> getRunningMET(speedMps)
             ActivityType.CYCLING -> getCyclingMET(speedMps)
+            ActivityType.MOTORCYCLE -> {
+                val c = getCyclingMET(speedMps)
+                (c * 0.88).coerceIn(3.8, 11.0)
+            }
             ActivityType.TRAIN -> 1.3  // Seated travel
             ActivityType.DRIVING -> 1.3  // Sitting, light stress
             ActivityType.ELECTRIC_VEHICLE -> 1.3  // Same as driving
@@ -200,8 +262,15 @@ object CalorieEngine {
      * This is the number of calories burned at rest per day
      */
     fun calculateBMR(profile: UserPhysicalProfile): Double {
-        val (weight, height, age, gender) = profile
-        
+        // Explicit field access (not destructuring) because `age` is now a
+        // derived property on [UserPhysicalProfile] rather than a constructor
+        // parameter — destructuring would yield `birthDateMs: Long?` in the
+        // third slot instead of `age: Int`.
+        val weight = profile.weight
+        val height = profile.height
+        val age = profile.age
+        val gender = profile.gender
+
         return if (gender == Gender.FEMALE) {
             // BMR (women) = 655 + (9.6 × weight in kg) + (1.8 × height in cm) - (4.7 × age in years)
             655 + (9.6 * weight) + (1.8 * height) - (4.7 * age)

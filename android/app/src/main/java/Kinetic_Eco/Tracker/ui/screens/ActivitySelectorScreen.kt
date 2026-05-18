@@ -10,8 +10,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.DirectionsRun
 import androidx.compose.material.icons.automirrored.filled.DirectionsWalk
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.TwoWheeler
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
@@ -20,6 +22,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import Kinetic_Eco.Tracker.data.ActivityType
 import Kinetic_Eco.Tracker.ui.theme.*
+import Kinetic_Eco.Tracker.R
 
 data class ActivityOption(
     val type: ActivityType?,
@@ -69,7 +72,15 @@ fun ActivitySelectorScreen(
             icon = Icons.Default.PedalBike,
             colorStart = Cyan500,
             colorEnd = Blue500,
-            description = "Track cycling activity (saves CO2)"
+            description = stringResource(R.string.cycling_desc)
+        ),
+        ActivityOption(
+            type = ActivityType.MOTORCYCLE,
+            label = stringResource(R.string.motorcycle),
+            icon = Icons.Outlined.TwoWheeler,
+            colorStart = Orange500,
+            colorEnd = Amber500,
+            description = stringResource(R.string.motorcycle_desc)
         ),
         ActivityOption(
             type = ActivityType.TRAIN,

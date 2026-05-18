@@ -4,5 +4,7 @@ package Kinetic_Eco.Tracker.data
 data class RoutePoint(
     val latitude: Double,
     val longitude: Double,
-    val activity: ActivityType? = null // null = legacy point (use default color)
+    val activity: ActivityType? = null, // null = legacy point (use default color)
+    /** Meters above sea level when known (GPS or baro); null for legacy sessions. */
+    val altitudeMeters: Double? = null
 )

@@ -33,31 +33,11 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _isLoading.value = true
             _errorMessage.value = null
-            
-            var result = authService.signInWithEmail(email, password)
-            if (result.isFailure) {
-                val errorMsg = result.exceptionOrNull()?.message ?: ""
-                if (errorMsg.contains("Invalid email or password")) {
-                    result = authService.signUpWithEmail(email, password)
-                    result.fold(
-                        onSuccess = { user ->
-                            _currentUser.value = user
-                            _isLoading.value = false
-                        },
-                        onFailure = { signUpError ->
-                            val signUpMsg = signUpError.message ?: ""
-                            _errorMessage.value = when {
-                                signUpMsg.contains("already exists") || signUpMsg.contains("EMAIL_ALREADY_IN_USE") ->
-                                    "Account exists. If you signed up with Google, use 'Continue with Google'. Otherwise check your password or use Forgot password."
-                                else -> signUpMsg
-                            }
-                            _isLoading.value = false
-                        }
-                    )
-                    return@launch
-                }
-            }
-            result.fold(
+
+            // Sign-up is now an explicit user action via signUpWithEmail()
+            // (the LoginScreen has separate Sign in / Create account modes),
+            // so we no longer silently create a new account on a failed sign-in.
+            authService.signInWithEmail(email, password).fold(
                 onSuccess = { user ->
                     _currentUser.value = user
                     _isLoading.value = false
@@ -69,14 +49,13 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
             )
         }
     }
-    
+
     fun signUpWithEmail(email: String, password: String) {
         viewModelScope.launch {
             _isLoading.value = true
             _errorMessage.value = null
-            
-            val result = authService.signUpWithEmail(email, password)
-            result.fold(
+
+            authService.signUpWithEmail(email, password).fold(
                 onSuccess = { user ->
                     _currentUser.value = user
                     _isLoading.value = false
@@ -108,10 +87,26 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
     
+    /**
+     * Sign the user out.
+     *
+     * The state-mutation-then-cleanup ordering matters: we set [_currentUser]
+     * to null *synchronously* before launching the actual Firebase / Google
+     * sign-out so that any UI observers (e.g. LoginScreen's
+     * `LaunchedEffect(currentUser)`) see the user as logged out the moment
+     * the caller navigates to Login. Doing the Firebase work first inside a
+     * coroutine left a ~50 ms window where the navigation had already taken
+     * us to Login but `currentUser` was still the old value, which made
+     * Login bounce us right back to MainTabs and forced users to tap Logout
+     * twice. The auth-state listener installed in [init] still picks up the
+     * eventual sign-out and confirms the null state, so this is purely an
+     * "update UI first, finalize backend after" optimisation, not a
+     * functional change.
+     */
     fun signOut() {
+        _currentUser.value = null
         viewModelScope.launch {
             authService.signOut()
-            _currentUser.value = null
         }
     }
     

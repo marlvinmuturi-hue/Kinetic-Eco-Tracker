@@ -1,8 +1,6 @@
 package Kinetic_Eco.Tracker.data
 
 data class ActivityAnalysis(
-    val score: Double = 0.0,
-    val scoreReasoning: String = "",
     val insights: List<String> = emptyList(),
     val recommendations: List<String> = emptyList(),
     val motivation: String = "",

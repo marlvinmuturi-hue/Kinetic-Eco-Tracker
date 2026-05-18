@@ -31,6 +31,24 @@ fun formatTime(seconds: Long): String {
     return String.format("%02d:%02d:%02d", hours, minutes, secs)
 }
 
+/**
+ * Durations that are **sums** (e.g. many days in the same time-of-day bucket).
+ * Uses "9h 48m", "25h 52m", "2d 3h" — never looks like a clock time (unlike [formatTime]).
+ */
+fun formatDurationSumHoursMinutes(totalSeconds: Long): String {
+    if (totalSeconds <= 0L) return "0m"
+    val days = totalSeconds / 86400L
+    var rem = totalSeconds % 86400L
+    val hours = rem / 3600L
+    rem %= 3600L
+    val minutes = rem / 60L
+    return when {
+        days > 0L -> "${days}d ${hours}h ${minutes}m"
+        hours > 0L -> "${hours}h ${minutes}m"
+        else -> "${minutes}m"
+    }
+}
+
 fun formatSteps(steps: Int): String {
     return String.format("%,d", steps)
 }

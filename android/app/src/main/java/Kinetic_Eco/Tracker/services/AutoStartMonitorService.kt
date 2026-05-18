@@ -156,8 +156,7 @@ class AutoStartMonitorService : LifecycleService() {
             val type = event.activityType
             if (type == DetectedActivity.WALKING ||
                 type == DetectedActivity.RUNNING ||
-                type == DetectedActivity.ON_FOOT ||
-                type == DetectedActivity.IN_VEHICLE
+                type == DetectedActivity.ON_FOOT
             ) {
                 Log.d(TAG, "Activity transition ENTER (type=$type) → starting tracking")
                 startTrackingFromAutoStart()

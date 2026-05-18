@@ -25,13 +25,11 @@ import androidx.compose.ui.unit.dp
 import Kinetic_Eco.Tracker.R
 import Kinetic_Eco.Tracker.data.ActivityBreakdown
 import Kinetic_Eco.Tracker.data.ActivityType
-import Kinetic_Eco.Tracker.data.ActivityColors
 import Kinetic_Eco.Tracker.data.SessionStats
 import Kinetic_Eco.Tracker.data.UnitSystem
-import Kinetic_Eco.Tracker.ui.utils.usesMetricDistance
-import Kinetic_Eco.Tracker.ui.theme.*
 import Kinetic_Eco.Tracker.ui.utils.format
 import Kinetic_Eco.Tracker.ui.utils.formatTime
+import Kinetic_Eco.Tracker.ui.utils.usesMetricDistance
 
 enum class DonutMetric { TIME, DISTANCE }
 
@@ -53,8 +51,19 @@ fun ActivityDonutChart(
     val colorScheme = MaterialTheme.colorScheme
     var metric by remember { mutableStateOf(DonutMetric.TIME) }
 
+    val slicePalette = remember(colorScheme) {
+        listOf(
+            colorScheme.onSurface.copy(alpha = 0.90f),
+            colorScheme.onSurface.copy(alpha = 0.72f),
+            colorScheme.onSurface.copy(alpha = 0.54f),
+            colorScheme.onSurface.copy(alpha = 0.38f),
+            colorScheme.onSurface.copy(alpha = 0.82f),
+            colorScheme.onSurface.copy(alpha = 0.64f)
+        )
+    }
+
     // Build slices based on the chosen metric
-    val slices = remember(stats, metric) { buildSlices(stats, metric) }
+    val slices = remember(stats, metric, slicePalette) { buildSlices(stats, metric, slicePalette) }
 
     // Animate sweep on first appearance / data change
     val animationProgress = remember { Animatable(0f) }
@@ -100,7 +109,7 @@ fun ActivityDonutChart(
                     onClick = { metric = DonutMetric.TIME },
                     label = { Text(stringResource(R.string.by_time)) },
                     colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = colorScheme.primary.copy(alpha = 0.3f),
+                        selectedContainerColor = colorScheme.onSurface.copy(alpha = 0.10f),
                         selectedLabelColor = colorScheme.onSurface,
                         containerColor = colorScheme.surfaceVariant,
                         labelColor = colorScheme.onSurfaceVariant
@@ -112,7 +121,7 @@ fun ActivityDonutChart(
                     onClick = { metric = DonutMetric.DISTANCE },
                     label = { Text(stringResource(R.string.by_distance)) },
                     colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = colorScheme.primary.copy(alpha = 0.3f),
+                        selectedContainerColor = colorScheme.onSurface.copy(alpha = 0.10f),
                         selectedLabelColor = colorScheme.onSurface,
                         containerColor = colorScheme.surfaceVariant,
                         labelColor = colorScheme.onSurfaceVariant
@@ -187,7 +196,7 @@ fun ActivityDonutChart(
                             SingleLineValueText(
                                 text = "${dominant.percentage.toInt()}%",
                                 style = MaterialTheme.typography.headlineMedium,
-                                color = dominant.color,
+                                color = colorScheme.onSurface,
                                 fontWeight = FontWeight.Bold,
                                 modifier = Modifier.fillMaxWidth(),
                                 textAlign = TextAlign.Center
@@ -239,7 +248,11 @@ private data class DonutSlice(
     val rawValue: Float      // seconds or meters
 )
 
-private fun buildSlices(stats: SessionStats, metric: DonutMetric): List<DonutSlice> {
+private fun buildSlices(
+    stats: SessionStats,
+    metric: DonutMetric,
+    sliceColors: List<Color>
+): List<DonutSlice> {
     val entries: List<Pair<ActivityType, Float>> = stats.breakdown
         .map { (type, bd) ->
             val value = when (metric) {
@@ -254,11 +267,11 @@ private fun buildSlices(stats: SessionStats, metric: DonutMetric): List<DonutSli
     val total = entries.sumOf { it.second.toDouble() }.toFloat()
     if (total <= 0f) return emptyList()
 
-    return entries.map { (type, value) ->
+    return entries.mapIndexed { index, (type, value) ->
         val pct = (value / total) * 100f
         DonutSlice(
             activity = type,
-            color = ActivityColors.getColor(type),
+            color = sliceColors[index % sliceColors.size],
             percentage = pct,
             sweepAngle = (value / total) * 360f,
             rawValue = value
@@ -271,6 +284,7 @@ private fun ActivityType.toActivityStringResId(): Int = when (this) {
     ActivityType.WALKING -> R.string.walking
     ActivityType.RUNNING -> R.string.running
     ActivityType.CYCLING -> R.string.cycling
+    ActivityType.MOTORCYCLE -> R.string.motorcycle
     ActivityType.TRAIN -> R.string.train
     ActivityType.DRIVING -> R.string.driving
     ActivityType.ELECTRIC_VEHICLE -> R.string.electric_vehicle

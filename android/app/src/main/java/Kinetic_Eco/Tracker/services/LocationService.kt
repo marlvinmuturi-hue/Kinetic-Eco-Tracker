@@ -274,9 +274,15 @@ class LocationService(private val context: Context) {
         hasAccelerometer: Boolean,
         sensorHint: SensorHint = SensorHint.UNKNOWN
     ): ActivityType {
-        // Cycling: sensor classifier wins when speed is in the plausible cycling range
+        // Sensors confirm stillness: GPS speed is noise — user is not moving
+        if (sensorHint == SensorHint.STILL && speed < SpeedThresholds.DRIVING_MIN.toFloat()) {
+            return ActivityType.IDLE
+        }
+
+        // Cycling: sensor classifier wins when speed is in the plausible cycling range.
+        // Gate lowered to RUNNING_MIN (7 km/h) so slow cyclists are detected even below 14 km/h.
         if (sensorHint == SensorHint.CYCLING_LIKELY &&
-            speed >= SpeedThresholds.CYCLING_MIN && speed < MAX_CYCLING_SPEED) {
+            speed >= SpeedThresholds.RUNNING_MIN.toFloat() && speed < MAX_CYCLING_SPEED) {
             return ActivityType.CYCLING
         }
 

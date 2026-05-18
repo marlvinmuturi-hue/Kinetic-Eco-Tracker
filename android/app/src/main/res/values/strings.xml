@@ -5,8 +5,9 @@
     <!-- AdMob: App ID (~) is app-level; ad unit ID (/) is per placement. -->
     <string name="admob_application_id" translatable="false">ca-app-pub-1244317007978137~2708452877</string>
     <string name="admob_banner_unit_id" translatable="false">ca-app-pub-1244317007978137/5717030642</string>
+    <string name="nav_dashboard">Dashboard</string>
     <string name="nav_tracker">Tracker</string>
-    <string name="nav_analytics">Analytics</string>
+    <string name="nav_analytics">Analysis</string>
     <string name="nav_profile">Me</string>
     <string name="nav_settings">Settings</string>
     <string name="nav_start_activity">Start</string>
@@ -14,12 +15,25 @@
 
     <string name="default_web_client_id">gen-lang-client-0114974661</string>
 
+    <!-- Terms & privacy (first launch) -->
+    <string name="terms_title">Terms &amp; privacy</string>
+    <string name="terms_intro">Please review and accept our User Agreement, Terms of Use, and Privacy Policy before continuing.</string>
+    <string name="terms_summary_bullet_header">Summary</string>
+    <string name="terms_summary_bullets">The full legal text is in the PDF. By continuing, you confirm you have access to it and agree to be bound by it.</string>
+    <string name="terms_read_full_pdf">Read full document (PDF)</string>
+    <string name="terms_checkbox_label">I have read and agree to the User Agreement, Terms, and Privacy Policy</string>
+    <string name="terms_continue">Continue</string>
+    <string name="terms_pdf_open_failed">Could not open the PDF. Install a PDF viewer or add the file to the app.</string>
+
     <!-- Theme -->
     <string name="theme">Theme</string>
-    <string name="theme_system">System</string>
     <string name="theme_light">Light</string>
     <string name="theme_dark">Dark</string>
-    <string name="theme_subtitle">Follow device or choose Light/Dark</string>
+    <string name="theme_subtitle">Choose Light or Dark — colors are not customizable.</string>
+
+    <string name="go_premium">Go Premium</string>
+    <string name="go_premium_desc">Remove ads, unlock more insights, and support development.</string>
+    <string name="go_premium_cta">Upgrade</string>
 
     <!-- Language -->
     <string name="language">Language</string>
@@ -40,8 +54,18 @@
     <string name="btn_email_login">Sign In</string>
     <string name="hint_email">Email</string>
     <string name="hint_password">Password</string>
+    <string name="hint_confirm_password">Confirm password</string>
+    <string name="hint_password_min">At least 6 characters</string>
+    <string name="hint_confirm_password_helper">Re-enter your password</string>
     <string name="forgot_password">Forgot password?</string>
     <string name="sign_up_prompt">Don\'t have an account? Sign up</string>
+    <string name="have_account_prompt">Already have an account? Sign in</string>
+    <string name="auth_mode_sign_in">Sign in</string>
+    <string name="auth_mode_create_account">Create account</string>
+    <string name="btn_create_account">Create account</string>
+    <string name="creating_account">Creating account…</string>
+    <string name="passwords_do_not_match">Passwords do not match.</string>
+    <string name="password_too_short">Password must be at least 6 characters.</string>
     <string name="reset_password">Reset Password</string>
     <string name="reset_password_hint">Enter your email to receive a password reset link.</string>
     <string name="send_link">Send Link</string>
@@ -74,6 +98,8 @@
     <string name="calories">Calories</string>
     <string name="energy">Energy</string>
     <string name="co2_saved">CO₂ Saved</string>
+    <string name="annual_carbon_footprint">Annual carbon footprint</string>
+    <string name="annual_carbon_footprint_hint">Last 365 days · saved vs. driving</string>
     <string name="total_steps">Total Steps</string>
     <string name="co2_emitted">CO₂ Emitted</string>
     <string name="start_alt">Start Alt</string>
@@ -98,8 +124,13 @@
     <string name="unit_miles_kcal">Miles, kcal</string>
     <string name="distance_alerts">Distance alerts</string>
     <string name="distance_alerts_desc">Notify when you complete each km or mile during tracking</string>
+    <string name="notifications_section_title">Notifications</string>
+    <string name="notifications_section_subtitle">Sounds &amp; weekly digest</string>
+    <string name="notifications_weekly_digest_title">Weekly digest</string>
+    <string name="notifications_weekly_digest_desc">Receive a Monday summary of your activity stats</string>
+    <string name="settings_ev_activity_selector_prompt">Using an EV, tap to update vehicle type</string>
     <string name="notification_sounds">Notification sounds</string>
-    <string name="notification_sounds_desc">Play sound for milestones, tracking start/stop, and session summary. Respects Do Not Disturb.</string>
+    <string name="notification_sounds_desc">Play sound for tracking start/stop and session summary. Respects Do Not Disturb.</string>
     <string name="auto_start_walk">Auto-Start on movement</string>
     <string name="auto_start_walk_desc">Automatically start tracking when movement is detected (works in background)</string>
     <string name="auto_start_channel_name">Auto-start</string>
@@ -111,11 +142,72 @@
     <string name="idle_stop_minutes">%d min</string>
     <string name="physical_profile">Physical Profile</string>
     <string name="physical_profile_desc">For accurate calorie calculations</string>
+    <string name="vehicle_profile">Vehicle profile</string>
+    <string name="vehicle_profile_desc">Fine-tune CO₂ estimates for driving, rail, and flights</string>
+    <string name="vehicle_profile_combustion_section">Combustion engine (petrol or diesel)</string>
+    <string name="vehicle_profile_ice_fuel">Fuel type</string>
+    <string name="ice_fuel_petrol">Petrol</string>
+    <string name="ice_fuel_diesel">Diesel</string>
+    <string name="vehicle_profile_driving_cc">Engine size (cc, cars)</string>
+    <string name="vehicle_profile_ev_section">Electric road vehicles</string>
+    <string name="vehicle_profile_ev_road">EV type (used in Electric vehicle mode)</string>
+    <string name="ev_road_car">Electric car</string>
+    <string name="ev_road_motorcycle">Electric motorcycle</string>
+    <string name="vehicle_profile_train">Train type</string>
+    <string name="vehicle_profile_aircraft">Flight type</string>
+    <string name="save_vehicle_profile">Save vehicle profile</string>
+    <string name="vehicle_profile_why">How this is used</string>
+    <string name="vehicle_profile_info">Pick your road vehicle\'s fuel type first. For petrol or diesel we ask for engine size (cc) and body shape; for electric we ask whether it\'s a 2-/3-wheeler or a car, and the motor power band. Trains and flights remain separate so you can mix modes during a trip.</string>
+    <string name="driving_cc_up_to_1000">Up to 1000 cc</string>
+    <string name="driving_cc_1001_1400">1001–1400 cc</string>
+    <string name="driving_cc_1401_1800">1401–1800 cc</string>
+    <string name="driving_cc_1801_2500">1801–2500 cc</string>
+    <string name="driving_cc_over_2500">Over 2500 cc</string>
+
+    <!-- v2 vehicle profile: fuel-type-first redesign -->
+    <string name="vehicle_profile_primary_fuel">Fuel type</string>
+    <string name="vehicle_profile_primary_fuel_desc">Pick the fuel your vehicle uses — the rest of the form adapts to it.</string>
+    <string name="primary_fuel_petrol">Petrol</string>
+    <string name="primary_fuel_diesel">Diesel</string>
+    <string name="primary_fuel_electric">Electric</string>
+    <!-- Body type (combustion only) -->
+    <string name="vehicle_profile_body_type">Body type</string>
+    <string name="body_type_hatchback">Hatchback</string>
+    <string name="body_type_sedan">Sedan</string>
+    <string name="body_type_suv">SUV / Crossover</string>
+    <string name="body_type_pickup">Pickup truck</string>
+    <string name="body_type_minivan">Minivan / MPV</string>
+    <!-- Electric vehicle class -->
+    <string name="vehicle_profile_ev_class">Vehicle type</string>
+    <string name="ev_class_two_wheeler">2-wheeler</string>
+    <string name="ev_class_three_wheeler">3-wheeler</string>
+    <string name="ev_class_car">Car</string>
+    <!-- Electric motor power band -->
+    <string name="vehicle_profile_ev_motor_power">Motor rating</string>
+    <string name="ev_motor_up_to_3_kw">≤ 3 kW (e-bike, micro scooter)</string>
+    <string name="ev_motor_3_to_10_kw">3 – 10 kW (scooter, light 3-wheeler)</string>
+    <string name="ev_motor_10_to_60_kw">10 – 60 kW (city EV, larger 3-wheeler)</string>
+    <string name="ev_motor_60_to_150_kw">60 – 150 kW (mid-range EV)</string>
+    <string name="ev_motor_over_150_kw">&gt; 150 kW (performance / luxury EV)</string>
+    <string name="train_propulsion_electric">Electric (overhead / third rail)</string>
+    <string name="train_propulsion_diesel_electric">Diesel-electric</string>
+    <string name="aircraft_regional_turboprop">Regional / turboprop</string>
+    <string name="aircraft_narrow_body_jet">Narrow-body jet (typical)</string>
+    <string name="aircraft_wide_body_long_haul">Wide-body / long-haul</string>
     <string name="collapse">Collapse</string>
     <string name="expand">Expand</string>
     <string name="weight_kg">Weight (kg)</string>
     <string name="height_cm">Height (cm)</string>
+    <!-- Legacy: kept only so older translations don\'t break. UI now collects birth date instead of raw age. -->
     <string name="age_years">Age (years)</string>
+
+    <!-- Birth date picker (replaces the old age field across onboarding & settings). -->
+    <string name="birth_date_label">Birth date</string>
+    <string name="birth_date_placeholder">Tap to set</string>
+    <!-- "12 March 1995 · 29 yrs" — %1$s is a localized long date, %2$d is the derived whole-year age. -->
+    <string name="birth_date_value_format">%1$s · %2$d yrs</string>
+    <string name="birth_date_dialog_save">Save</string>
+    <string name="birth_date_dialog_cancel">Cancel</string>
     <string name="gender">Gender</string>
     <string name="male">Male</string>
     <string name="female">Female</string>
@@ -134,13 +226,10 @@
     <string name="leaderboard_empty">No one on the leaderboard yet. Opt in from Settings to appear!</string>
     <string name="leaderboard_daily_subtitle">Global #1 for %1$s (session date)</string>
     <string name="leaderboard_daily_empty">No ranked activity for this day yet.</string>
-    <string name="leaderboard_category_combined">Combined</string>
-    <string name="leaderboard_category_distance">Distance</string>
-    <string name="leaderboard_category_top_speed">Top Speed</string>
-    <string name="leaderboard_category_walking">Walking</string>
-    <string name="leaderboard_category_running">Running</string>
-    <string name="leaderboard_category_cycling">Cycling</string>
+    <!-- leaderboard_category_* strings (combined/distance/top_speed/walking/running/cycling)
+         removed when the Profile leaderboard collapsed to a single CO₂-saved ranking. -->
     <string name="leaderboard_period_label">Period</string>
+    <string name="leaderboard_load_for_period">Load leaderboard for this period</string>
     <string name="cloud_sync_desc">Sync your activity sessions to the cloud to enable AI-powered analysis.</string>
     <string name="syncing">Syncing…</string>
     <string name="sync_sessions">Sync Sessions to Cloud</string>
@@ -181,10 +270,35 @@
     <string name="session">Session</string>
     <string name="ai_analysis">AI Analysis</string>
     <string name="route">Route</string>
+    <string name="activity_by_time_of_day">Activity by time of day</string>
+    <string name="activity_by_time_of_day_subtitle">Tracked time on the selected day only, split into four 6 h windows (local time). Sessions that cross midnight are counted only on the day they overlap.</string>
+    <string name="activity_chart_prev_day">Previous day</string>
+    <string name="activity_chart_next_day">Next day</string>
+    <string name="activity_chart_jump_today">Today</string>
+    <string name="time_axis_00">00</string>
+    <string name="time_axis_06">06</string>
+    <string name="time_axis_12">12</string>
+    <string name="time_axis_18">18</string>
+    <string name="time_segment_00_06">00–06</string>
+    <string name="time_segment_06_12">06–12</string>
+    <string name="time_segment_12_18">12–18</string>
+    <string name="time_segment_18_24">18–24</string>
+    <string name="peak_activity_window">Most activity: %1$s</string>
+    <string name="activity_time_chart_empty">Save a few sessions to see when you are most active.</string>
+    <string name="activity_time_chart_empty_day">No tracked activity on this day.</string>
     <string name="no_route_recorded">No route recorded</string>
+    <string name="analysis_week_map_title">This week on the map</string>
+    <string name="analysis_week_map_subtitle">Tap a day below — last 7 days (location icon = routes that day)</string>
+    <string name="analysis_week_map_gps_sessions">%1$d with GPS</string>
+    <string name="analysis_week_map_co2_total_day">CO₂ saved (day total)</string>
+    <string name="elevation_profile">Elevation profile</string>
+    <string name="no_elevation_data">No elevation data for this route (older sessions or missing GPS/barometer).</string>
+    <string name="elevation_min_m">Min %1$d m</string>
+    <string name="elevation_max_m">Max %1$d m</string>
+    <string name="elevation_axis_caption">Horizontal: distance along route · Vertical: elevation (m)</string>
     <string name="co2_emitted_label">CO2 Emitted</string>
     <string name="co2_conserved_label">CO2 Conserved</string>
-    <string name="co2_baseline_disclaimer">* CO2 emissions are based on a standard internal combustion passenger vehicle.</string>
+    <string name="co2_baseline_disclaimer">Estimates are based on an average petrol car. Your real number is likely lower if you drive efficiently.</string>
     <string name="calories_burned">Calories Burned</string>
     <string name="energy_burned">Energy Burned</string>
     <string name="starting_altitude">Starting Altitude</string>
@@ -235,9 +349,10 @@
     <string name="period_rolling_7_days">Last 7 days (rolling)</string>
     <string name="period_longer_range">Longer range</string>
     <string name="period_rolling_days_label">Rolling window (days)</string>
-    <string name="period_rolling_days_helper">1–366 days. Tap a day above for single-day analysis only.</string>
+    <string name="period_rolling_days_helper">Scroll the wheel for 1–366 days (higher = longer range). Tap a day above for single-day only.</string>
     <string name="period_single_day_rolling_locked_hint">Single-day mode: rolling presets are off. Tap the same weekday again to clear, then choose a rolling window.</string>
     <string name="period_preset_days">%1$d</string>
+    <string name="period_wheel_accessibility">Rolling window, %1$d days</string>
     <string name="analyzing">Analyzing…</string>
     <string name="analyze_activity">Analyze My Activity</string>
     <string name="cached_analysis">Showing cached analysis from %1$d minutes ago</string>
@@ -268,6 +383,8 @@
     <string name="running_desc">Track running activity (saves CO2)</string>
     <string name="cycling">Cycling</string>
     <string name="cycling_desc">Track cycling activity (saves CO2)</string>
+    <string name="motorcycle">Motorcycle</string>
+    <string name="motorcycle_desc">Track motorcycle or motor scooter (CO₂ from your vehicle profile)</string>
     <string name="train">Train</string>
     <string name="train_desc">Track rail travel (low CO2 vs driving)</string>
     <string name="driving">Driving</string>
@@ -278,6 +395,11 @@
     <string name="flying_desc">Track air travel (high CO2)</string>
     <string name="select_activity_mode">Select Activity Mode</string>
     <string name="active">ACTIVE</string>
+
+    <string name="lean_hint_title">Two-wheeler motion detected</string>
+    <string name="lean_hint_message">Pocket motion looks like leaning in corners. Still logging as %1$s. Use %2$s instead?</string>
+    <string name="lean_hint_switch">Switch</string>
+    <string name="lean_hint_dismiss">Dismiss</string>
 
     <!-- Activity Donut Chart -->
     <string name="activity_idle">Idle</string>
@@ -301,4 +423,80 @@
 
     <!-- Permissions -->
     <string name="location_permission_rationale">Location permission is required for GPS tracking. Please enable it in settings.</string>
+
+    <!-- Carbon flavor onboarding (also used by carbon-flavor strings.xml overrides) -->
+    <string name="onboarding_intro_title">Welcome</string>
+    <string name="onboarding_intro_subtitle">Track your daily impact.</string>
+    <string name="onboarding_intro_feature_1">Auto-detect your activity</string>
+    <string name="onboarding_intro_feature_2">Live stats per km</string>
+    <string name="onboarding_intro_feature_3">Daily and monthly charts</string>
+    <string name="onboarding_intro_feature_4">Opt-in leaderboard</string>
+    <string name="onboarding_intro_cta">Get started</string>
+    <string name="onboarding_permissions_title">Allow access</string>
+    <string name="onboarding_permissions_subtitle">These permissions are required for accurate tracking.</string>
+    <string name="perm_location_title">Location (always)</string>
+    <string name="perm_location_desc">Required to track your route and distance even when the screen is off.</string>
+    <string name="perm_activity_title">Activity Recognition</string>
+    <string name="perm_activity_desc">Detects when you start moving to auto-start tracking.</string>
+    <string name="perm_notifications_title">Notifications</string>
+    <string name="perm_notifications_desc">Sends a prompt when motion is detected asking you to confirm your activity.</string>
+    <string name="perm_grant">Grant</string>
+    <string name="perm_granted">Granted ✓</string>
+    <string name="perm_continue">Continue</string>
+    <string name="onboarding_profile_title">Your profile</string>
+    <string name="onboarding_profile_subtitle">Optional — fill in now or skip and set later from Settings.</string>
+    <string name="section_physical_profile">Physical details</string>
+    <string name="section_vehicle_profile">Your vehicle</string>
+    <string name="skip_for_now">Skip for now</string>
+    <string name="next">Next</string>
+    <string name="onboarding_baseline_title">Comparison vehicle</string>
+    <string name="onboarding_baseline_subtitle">We compare your trips against this to calculate CO₂ saved.</string>
+    <string name="baseline_vehicle_label">Baseline vehicle</string>
+    <string name="baseline_petrol_car">Petrol car (avg 1401–1800 cc)</string>
+    <string name="baseline_diesel_car">Diesel car (avg 1401–1800 cc)</string>
+    <string name="baseline_large_petrol">Large petrol car (over 2500 cc)</string>
+    <string name="baseline_motorcycle">Motorcycle</string>
+    <string name="baseline_bus">Public bus</string>
+    <string name="baseline_none">No baseline (show raw emissions only)</string>
+    <string name="onboarding_goal_title">Set a carbon goal</string>
+    <string name="onboarding_goal_subtitle">Optional monthly CO₂ reduction target — skip or change any time.</string>
+    <string name="goal_monthly_target_label">Monthly CO₂ reduction target (kg)</string>
+    <string name="goal_hint">e.g. 20</string>
+    <string name="goal_save">Save goal</string>
+    <string name="goal_skip">Skip for now</string>
+    <string name="carbon_tracker_idle">Ready to track</string>
+    <string name="carbon_tracking_active">Tracking…</string>
+    <string name="co2_rate_label">CO₂ rate</string>
+    <string name="co2_per_km">%1$.3f kg CO₂/km</string>
+    <string name="co2_trip_total">%1$.3f kg CO₂ this trip</string>
+    <string name="co2_saved_vs_baseline">%1$.3f kg CO₂ saved vs %2$s</string>
+    <string name="confirm_activity_notif_title">What are you doing?</string>
+    <string name="confirm_activity_notif_text">We detected movement — tap to confirm your activity.</string>
+    <string name="activity_confirmed">Activity: %1$s</string>
+    <string name="dashboard_title">Dashboard</string>
+    <string name="dashboard_today">Today</string>
+    <string name="dashboard_this_week">This week</string>
+    <string name="dashboard_this_month">This month</string>
+    <string name="dashboard_emitted">Emitted</string>
+    <string name="dashboard_saved">Saved</string>
+    <string name="dashboard_net">Net impact</string>
+    <string name="dashboard_goal_progress">Goal progress</string>
+    <string name="dashboard_goal_of">%1$.1f of %2$.1f kg target</string>
+    <string name="dashboard_no_data">No trips yet.\nStart a journey to see your carbon footprint.</string>
+    <string name="dashboard_trips">Trips</string>
+    <string name="equivalents_title">What does that mean?</string>
+    <string name="trip_history_title">Trip history</string>
+    <string name="trip_detail_title">Trip details</string>
+    <string name="trip_emitted">%1$.3f kg CO₂ emitted</string>
+    <string name="trip_saved">%1$.3f kg CO₂ saved</string>
+    <string name="trip_no_baseline">No baseline set</string>
+    <string name="trip_map_route">Route</string>
+    <string name="carbon_leaderboard_title">CO₂ Leaderboard</string>
+    <string name="carbon_leaderboard_desc">Ranked by most CO₂ saved</string>
+    <string name="carbon_leaderboard_opt_in_desc">Appear on the leaderboard with your display name</string>
+    <string name="carbon_leaderboard_empty">No one on the leaderboard yet.</string>
+    <string name="carbon_leaderboard_unit">kg saved</string>
+    <string name="notif_carbon_tracking_title">Tracking</string>
+    <string name="notif_carbon_recording">Tracking your journey…</string>
+    <string name="notif_session_summary_carbon">%1$s · %2$.2f kg CO₂</string>
 </resources>

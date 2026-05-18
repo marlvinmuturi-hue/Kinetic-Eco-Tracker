@@ -324,14 +324,13 @@ class LeaderboardService {
                 entries.addAll(part)
             }
 
+            // Only one category is exposed today (CO₂ saved). The exhaustive
+            // when keeps the compiler honest if a future category is added —
+            // it'll force a deliberate decision here rather than silently
+            // sorting by the wrong field.
             val sorted = entries.sortedByDescending { e ->
                 when (category) {
-                    LeaderboardCategory.COMBINED -> e.score
-                    LeaderboardCategory.DISTANCE -> e.totalDistance
-                    LeaderboardCategory.TOP_SPEED -> e.topSpeedMps
-                    LeaderboardCategory.WALKING -> e.distanceWalking
-                    LeaderboardCategory.RUNNING -> e.distanceRunning
-                    LeaderboardCategory.CYCLING -> e.distanceCycling
+                    LeaderboardCategory.CO2_SAVED -> e.co2Conserved
                 }
             }.mapIndexed { index, e -> e.copy(rank = index + 1) }
 

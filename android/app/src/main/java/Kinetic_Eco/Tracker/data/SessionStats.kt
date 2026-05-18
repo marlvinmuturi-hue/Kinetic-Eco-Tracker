@@ -21,6 +21,8 @@ fun ActivityBreakdown.toEntity(): Kinetic_Eco.Tracker.data.database.ActivityBrea
 
 data class SessionStats(
     val date: String = "", // ISO date string (yyyy-MM-dd)
+    /** Wall-clock end of session (ms). Used for time-of-day charts; 0 if unknown. */
+    val sessionEndTimeMs: Long = 0L,
     val totalDuration: Long = 0, // seconds
     val totalDistance: Double = 0.0, // meters
     val caloriesBurned: Double = 0.0, // kcal
@@ -42,6 +44,7 @@ data class SessionStats(
         ActivityType.WALKING to ActivityBreakdown(),
         ActivityType.RUNNING to ActivityBreakdown(),
         ActivityType.CYCLING to ActivityBreakdown(),
+        ActivityType.MOTORCYCLE to ActivityBreakdown(),
         ActivityType.TRAIN to ActivityBreakdown(),
         ActivityType.DRIVING to ActivityBreakdown(),
         ActivityType.ELECTRIC_VEHICLE to ActivityBreakdown(),

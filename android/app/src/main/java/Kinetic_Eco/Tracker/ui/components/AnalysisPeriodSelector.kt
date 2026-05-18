@@ -12,10 +12,8 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
@@ -23,10 +21,8 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -93,7 +89,7 @@ enum class AnalysisPeriodSelectorMode {
 /**
  * Rolling last 7 days as a week strip (tap a day = single calendar-day mode).
  * [AnalysisPeriodSelectorMode.Default]: optional "Last 7 days" chip, 30/90 slider, optional "All time".
- * [AnalysisPeriodSelectorMode.AiAnalysis]: custom day count field + quick presets instead of chip/slider.
+ * [AnalysisPeriodSelectorMode.AiAnalysis]: scroll wheel for day count + quick preset chips (no chip/slider).
  */
 @Composable
 fun AnalysisPeriodSelector(
@@ -125,11 +121,6 @@ fun AnalysisPeriodSelector(
                 else -> 30f
             }
         }
-    }
-
-    var aiDaysText by remember { mutableStateOf(rollingDays.toString()) }
-    LaunchedEffect(rollingDays) {
-        aiDaysText = rollingDays.toString()
     }
 
     Column(modifier = modifier.fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -227,30 +218,25 @@ fun AnalysisPeriodSelector(
                 color = colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = 4.dp)
             )
-            OutlinedTextField(
-                value = aiDaysText,
-                onValueChange = { new ->
-                    if (singleDayPicked) return@OutlinedTextField
-                    val digits = new.filter { it.isDigit() }.take(3)
-                    aiDaysText = digits
-                    digits.toIntOrNull()?.let { v ->
-                        if (v in 1..366) onAiRollingDaysChanged(v)
-                    }
-                },
-                modifier = Modifier.fillMaxWidth(),
+            Text(
+                text = stringResource(R.string.period_rolling_days_label),
+                style = MaterialTheme.typography.labelMedium,
+                color = colorScheme.onSurfaceVariant
+            )
+            RollingDaysWheelPicker(
+                selectedDays = rollingDays.coerceIn(1, 366),
+                onDaysSelected = onAiRollingDaysChanged,
                 enabled = !allTimeSelected && !singleDayPicked,
-                singleLine = true,
-                label = { Text(stringResource(R.string.period_rolling_days_label)) },
-                supportingText = {
-                    Text(
-                        if (singleDayPicked) {
-                            stringResource(R.string.period_single_day_rolling_locked_hint)
-                        } else {
-                            stringResource(R.string.period_rolling_days_helper)
-                        }
-                    )
+                modifier = Modifier.fillMaxWidth()
+            )
+            Text(
+                text = if (singleDayPicked) {
+                    stringResource(R.string.period_single_day_rolling_locked_hint)
+                } else {
+                    stringResource(R.string.period_rolling_days_helper)
                 },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number)
+                style = MaterialTheme.typography.bodySmall,
+                color = colorScheme.onSurfaceVariant
             )
             Row(
                 modifier = Modifier

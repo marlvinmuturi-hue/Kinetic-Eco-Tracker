@@ -6,6 +6,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import Kinetic_Eco.Tracker.data.*
@@ -110,6 +111,14 @@ class SessionManager(private val context: Context) {
                 }
                 .onSuccess {
                     Log.d(TAG, "✅ Session synced to Firestore")
+                    // Refresh the leaderboard entry so co2Conserved7d/30d/AllTime stay
+                    // in sync with reality. updateLeaderboardEntry is a no-op when the
+                    // user hasn't opted in, so this is safe to call unconditionally.
+                    runCatching {
+                        LeaderboardService.getInstance().updateLeaderboardEntry(userId)
+                    }.onFailure { e ->
+                        Log.w(TAG, "Leaderboard refresh after session save failed: ${e.message}")
+                    }
                 }
         }
         
@@ -122,10 +131,12 @@ class SessionManager(private val context: Context) {
     
     fun getAllSessions(userId: String): Flow<List<SessionStats>> {
         Log.d(TAG, "📊 Fetching all sessions for user: $userId")
-        return sessionDao.getAllSessions(userId).map { entities ->
-            Log.d(TAG, "📊 Found ${entities.size} sessions in database")
-            entities.map { it.toSessionStats() }
-        }
+        return sessionDao.getAllSessions(userId)
+            .map { entities ->
+                Log.d(TAG, "📊 Found ${entities.size} sessions in database")
+                entities.map { it.toSessionStats() }
+            }
+            .flowOn(Dispatchers.IO)
     }
     
     suspend fun getLatestSession(userId: String): SessionStats? {
@@ -224,8 +235,12 @@ class SessionManager(private val context: Context) {
         }
     }
     
-    fun calculateCO2(distance: Double, activity: ActivityType): Pair<Double, Double> {
-        val co2Factor = CO2Factors.getFactor(activity)
+    fun calculateCO2(
+        distance: Double,
+        activity: ActivityType,
+        vehicleProfile: VehicleProfile = VehicleProfile.DEFAULT
+    ): Pair<Double, Double> {
+        val co2Factor = CO2Factors.getFactor(activity, vehicleProfile)
         val co2Impact = co2Factor * (distance / 1000.0) // Convert meters to km
         
         return if (co2Impact > 0) {
@@ -297,6 +312,7 @@ class SessionManager(private val context: Context) {
         
         return SessionStats(
             date = date,
+            sessionEndTimeMs = createdAt,
             totalDuration = totalDuration,
             totalDistance = totalDistance,
             caloriesBurned = caloriesBurned,

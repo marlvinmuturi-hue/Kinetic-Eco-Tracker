@@ -91,7 +91,7 @@ class AIAnalysisService {
             // Parse successful response
             val jsonResponse = JSONObject(responseBody)
             val analysis = parseAnalysisResponse(jsonResponse)
-            Log.d(TAG, "✅ Analysis successful! Score: ${analysis.score}")
+            Log.d(TAG, "✅ Analysis successful (${analysis.recommendations.size} recs, ${analysis.insights.size} insights)")
             
             Result.success(analysis)
         } catch (e: Exception) {
@@ -126,9 +126,10 @@ class AIAnalysisService {
             }
         }
         
+        // NOTE: the Cloud Function still returns "score" and "scoreReasoning"
+        // for backward compatibility; we silently drop them — the new screen
+        // surfaces detail-focused sections instead of a single 0–10 number.
         return ActivityAnalysis(
-            score = json.optDouble("score", 0.0),
-            scoreReasoning = json.optString("scoreReasoning", ""),
             insights = insightsList,
             recommendations = recommendationsList,
             motivation = json.optString("motivation", ""),

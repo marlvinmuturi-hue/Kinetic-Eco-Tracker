@@ -27,6 +27,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import Kinetic_Eco.Tracker.data.*
 import Kinetic_Eco.Tracker.services.Co2EquivalencyService
 import Kinetic_Eco.Tracker.ui.components.ActivityDonutChart
+import Kinetic_Eco.Tracker.ui.components.ActivityTimeOfDayLineChart
 import Kinetic_Eco.Tracker.ui.components.AnalysisPeriodSelector
 import Kinetic_Eco.Tracker.ui.components.AnalysisPeriodSelectorMode
 import Kinetic_Eco.Tracker.ui.components.RouteMapView
@@ -35,6 +36,7 @@ import Kinetic_Eco.Tracker.ui.components.StatCard
 import Kinetic_Eco.Tracker.ui.components.StatCardCompact
 import Kinetic_Eco.Tracker.ui.theme.*
 import Kinetic_Eco.Tracker.ui.utils.EnergyUnit
+import Kinetic_Eco.Tracker.ui.utils.aggregateActivityMsInSixHourBinsForLocalDay
 import Kinetic_Eco.Tracker.ui.utils.format
 import Kinetic_Eco.Tracker.ui.utils.formatEnergy
 import Kinetic_Eco.Tracker.ui.utils.formatSpeedMax
@@ -42,6 +44,8 @@ import Kinetic_Eco.Tracker.ui.utils.formatTime
 import Kinetic_Eco.Tracker.ui.utils.usesMetricDistance
 import Kinetic_Eco.Tracker.viewmodel.AnalyticsViewModel
 import Kinetic_Eco.Tracker.viewmodel.AIAnalysisState
+import java.time.LocalDate
+import java.time.ZoneId
 
 @Composable
 fun AnalyticsScreen(
@@ -55,6 +59,13 @@ fun AnalyticsScreen(
     val colorScheme = MaterialTheme.colorScheme
     val allSessions by viewModel.getAllSessions(userId).collectAsStateWithLifecycle(initialValue = emptyList())
     val displayStats = allSessions.firstOrNull() ?: currentSessionStats
+    val zone = ZoneId.systemDefault()
+    var selectedDayKey by remember {
+        mutableStateOf(LocalDate.now(zone).toString())
+    }
+    val timeOfDayBuckets = remember(allSessions, selectedDayKey) {
+        aggregateActivityMsInSixHourBinsForLocalDay(allSessions, selectedDayKey)
+    }
 
     var sessionExpanded by remember { mutableStateOf(false) }
     var aiExpanded by remember { mutableStateOf(false) }
@@ -100,6 +111,15 @@ fun AnalyticsScreen(
         }
 
         CollapsibleCard(
+            title = stringResource(R.string.ai_powered_analysis),
+            icon = Icons.Default.AutoAwesome,
+            expanded = aiExpanded,
+            onToggle = { aiExpanded = !aiExpanded }
+        ) {
+            AIAnalysisContent(viewModel = viewModel, userId = userId)
+        }
+
+        CollapsibleCard(
             title = stringResource(R.string.session_summary),
             iconPainter = painterResource(R.drawable.ic_session_summary),
             expanded = sessionExpanded,
@@ -112,14 +132,11 @@ fun AnalyticsScreen(
             )
         }
 
-        CollapsibleCard(
-            title = stringResource(R.string.ai_powered_analysis),
-            icon = Icons.Default.AutoAwesome,
-            expanded = aiExpanded,
-            onToggle = { aiExpanded = !aiExpanded }
-        ) {
-            AIAnalysisContent(viewModel = viewModel, userId = userId)
-        }
+        ActivityTimeOfDayLineChart(
+            bucketMs = timeOfDayBuckets,
+            selectedDateKey = selectedDayKey,
+            onDateKeyChange = { selectedDayKey = it }
+        )
 
         SettingsItem(
             title = stringResource(R.string.send_feedback),
@@ -266,7 +283,7 @@ private fun SessionSummaryContentInner(
 
     // CO2 Saved: prominent, full width (enlarged)
     StatCard(
-        title = stringResource(R.string.co2_conserved_label) + "*",
+        title = stringResource(R.string.co2_conserved_label),
         value = "${displayStats.co2Conserved.format(3)} kg",
         iconPainter = painterResource(R.drawable.ic_co2_carbon_neutral),
         color = colorScheme.secondary,
@@ -296,7 +313,7 @@ private fun SessionSummaryContentInner(
             }
             if (displayStats.co2Emissions > 0) {
                 StatCardCompact(
-                    title = stringResource(R.string.co2_emitted_label) + "*",
+                    title = stringResource(R.string.co2_emitted_label),
                     value = "${displayStats.co2Emissions.format(3)} kg",
                     icon = Icons.Default.LocalFireDepartment,
                     color = Red500,
@@ -434,14 +451,18 @@ private fun AIAnalysisContent(viewModel: AnalyticsViewModel, userId: String) {
                 .height(56.dp),
             enabled = analysisState !is AIAnalysisState.Loading,
             colors = ButtonDefaults.buttonColors(
-                containerColor = colorScheme.primary,
-                disabledContainerColor = colorScheme.primary.copy(alpha = 0.5f)
-            )
+                containerColor = colorScheme.surfaceVariant.copy(alpha = 0.95f),
+                contentColor = colorScheme.onSurface,
+                disabledContainerColor = colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                disabledContentColor = colorScheme.onSurfaceVariant
+            ),
+            elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp),
+            shape = RoundedCornerShape(12.dp)
         ) {
             if (analysisState is AIAnalysisState.Loading) {
                 CircularProgressIndicator(
                     modifier = Modifier.size(24.dp),
-                    color = colorScheme.onPrimary,
+                    color = colorScheme.onSurface,
                     strokeWidth = 2.dp
                 )
                 Spacer(modifier = Modifier.width(12.dp))

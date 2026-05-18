@@ -108,7 +108,6 @@ class TrackingService : LifecycleService() {
     private var sensorWarmUpJob: Job? = null  // Pre-feed accelerometer during GPS warm-up
     private var idleCheckJob: Job? = null
     private var deadReckoningJob: Job? = null
-    private var activityConfirmJob: Job? = null
 
     /** Seconds after tracking start where we use relaxed debounce (requiredConsistency=1) for faster convergence */
     private val STARTUP_DEBOUNCE_SECONDS = 10
@@ -166,25 +165,6 @@ class TrackingService : LifecycleService() {
 
     /** Same activity as route segment colors (post GPS refinement). Step/dead-reck stats must not use debounced [_currentActivity] alone. */
     private var lastRefinedActivity: ActivityType = ActivityType.IDLE
-
-    /**
-     * Manual-mode mismatch detection: while the user has pinned an activity
-     * via [setManualActivityMode], we still run the auto-classifier in the
-     * background ("shadow") and flag the user when its output disagrees with
-     * the manual choice for a sustained window. The fields below scope that
-     * detection to a single in-flight session.
-     *
-     *  - [manualMismatchCandidate]: the auto-detected activity we're currently
-     *    timing. Reset whenever shadow flips back to the manual choice or to
-     *    a different non-manual candidate.
-     *  - [manualMismatchSinceMs]: when [manualMismatchCandidate] first started
-     *    disagreeing — used to enforce [MANUAL_MISMATCH_PROMPT_DELAY_MS].
-     *  - [manualMismatchLastPromptMs]: last time we posted (or the user
-     *    dismissed) the prompt — gates [MANUAL_MISMATCH_COOLDOWN_MS].
-     */
-    private var manualMismatchCandidate: ActivityType? = null
-    private var manualMismatchSinceMs: Long = 0L
-    private var manualMismatchLastPromptMs: Long = 0L
 
     // Accelerometer samples for Firestore analytics (1 sample/sec during tracking)
     private val accelerometerSamples = mutableListOf<AccelerometerSample>()
@@ -289,33 +269,6 @@ class TrackingService : LifecycleService() {
             ACTION_STOP_TRACKING -> stopTracking()
             ACTION_STOP_AND_SAVE -> stopAndSaveFromNotification()
             ACTION_DISCARD -> discardFromNotification()
-            ACTION_MANUAL_SWITCH -> {
-                val name = intent.getStringExtra(EXTRA_TARGET_ACTIVITY)
-                val type = name?.let {
-                    try { ActivityType.valueOf(it) } catch (_: Exception) { null }
-                }
-                if (type != null) {
-                    setManualActivityMode(type)
-                    // setManualActivityMode resets mismatch state already, but
-                    // also clear the prompt so the switch feels confirmed.
-                    dismissManualMismatchNotification()
-                }
-            }
-            ACTION_MANUAL_KEEP -> {
-                // User stands by their manual choice: just dismiss and start
-                // the cooldown so we don't pester them again right away.
-                manualMismatchLastPromptMs = System.currentTimeMillis()
-                manualMismatchCandidate = null
-                manualMismatchSinceMs = 0L
-                dismissManualMismatchNotification()
-            }
-            ActivityConfirmReceiver.ACTION_SET_ACTIVITY -> {
-                val name = intent.getStringExtra(ActivityConfirmReceiver.EXTRA_ACTIVITY_TYPE)
-                val type = name?.let {
-                    try { ActivityType.valueOf(it) } catch (_: Exception) { null }
-                }
-                if (type != null) setManualActivityMode(type)
-            }
             null -> { /* system restart; tracking state is false until user starts again */ }
         }
         return Service.START_STICKY
@@ -398,13 +351,11 @@ class TrackingService : LifecycleService() {
         sensorWarmUpJob?.cancel()
         idleCheckJob?.cancel()
         deadReckoningJob?.cancel()
-        activityConfirmJob?.cancel()
         locationCollectJob = null
         sensorCollectJob = null
         sensorWarmUpJob = null
         idleCheckJob = null
         deadReckoningJob = null
-        activityConfirmJob = null
         idleStartTimeMs = 0
         motorLowSpeedSinceMs = 0L
         lastDrivingBandMs = 0L
@@ -536,14 +487,6 @@ class TrackingService : LifecycleService() {
             }
         }
 
-        // Activity-confirm notification: after 30 s of tracking (manual mode not set), ask user
-        activityConfirmJob = lifecycleScope.launch {
-            delay(ACTIVITY_CONFIRM_DELAY_MS)
-            if (_isTracking.value && _manualActivityMode.value == null) {
-                showActivityConfirmNotification()
-            }
-        }
-
         // Dead reckoning: extrapolate distance when GPS drops (flying, tunnels)
         deadReckoningJob = lifecycleScope.launch {
             while (isActive && _isTracking.value) {
@@ -587,19 +530,8 @@ class TrackingService : LifecycleService() {
         idleCheckJob = null
         deadReckoningJob?.cancel()
         deadReckoningJob = null
-        activityConfirmJob?.cancel()
-        activityConfirmJob = null
-        // Dismiss any lingering activity prompts so the shade is clean once
-        // tracking ends — covers both the auto-start "What are you doing?"
-        // notification and the manual-mode mismatch quick-switch prompt.
-        (getSystemService(NOTIFICATION_SERVICE) as? android.app.NotificationManager)?.apply {
-            cancel(ActivityConfirmReceiver.CONFIRM_NOTIFICATION_ID)
-            cancel(MANUAL_MISMATCH_NOTIFICATION_ID)
-        }
-        manualMismatchCandidate = null
-        manualMismatchSinceMs = 0L
-        manualMismatchLastPromptMs = 0L
         _leanActivityHint.value = null
+        _isTracking.value = false
         _currentActivity.value = ActivityType.IDLE
         locationService.setFlyingMode(false)
         smoothedSpeed = 0f
@@ -693,13 +625,6 @@ class TrackingService : LifecycleService() {
             activityDurationSeconds = 0
             activityHistory.clear()
         }
-        // Whenever the manual-mode pin changes (set, replaced, or cleared),
-        // discard any in-flight mismatch detection — the user's just answered
-        // the question we'd have prompted them about.
-        manualMismatchCandidate = null
-        manualMismatchSinceMs = 0L
-        manualMismatchLastPromptMs = 0L
-        dismissManualMismatchNotification()
     }
 
     fun dismissLeanActivityHint() {
@@ -1022,7 +947,12 @@ class TrackingService : LifecycleService() {
     // Returns outlier-gated raw speed for display (no EMA lag), matching the same outlier window
     // used by smoothSpeedWithOutlierRejection so spikes are suppressed in both paths.
     private fun rejectOutlierForDisplay(newSpeed: Float, activity: ActivityType): Float {
-        if (smoothedSpeed == 0f) return newSpeed
+        // On the very first reading (smoothedSpeed not yet set), only trust the GPS speed if
+        // it is already at a plausible walking pace — anything below walking min is GPS noise
+        // on startup and should not flash on the speedometer.
+        if (smoothedSpeed == 0f) {
+            return if (newSpeed >= SpeedThresholds.WALKING_MIN.toFloat()) newSpeed else 0f
+        }
         val maxChange = when {
             activity == ActivityType.FLYING -> MAX_SPEED_CHANGE_FLYING
             activity == ActivityType.WALKING || activity == ActivityType.IDLE -> MAX_SPEED_CHANGE_WALKING
@@ -1032,10 +962,15 @@ class TrackingService : LifecycleService() {
     }
 
     private fun smoothSpeedWithOutlierRejection(newSpeed: Float, activity: ActivityType): Float {
-        // First reading
+        // First reading: only latch into smoothedSpeed when we have a plausible pace.
+        // Latching GPS noise (< walking min) would corrupt the outlier-rejection baseline
+        // for all subsequent ticks and keep the EMA artificially elevated.
         if (smoothedSpeed == 0f) {
-            smoothedSpeed = newSpeed
-            return newSpeed
+            if (newSpeed >= SpeedThresholds.WALKING_MIN.toFloat()) {
+                smoothedSpeed = newSpeed
+                return newSpeed
+            }
+            return 0f
         }
         
         val maxChange = when {
@@ -1461,7 +1396,30 @@ class TrackingService : LifecycleService() {
         val motionPattern = sensorService.getMotionPattern()
         val sensorHint = sensorService.getSensorHint()
         val hasAccelerometer = sensorService.hasAccelerometer()
-        
+
+        // Sensors confirm the user is stationary: GPS speed is noise — silence it.
+        // Only below DRIVING_MIN so genuinely fast-moving vehicles are unaffected.
+        if (_manualActivityMode.value == null &&
+            sensorHint == SensorHint.STILL &&
+            speed < SpeedThresholds.DRIVING_MIN.toFloat()) {
+            speed = 0f
+        }
+
+        // GPS static jitter gate: catches the common case where SensorHint hasn't
+        // converged yet (needs 5 s / 20 samples) or hand tremors keep variance above
+        // the STILL threshold — but linear-acceleration magnitude is clearly too low to
+        // be real walking motion. GPS chips routinely report 0.5–1.5 m/s of noise when
+        // completely stationary; this kills that display artefact.
+        // Guards: speed must be below true walking speed, no recent steps (ON_FOOT),
+        // and below driving min so a car interior is never muted.
+        if (_manualActivityMode.value == null &&
+            speed < SpeedThresholds.WALKING_MIN.toFloat() * 2f &&  // < ~1 m/s (3.6 km/h)
+            currentAcceleration < 0.30f &&   // no walking-step impulse
+            currentRotationRate < 0.20f &&   // no real body rotation
+            sensorHint != SensorHint.ON_FOOT) {
+            speed = 0f
+        }
+
         speed = applyPedestrianGpsSanityCap(
             speed = speed,
             now = now,
@@ -1553,21 +1511,8 @@ class TrackingService : LifecycleService() {
         }
         lastRefinedActivity = refinedActivity
 
-        // Manual-mode shadow classification: while the user has pinned a
-        // specific activity, run the auto-classifier in the background and
-        // prompt them if it sustainedly disagrees with their choice.
         val manual = _manualActivityMode.value
         if (manual != null) {
-            val shadow = computeShadowAutoActivity(
-                speed = speed,
-                currentAltitude = currentAltitude,
-                previousAltitude = previousAltitude,
-                motionPattern = motionPattern,
-                hasAccelerometer = hasAccelerometer,
-                sensorHint = sensorHint,
-                now = now
-            )
-            evaluateManualOverrideMismatch(shadow, manual, now)
             evaluateLeanManualHint(speed, now, manual)
         }
         
@@ -1621,23 +1566,31 @@ class TrackingService : LifecycleService() {
                 dd = 0.0
             } else if (refinedActivity == ActivityType.WALKING && dd > 0) {
                 val stepsThisInterval = (lastStepCount - stepCountAtLastGps).coerceAtLeast(0)
-                val speedCap = CAP_WALKING_SPEED_MPS * timeDelta
-                // If no new steps this GPS interval, stepCap would be ~slack only and caps every
-                // segment (~2–4m) — massive undercount. Only blend-cap when we observed steps.
-                dd = if (stepsThisInterval > 0) {
-                    val stepCap = stepsThisInterval * STEP_LENGTH_WALKING + STEP_GPS_BLEND_SLACK_M
-                    minOf(dd, stepCap, speedCap)
+                // When the device has a step counter and it reports nothing, GPS-only speed is
+                // unreliable (drift, being driven, early warm-up) — discard the segment entirely.
+                if (stepsThisInterval == 0 && sensorService.hasStepCounter()) {
+                    dd = 0.0
                 } else {
-                    minOf(dd, speedCap)
+                    val speedCap = CAP_WALKING_SPEED_MPS * timeDelta
+                    dd = if (stepsThisInterval > 0) {
+                        val stepCap = stepsThisInterval * STEP_LENGTH_WALKING + STEP_GPS_BLEND_SLACK_M
+                        minOf(dd, stepCap, speedCap)
+                    } else {
+                        minOf(dd, speedCap)
+                    }
                 }
             } else if (refinedActivity == ActivityType.RUNNING && dd > 0) {
                 val stepsThisInterval = (lastStepCount - stepCountAtLastGps).coerceAtLeast(0)
-                val speedCap = CAP_RUNNING_SPEED_MPS * timeDelta
-                dd = if (stepsThisInterval > 0) {
-                    val stepCap = stepsThisInterval * STEP_LENGTH_RUNNING + STEP_GPS_BLEND_SLACK_M
-                    minOf(dd, stepCap, speedCap)
+                if (stepsThisInterval == 0 && sensorService.hasStepCounter()) {
+                    dd = 0.0
                 } else {
-                    minOf(dd, speedCap)
+                    val speedCap = CAP_RUNNING_SPEED_MPS * timeDelta
+                    dd = if (stepsThisInterval > 0) {
+                        val stepCap = stepsThisInterval * STEP_LENGTH_RUNNING + STEP_GPS_BLEND_SLACK_M
+                        minOf(dd, stepCap, speedCap)
+                    } else {
+                        minOf(dd, speedCap)
+                    }
                 }
             }
 
@@ -2023,7 +1976,7 @@ class TrackingService : LifecycleService() {
 
     private fun createNotification(): Notification {
         ensureTrackingChannel()
-        return buildTrackingNotification(contentText = "Recording your activity...")
+        return buildTrackingNotification(contentText = "Starting up — GPS locking in...")
     }
 
     /** Idempotent setup of the foreground tracking channel — safe to call from
@@ -2154,11 +2107,20 @@ class TrackingService : LifecycleService() {
         val unitLabel = userPrefsManager.getDistanceUnitLabel()
         val distanceInUnits = _sessionDistance.value / metersPerUnit
         val durationMin = _sessionDuration.value / 60
-        val contentText = String.format(
-            "%.2f %s • %d min • %s",
-            distanceInUnits, unitLabel, durationMin,
-            _currentActivity.value.name.lowercase()
-        )
+        val activity = _currentActivity.value
+
+        val activityLabel = when (activity) {
+            ActivityType.IDLE -> "Paused"
+            ActivityType.WALKING -> "Walking"
+            ActivityType.RUNNING -> "Running"
+            ActivityType.CYCLING -> "Cycling"
+            ActivityType.MOTORCYCLE -> "Riding"
+            ActivityType.TRAIN -> "On train"
+            ActivityType.DRIVING -> "Driving"
+            ActivityType.ELECTRIC_VEHICLE -> "EV ride"
+            ActivityType.FLYING -> "Flying"
+        }
+        val contentText = "$activityLabel — ${String.format("%.2f", distanceInUnits)} $unitLabel, ${durationMin} min"
 
         val notification = buildTrackingNotification(contentText = contentText)
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
@@ -2166,39 +2128,83 @@ class TrackingService : LifecycleService() {
     }
 
     /**
-     * Show session complete notification (with sound when enabled).
-     * Call from ViewModel before stopTracking when session is saved.
+     * Show an encouraging session-complete notification, then optionally follow up with a
+     * weekly CO₂-goal progress notification when [weeklyCo2SavedKg] is supplied by the caller.
+     *
+     * Message tone is activity-specific:
+     *  - Walking/Running → celebrate the eco movement
+     *  - Cycling         → highlight savings vs driving
+     *  - EV/Train        → clean-commute framing
+     *  - Motorcycle/Driving → neutral distance summary (no CO₂ saved claim)
+     *  - Flying          → distance/duration only
      */
-    fun showSessionCompleteNotification(stats: SessionStats) {
+    fun showSessionCompleteNotification(stats: SessionStats, weeklyCo2SavedKg: Float = 0f) {
         val soundsEnabled = userPrefsManager.getNotificationSoundsEnabled()
-        val channelId = "session_summary_channel"
+        val channelId = "session_celebrate_channel"
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 channelId,
-                "Session Summary",
+                "Session Complete",
                 NotificationManager.IMPORTANCE_DEFAULT
             ).apply {
-                description = "Notification when a tracking session is saved"
+                description = "Encouraging summary when a tracking session is saved"
                 setShowBadge(true)
                 enableVibration(soundsEnabled)
                 setSound(if (soundsEnabled) android.provider.Settings.System.DEFAULT_NOTIFICATION_URI else null, null)
             }
-            val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            manager.createNotificationChannel(channel)
+            (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(channel)
         }
 
         val metersPerUnit = userPrefsManager.getMetersPerUnit()
         val unitLabel = userPrefsManager.getDistanceUnitLabel()
         val distanceStr = String.format("%.2f %s", stats.totalDistance / metersPerUnit, unitLabel)
         val durationMin = stats.totalDuration / 60
-        val title = "Session saved"
-        val body = "$distanceStr in ${durationMin} min • ${stats.caloriesBurned.toInt()} kcal"
+        val co2Saved = stats.co2Conserved  // kg saved vs driving baseline
+
+        val mainActivity = stats.breakdown.entries
+            .filter { it.key != ActivityType.IDLE && it.value.time > 0 }
+            .maxByOrNull { it.value.time }?.key ?: ActivityType.IDLE
+
+        val (title, body) = when (mainActivity) {
+            ActivityType.WALKING -> Pair(
+                "Great walk!",
+                "$distanceStr in ${durationMin} min — every step counts"
+            )
+            ActivityType.RUNNING -> Pair(
+                "Nice run!",
+                "$distanceStr in ${durationMin} min — you earned it"
+            )
+            ActivityType.CYCLING -> if (co2Saved > 0.0) Pair(
+                "Great ride!",
+                "$distanceStr in ${durationMin} min — saved ${String.format("%.2f", co2Saved)} kg CO₂ vs driving"
+            ) else Pair(
+                "Great ride!",
+                "$distanceStr in ${durationMin} min"
+            )
+            ActivityType.TRAIN -> Pair(
+                "Clean commute!",
+                if (co2Saved > 0.0) "$distanceStr — saved ${String.format("%.2f", co2Saved)} kg CO₂"
+                else "$distanceStr in ${durationMin} min"
+            )
+            ActivityType.ELECTRIC_VEHICLE -> Pair(
+                "Zero-emission ride!",
+                if (co2Saved > 0.0) "$distanceStr — saved ${String.format("%.2f", co2Saved)} kg CO₂"
+                else "$distanceStr in ${durationMin} min"
+            )
+            ActivityType.FLYING -> Pair(
+                "Flight logged",
+                "$distanceStr in ${durationMin} min"
+            )
+            else -> Pair(
+                "Session saved",
+                "$distanceStr in ${durationMin} min"
+            )
+        }
 
         val pendingIntent = PendingIntent.getActivity(
             this, 0, Intent(this, MainActivity::class.java),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
-
         val largeIcon = getAppIconBitmap()
         val builder = NotificationCompat.Builder(this, channelId)
             .setContentTitle(title)
@@ -2208,12 +2214,62 @@ class TrackingService : LifecycleService() {
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
-        if (!soundsEnabled) {
-            builder.setSilent(true)
-        }
+        if (!soundsEnabled) builder.setSilent(true)
 
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.notify(SESSION_SUMMARY_NOTIFICATION_ID, builder.build())
+
+        if (weeklyCo2SavedKg > 0f) showWeeklyGoalNotificationIfNeeded(weeklyCo2SavedKg)
+    }
+
+    /**
+     * Posts a weekly CO₂-goal progress notification when the user has saved ≥ 75 % of their
+     * weekly target. Fires on a LOW-importance channel (no sound / badge) so it never competes
+     * with the session-complete notification for attention.
+     */
+    private fun showWeeklyGoalNotificationIfNeeded(weeklyKg: Float) {
+        val goalKg = userPrefsManager.getWeeklyCo2GoalKg()
+        val pct = weeklyKg / goalKg
+        if (pct < 0.75f) return
+
+        val channelId = "weekly_goal_channel"
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                channelId,
+                "Weekly Goal",
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "Progress toward your weekly CO₂ savings goal"
+                setShowBadge(false)
+                setSound(null, null)
+                enableVibration(false)
+            }
+            (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).createNotificationChannel(channel)
+        }
+
+        val (title, body) = if (pct >= 1f) Pair(
+            "Weekly goal reached!",
+            "You saved ${String.format("%.1f", weeklyKg)} kg CO₂ this week — nice work!"
+        ) else Pair(
+            "Almost there this week!",
+            "You're at ${String.format("%.1f", weeklyKg)} / ${String.format("%.1f", goalKg)} kg CO₂ saved"
+        )
+
+        val pendingIntent = PendingIntent.getActivity(
+            this, 0, Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+        )
+        val builder = NotificationCompat.Builder(this, channelId)
+            .setContentTitle(title)
+            .setContentText(body)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentIntent(pendingIntent)
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setSilent(true)
+
+        (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+            .notify(WEEKLY_GOAL_NOTIFICATION_ID, builder.build())
     }
 
     /**
@@ -2279,6 +2335,8 @@ class TrackingService : LifecycleService() {
         const val SESSION_SUMMARY_NOTIFICATION_ID = 103
         /** ID for the brief "Session discarded" toast-style notification. */
         const val DISCARD_CONFIRMATION_NOTIFICATION_ID = 104
+        /** ID for the weekly CO₂-goal progress nudge. */
+        const val WEEKLY_GOAL_NOTIFICATION_ID = 105
 
         const val ACTION_START_TRACKING = "ACTION_START_TRACKING"
         const val ACTION_STOP_TRACKING = "ACTION_STOP_TRACKING"
@@ -2287,32 +2345,12 @@ class TrackingService : LifecycleService() {
         /** Foreground-notification action: stop tracking and throw the session
          *  away (used when the auto-start step counter triggers unintentionally). */
         const val ACTION_DISCARD = "ACTION_DISCARD"
-        /** Manual-mode mismatch quick-switch: pin the carried [ActivityType]
-         *  via [setManualActivityMode]. Carried in [EXTRA_TARGET_ACTIVITY]. */
-        const val ACTION_MANUAL_SWITCH = "ACTION_MANUAL_SWITCH"
-        /** Manual-mode mismatch dismissal: keep the user's pinned activity
-         *  and start the cooldown so we don't re-prompt immediately. */
-        const val ACTION_MANUAL_KEEP = "ACTION_MANUAL_KEEP"
-        /** Extra carrying an [ActivityType.name] for [ACTION_MANUAL_SWITCH]. */
-        const val EXTRA_TARGET_ACTIVITY = "extra_target_activity"
 
         /** PendingIntent request codes — kept distinct so flag updates on one
          *  action don't accidentally clobber another. */
         private const val REQ_OPEN_APP = 0
         private const val REQ_STOP_SAVE = 401
         private const val REQ_DISCARD = 402
-        /** Activity-confirm body tap + "Confirm in app" action → opens the
-         *  in-app activity selector. Distinct from [REQ_OPEN_APP] because
-         *  the activity-confirm flow carries a deep-link extra and we don't
-         *  want FLAG_UPDATE_CURRENT to overwrite the bare-open intent used
-         *  by other notifications. */
-        private const val REQ_CONFIRM_OPEN_APP = 403
-        /** Activity-confirm "Keep auto" action → dismisses without changes. */
-        private const val REQ_CONFIRM_KEEP = 404
-        /** Manual-mode mismatch "Switch to <auto>" quick action. */
-        private const val REQ_MANUAL_SWITCH = 405
-        /** Manual-mode mismatch "Keep <manual>" quick action. */
-        private const val REQ_MANUAL_KEEP = 406
 
         /** Channel ID for the persistent foreground tracking notification.
          *
@@ -2337,33 +2375,6 @@ class TrackingService : LifecycleService() {
 
         /** After this long without speed in the driving band, [MOTOR_LOW_SPEED_EXIT_MS] countdown applies. */
         private const val STICKY_RECENT_DRIVING_MS = 120_000L
-
-        /** Delay after auto-start before the "What are you doing?" confirm notification fires. */
-        private const val ACTIVITY_CONFIRM_DELAY_MS = 30_000L
-
-        /**
-         * How long the auto-classifier must keep disagreeing with the manual
-         * activity choice before we prompt the user with a quick-switch
-         * notification. Short enough to react when someone forgets they
-         * picked "Walking" and got into a car; long enough to ride through
-         * brief deviations (a parking-lot walk before the engine starts).
-         */
-        private const val MANUAL_MISMATCH_PROMPT_DELAY_MS = 30_000L
-
-        /**
-         * Cooldown after a "Keep <manual>" dismissal (or after we just
-         * prompted) before the manual-mode mismatch notification can fire
-         * again — keeps the shade quiet if the user really did mean their
-         * pinned choice.
-         */
-        private const val MANUAL_MISMATCH_COOLDOWN_MS = 15 * 60_000L
-
-        /**
-         * Standalone notification id for the manual-mode mismatch prompt.
-         * Distinct from [ActivityConfirmReceiver.CONFIRM_NOTIFICATION_ID] so
-         * the two flows can coexist without one cancelling the other.
-         */
-        const val MANUAL_MISMATCH_NOTIFICATION_ID = 4002
 
         /**
          * How long high speed must persist before we let a pedestrian activity
@@ -2390,241 +2401,6 @@ class TrackingService : LifecycleService() {
          * "long-term cadence" branch.
          */
         private const val PEDESTRIAN_MIN_STEPS_FOR_CAP = 4
-    }
-
-    // ── Activity-confirm notification ─────────────────────────────────────────
-
-    /**
-     * Posts the "What are you doing?" notification a short while after auto-start.
-     *
-     * UX contract (intentional minimalism):
-     *  • Body tap            → opens the app, lands on the Tracker tab, and pops
-     *                          the full in-app activity selector. This is the
-     *                          primary path because the in-app selector shows
-     *                          richer labels/icons than a notification action row
-     *                          and lets the user reconsider without time pressure.
-     *  • "Confirm in app"    → identical to the body tap. Provided as an explicit
-     *                          action button for users who don't realise the body
-     *                          itself is tappable on their launcher / OEM skin.
-     *  • "Keep auto"         → dismisses without changing anything; tracking
-     *                          continues in auto-detect mode.
-     *
-     * The deep link is delivered via [MainActivity.EXTRA_OPEN_ACTIVITY_SELECTOR],
-     * which MainActivity consumes in onNewIntent / onCreate and routes through a
-     * Compose LaunchedEffect.
-     */
-    private fun showActivityConfirmNotification() {
-        val channelId = "activity_confirm_channel"
-        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = android.app.NotificationChannel(
-                channelId,
-                "Activity Confirmation",
-                android.app.NotificationManager.IMPORTANCE_HIGH
-            ).apply {
-                description = "Asks which activity you are doing after auto-start"
-                enableVibration(true)
-            }
-            nm.createNotificationChannel(channel)
-        }
-
-        val flags = android.app.PendingIntent.FLAG_IMMUTABLE or android.app.PendingIntent.FLAG_UPDATE_CURRENT
-
-        // Body tap + "Confirm in app" both target MainActivity with the
-        // selector deep-link extra. SINGLE_TOP combined with the manifest
-        // launchMode lets MainActivity reuse its existing instance and route
-        // the request through onNewIntent.
-        val openSelectorIntent = Intent(this, MainActivity::class.java).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-            putExtra(MainActivity.EXTRA_OPEN_ACTIVITY_SELECTOR, true)
-        }
-        val openSelectorPi = android.app.PendingIntent.getActivity(
-            this, REQ_CONFIRM_OPEN_APP, openSelectorIntent, flags
-        )
-        val confirmAction = androidx.core.app.NotificationCompat.Action.Builder(
-            0, "Confirm in app", openSelectorPi
-        ).build()
-
-        // Quick dismiss: ActivityConfirmReceiver already handles the "KEEP"
-        // sentinel — leaves manual-mode unchanged and cancels the notification.
-        val keepIntent = Intent(this, ActivityConfirmReceiver::class.java).apply {
-            action = ActivityConfirmReceiver.ACTION_CONFIRM_ACTIVITY
-            putExtra(ActivityConfirmReceiver.EXTRA_ACTIVITY_TYPE, "KEEP")
-        }
-        val keepPi = android.app.PendingIntent.getBroadcast(this, REQ_CONFIRM_KEEP, keepIntent, flags)
-        val keepAction = androidx.core.app.NotificationCompat.Action.Builder(0, "Keep auto", keepPi).build()
-
-        val builder = androidx.core.app.NotificationCompat.Builder(this, channelId)
-            .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle("What are you doing?")
-            .setContentText("Tap to choose your activity in the app")
-            .setPriority(androidx.core.app.NotificationCompat.PRIORITY_HIGH)
-            .setContentIntent(openSelectorPi)
-            .setAutoCancel(true)
-            .addAction(confirmAction)
-            .addAction(keepAction)
-
-        nm.notify(ActivityConfirmReceiver.CONFIRM_NOTIFICATION_ID, builder.build())
-    }
-
-    /**
-     * Run the auto-classifier as if no manual override were set, so we can
-     * compare against the pinned activity in [evaluateManualOverrideMismatch].
-     *
-     * Mirrors the speed-gate envelope of the non-manual branch in
-     * [updateLocation] (IDLE / DRIVING band) but skips the sticky-motor and
-     * promotion-latency filters: the 30 s persistence window in
-     * [evaluateManualOverrideMismatch] already serves the same anti-spike
-     * purpose, and re-running them here would just add hysteresis we'd have
-     * to reason about twice.
-     */
-    private fun computeShadowAutoActivity(
-        speed: Float,
-        currentAltitude: Double,
-        previousAltitude: Double,
-        motionPattern: MotionPattern,
-        hasAccelerometer: Boolean,
-        sensorHint: SensorHint,
-        @Suppress("UNUSED_PARAMETER") now: Long
-    ): ActivityType {
-        val raw = locationService.classifyActivityWithAltitude(
-            speed, currentAltitude, previousAltitude,
-            motionPattern, hasAccelerometer, sensorHint
-        )
-        return when {
-            speed < SpeedThresholds.IDLE_SPEED_MAX -> ActivityType.IDLE
-            speed >= SpeedThresholds.DRIVING_MIN -> when (raw) {
-                ActivityType.FLYING -> ActivityType.FLYING
-                ActivityType.CYCLING -> ActivityType.CYCLING
-                else -> ActivityType.DRIVING
-            }
-            else -> raw
-        }
-    }
-
-    /**
-     * State machine that decides whether to prompt the user about a sustained
-     * disagreement between [shadow] (what the auto-classifier thinks) and
-     * [manual] (what they pinned via [setManualActivityMode]). Called once per
-     * location tick from [updateLocation] while a manual override is active.
-     *
-     * Rules:
-     *  - Same activity                → reset, no prompt.
-     *  - Shadow == IDLE while pinned to a moving activity → reset.
-     *    Walking/driving naturally have stationary moments (red lights,
-     *    breaks, phone-checking pauses) that we don't want to flag.
-     *  - Within [MANUAL_MISMATCH_COOLDOWN_MS] of the last prompt/dismissal
-     *    → no-op.
-     *  - Shadow flipped to a new candidate → restart the timer for it.
-     *  - Same candidate has held for [MANUAL_MISMATCH_PROMPT_DELAY_MS]
-     *    → post the quick-switch notification and start the cooldown.
-     */
-    private fun evaluateManualOverrideMismatch(
-        shadow: ActivityType,
-        manual: ActivityType,
-        now: Long
-    ) {
-        if (shadow == manual || shadow == ActivityType.IDLE) {
-            manualMismatchCandidate = null
-            manualMismatchSinceMs = 0L
-            return
-        }
-        if (manualMismatchLastPromptMs != 0L &&
-            now - manualMismatchLastPromptMs < MANUAL_MISMATCH_COOLDOWN_MS) {
-            return
-        }
-        if (manualMismatchCandidate != shadow) {
-            manualMismatchCandidate = shadow
-            manualMismatchSinceMs = now
-            return
-        }
-        if (now - manualMismatchSinceMs >= MANUAL_MISMATCH_PROMPT_DELAY_MS) {
-            showManualOverrideConfirmNotification(autoActivity = shadow, manualActivity = manual)
-            manualMismatchLastPromptMs = now
-            manualMismatchCandidate = null
-            manualMismatchSinceMs = 0L
-        }
-    }
-
-    /**
-     * Quick-switch notification for the "user is in manual mode but the auto-
-     * classifier disagrees" case. Two inline actions:
-     *  - **Switch to <auto>** → calls [setManualActivityMode] for the
-     *    detected activity via [ACTION_MANUAL_SWITCH] on this service.
-     *  - **Keep <manual>** → leaves the manual pin intact, starts the
-     *    cooldown via [ACTION_MANUAL_KEEP].
-     *
-     * Body tap falls back to the in-app activity selector — same deep link
-     * as [showActivityConfirmNotification] — so users who want to pick a
-     * non-detected activity (e.g. correcting Driving → Cycling) have a
-     * one-tap path that doesn't require dismissing the notification first.
-     */
-    private fun showManualOverrideConfirmNotification(
-        autoActivity: ActivityType,
-        manualActivity: ActivityType
-    ) {
-        val channelId = "activity_change_channel"
-        val nm = getSystemService(Context.NOTIFICATION_SERVICE) as android.app.NotificationManager
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = android.app.NotificationChannel(
-                channelId,
-                "Activity Change Detection",
-                android.app.NotificationManager.IMPORTANCE_HIGH
-            ).apply {
-                description = "Asks if you've switched activity while in manual mode"
-                enableVibration(true)
-            }
-            nm.createNotificationChannel(channel)
-        }
-
-        val flags = PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
-        val autoLabel = activityDisplayName(autoActivity)
-        val manualLabel = activityDisplayName(manualActivity)
-
-        val openSelectorIntent = Intent(this, MainActivity::class.java).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
-            putExtra(MainActivity.EXTRA_OPEN_ACTIVITY_SELECTOR, true)
-        }
-        val openSelectorPi = PendingIntent.getActivity(
-            this, REQ_CONFIRM_OPEN_APP, openSelectorIntent, flags
-        )
-
-        val switchIntent = Intent(this, TrackingService::class.java).apply {
-            action = ACTION_MANUAL_SWITCH
-            putExtra(EXTRA_TARGET_ACTIVITY, autoActivity.name)
-        }
-        val switchPi = PendingIntent.getService(this, REQ_MANUAL_SWITCH, switchIntent, flags)
-        val switchAction = NotificationCompat.Action.Builder(
-            0, "Switch to $autoLabel", switchPi
-        ).build()
-
-        val keepIntent = Intent(this, TrackingService::class.java).apply {
-            action = ACTION_MANUAL_KEEP
-        }
-        val keepPi = PendingIntent.getService(this, REQ_MANUAL_KEEP, keepIntent, flags)
-        val keepAction = NotificationCompat.Action.Builder(
-            0, "Keep $manualLabel", keepPi
-        ).build()
-
-        val builder = NotificationCompat.Builder(this, channelId)
-            .setSmallIcon(R.drawable.ic_notification)
-            .setContentTitle("Activity changed?")
-            .setContentText("Looks like you're ${autoLabel.lowercase()} — switch from ${manualLabel.lowercase()}?")
-            .setPriority(NotificationCompat.PRIORITY_HIGH)
-            .setContentIntent(openSelectorPi)
-            .setAutoCancel(true)
-            .addAction(switchAction)
-            .addAction(keepAction)
-
-        nm.notify(MANUAL_MISMATCH_NOTIFICATION_ID, builder.build())
-    }
-
-    /** Cancel any in-flight manual-mode mismatch prompt — called when the
-     *  user resolves the question (via "Switch", "Keep", a fresh manual
-     *  selection, or stop tracking). */
-    private fun dismissManualMismatchNotification() {
-        (getSystemService(NOTIFICATION_SERVICE) as? android.app.NotificationManager)
-            ?.cancel(MANUAL_MISMATCH_NOTIFICATION_ID)
     }
 
     private fun activityDisplayName(t: ActivityType): String = when (t) {

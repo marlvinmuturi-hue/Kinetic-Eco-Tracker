@@ -16,8 +16,8 @@ class BootReceiver : BroadcastReceiver() {
         if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
 
         val prefsManager = UserPreferencesManager(context)
-        if (!prefsManager.getAutoStartOnWalkEnabled()) {
-            Log.d(TAG, "Auto-start disabled, skipping transition re-registration")
+        if (!prefsManager.getAutoStartOnWalkEnabled() && !prefsManager.getPendingResumeAfterIdleAutoStop()) {
+            Log.d(TAG, "Auto-start and pending idle-resume off, skipping transition re-registration")
             return
         }
 

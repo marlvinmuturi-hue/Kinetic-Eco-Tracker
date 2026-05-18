@@ -76,7 +76,11 @@ class KalmanFilter {
         
         // === UPDATE STEP ===
         // Calculate Kalman gain (how much to trust new measurement vs prediction)
-        val measurementUncertainty = location.accuracy
+        val rawAcc = location.accuracy
+        val measurementUncertainty = when {
+            !rawAcc.isFinite() || rawAcc <= 0f -> 15f
+            else -> rawAcc.coerceAtLeast(1f)
+        }
         val kalmanGain = positionUncertainty / (positionUncertainty + measurementUncertainty)
         
         // Update position estimate

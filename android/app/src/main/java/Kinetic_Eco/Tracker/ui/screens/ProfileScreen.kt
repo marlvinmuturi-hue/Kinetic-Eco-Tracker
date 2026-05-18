@@ -8,11 +8,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyRow
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -24,7 +21,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -39,19 +35,15 @@ import com.google.firebase.auth.FirebaseUser
 import Kinetic_Eco.Tracker.R
 import Kinetic_Eco.Tracker.data.UnitSystem
 import Kinetic_Eco.Tracker.ui.utils.usesMetricDistance
-import Kinetic_Eco.Tracker.ui.components.AnalysisPeriodSelector
-import Kinetic_Eco.Tracker.ui.components.AnalysisPeriodSelectorMode
 import Kinetic_Eco.Tracker.ui.components.StatCard
 import Kinetic_Eco.Tracker.ui.components.StatCardCompact
 import Kinetic_Eco.Tracker.ui.theme.Amber500
 import Kinetic_Eco.Tracker.ui.theme.Red500
-import Kinetic_Eco.Tracker.data.LeaderboardCategory
-import Kinetic_Eco.Tracker.data.LeaderboardEntry
-import Kinetic_Eco.Tracker.services.LeaderboardPeriod
 import Kinetic_Eco.Tracker.ui.utils.format
-import Kinetic_Eco.Tracker.ui.utils.formatSpeedMax
 import Kinetic_Eco.Tracker.viewmodel.AnalyticsViewModel
 import Kinetic_Eco.Tracker.viewmodel.ProfileViewModel
+import Kinetic_Eco.Tracker.data.VehicleProfile
+import Kinetic_Eco.Tracker.services.UserPhysicalProfile
 import java.io.File
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -61,8 +53,9 @@ fun ProfileScreen(
     viewModel: AnalyticsViewModel,
     profileViewModel: ProfileViewModel,
     unitSystem: UnitSystem = UnitSystem.METRIC,
-    onLogout: () -> Unit,
-    onSessionsClick: () -> Unit = {}
+    onSessionsClick: () -> Unit = {},
+    onPhysicalProfileSave: (UserPhysicalProfile) -> Unit = {},
+    onVehicleProfileSave: (VehicleProfile) -> Unit = {}
 ) {
     val colorScheme = MaterialTheme.colorScheme
     val context = LocalContext.current
@@ -71,30 +64,31 @@ fun ProfileScreen(
 
     val allSessions by viewModel.getAllSessions(userId).collectAsStateWithLifecycle(initialValue = emptyList())
     val aggregatedStats = viewModel.getAggregatedStats(allSessions)
+    // Annual carbon footprint = last 365 days of co2Conserved (in kg) summed from
+    // the user's sessions. Computed here so the existing CO2-saved card can be
+    // repurposed without changing the StatCard API.
+    val annualCo2SavedKg = remember(allSessions) {
+        val cutoff = System.currentTimeMillis() - 365L * 24 * 60 * 60 * 1000
+        allSessions.filter { it.sessionEndTimeMs >= cutoff }.sumOf { it.co2Conserved }
+    }
     val profile by profileViewModel.profile.collectAsStateWithLifecycle()
     val isLoading by profileViewModel.isLoading.collectAsStateWithLifecycle()
     val errorMessage by profileViewModel.errorMessage.collectAsStateWithLifecycle()
-    val leaderboardEntries by profileViewModel.leaderboardEntries.collectAsStateWithLifecycle()
-    val leaderboardPeriod by profileViewModel.leaderboardPeriod.collectAsStateWithLifecycle()
-    val leaderboardCategory by profileViewModel.leaderboardCategory.collectAsStateWithLifecycle()
-    val leaderboardSessionDayKey by profileViewModel.leaderboardSessionDayKey.collectAsStateWithLifecycle()
-    val leaderboardLoading by profileViewModel.leaderboardLoading.collectAsStateWithLifecycle()
 
     var showEditDialog by remember { mutableStateOf(false) }
     var showPhotoSourceDialog by remember { mutableStateOf(false) }
-    var reactionTargetEntry by remember { mutableStateOf<LeaderboardEntry?>(null) }
     var tempCameraUri by remember { mutableStateOf<Uri?>(null) }
     var pendingUpload by remember { mutableStateOf(false) }
 
+    // Note: the leaderboard used to live on this screen with its own period
+    // selector + reaction sheet. It was lifted out per user request — the
+    // compact leaderboard row on the Dashboard remains the canonical surface,
+    // and DashboardScreen drives `loadLeaderboard` itself, so we don't need
+    // to fetch it here.
     LaunchedEffect(userId) {
         if (userId.isNotEmpty()) {
             profileViewModel.loadProfile(userId)
-            profileViewModel.loadLeaderboard(userId)
-            profileViewModel.refreshLeaderboardIfOptedIn(userId)
         }
-    }
-    LaunchedEffect(leaderboardPeriod, leaderboardCategory, leaderboardSessionDayKey) {
-        if (userId.isNotEmpty()) profileViewModel.loadLeaderboard(userId)
     }
 
     val mediaPermissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -321,8 +315,8 @@ fun ProfileScreen(
 
         item {
             StatCard(
-                title = stringResource(R.string.co2_saved),
-                value = "${aggregatedStats.co2Conserved.format(3)} kg",
+                title = stringResource(R.string.annual_carbon_footprint),
+                value = "${annualCo2SavedKg.format(3)} kg",
                 iconPainter = painterResource(R.drawable.ic_co2_carbon_neutral),
                 color = colorScheme.secondary,
                 modifier = Modifier.fillMaxWidth(),
@@ -358,126 +352,11 @@ fun ProfileScreen(
             }
         }
 
-        // Leaderboard
         item {
-            Text(
-                text = stringResource(R.string.leaderboard),
-                style = MaterialTheme.typography.titleMedium,
-                color = colorScheme.onBackground,
-                modifier = Modifier.padding(top = 16.dp, bottom = 8.dp)
-            )
+            PhysicalProfileSection(onSave = onPhysicalProfileSave)
         }
         item {
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                colors = CardDefaults.cardColors(containerColor = colorScheme.surface),
-                shape = RoundedCornerShape(16.dp)
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        text = stringResource(R.string.category),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(bottom = 6.dp)
-                    )
-                    LazyRow(
-                        horizontalArrangement = Arrangement.spacedBy(6.dp),
-                        modifier = Modifier.padding(bottom = 12.dp)
-                    ) {
-                        items(LeaderboardCategory.entries) { category ->
-                            val labelRes = when (category) {
-                                LeaderboardCategory.COMBINED -> R.string.leaderboard_category_combined
-                                LeaderboardCategory.DISTANCE -> R.string.leaderboard_category_distance
-                                LeaderboardCategory.TOP_SPEED -> R.string.leaderboard_category_top_speed
-                                LeaderboardCategory.WALKING -> R.string.leaderboard_category_walking
-                                LeaderboardCategory.RUNNING -> R.string.leaderboard_category_running
-                                LeaderboardCategory.CYCLING -> R.string.leaderboard_category_cycling
-                            }
-                            FilterChip(
-                                selected = leaderboardCategory == category,
-                                onClick = { profileViewModel.setLeaderboardCategory(category) },
-                                label = { Text(stringResource(labelRes), style = MaterialTheme.typography.labelSmall) }
-                            )
-                        }
-                    }
-                    Text(
-                        text = stringResource(R.string.leaderboard_period_label),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(bottom = 6.dp)
-                    )
-                    AnalysisPeriodSelector(
-                        mode = AnalysisPeriodSelectorMode.AiAnalysis,
-                        rollingDays = when (val p = leaderboardPeriod) {
-                            is LeaderboardPeriod.Rolling -> p.days
-                            LeaderboardPeriod.AllTime -> 7
-                        },
-                        allTimeSelected = leaderboardPeriod is LeaderboardPeriod.AllTime,
-                        selectedSessionDateKey = leaderboardSessionDayKey,
-                        includeAllTimeOption = true,
-                        onAiRollingDaysChanged = { profileViewModel.setLeaderboardRollingDays(it) },
-                        onAllTimeSelected = { profileViewModel.setLeaderboardPeriod(LeaderboardPeriod.AllTime) },
-                        onSessionDaySelected = { profileViewModel.setLeaderboardSingleDay(it) }
-                    )
-                    leaderboardSessionDayKey?.let { dayKey ->
-                        Text(
-                            text = stringResource(R.string.leaderboard_daily_subtitle, dayKey),
-                            style = MaterialTheme.typography.bodySmall,
-                            color = colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 4.dp, bottom = 4.dp)
-                        )
-                    }
-                    Spacer(modifier = Modifier.height(12.dp))
-                    if (leaderboardLoading) {
-                        Box(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(24.dp),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            CircularProgressIndicator(modifier = Modifier.size(32.dp))
-                        }
-                    } else if (leaderboardEntries.isEmpty()) {
-                        Text(
-                            text = stringResource(
-                                if (leaderboardSessionDayKey != null) R.string.leaderboard_daily_empty
-                                else R.string.leaderboard_empty
-                            ),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = colorScheme.onSurfaceVariant,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(24.dp)
-                        )
-                    } else {
-                        LazyColumn(
-                            modifier = Modifier.heightIn(max = 320.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            items(leaderboardEntries) { entry ->
-                                LeaderboardRow(
-                                    entry = entry,
-                                    category = leaderboardCategory,
-                                    isCurrentUser = entry.userId == userId,
-                                    unitSystem = unitSystem,
-                                    currentUserId = userId,
-                                    onLongPress = { if (entry.userId != userId) reactionTargetEntry = entry }
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        item {
-            Button(
-                onClick = onLogout,
-                modifier = Modifier.fillMaxWidth(),
-                colors = ButtonDefaults.buttonColors(containerColor = Red500)
-            ) {
-                Text(stringResource(R.string.logout), style = MaterialTheme.typography.labelLarge)
-            }
+            VehicleProfileSection(onSave = onVehicleProfileSave)
         }
     }
 
@@ -599,213 +478,4 @@ fun ProfileScreen(
         )
     }
 
-    val targetEntry = reactionTargetEntry
-    if (targetEntry != null && targetEntry.userId != userId) {
-        ModalBottomSheet(onDismissRequest = { reactionTargetEntry = null }) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(24.dp),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(16.dp)
-            ) {
-                Text(
-                    text = stringResource(R.string.react_to_entry, targetEntry.displayName ?: "User"),
-                    style = MaterialTheme.typography.titleMedium
-                )
-                LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    modifier = Modifier.fillMaxWidth(),
-                    contentPadding = PaddingValues(horizontal = 16.dp)
-                ) {
-                    val emojis = listOf(
-                        "fire" to "🔥",
-                        "sweat" to "😅",
-                        "clap" to "👏",
-                        "joy" to "😂",
-                        "thumbs" to "👍",
-                        "cool" to "😎"
-                    )
-                    items(emojis) { (code, emoji) ->
-                        val isCurrentReaction = targetEntry.reactions[userId] == code
-                        Surface(
-                            onClick = {
-                                profileViewModel.reactToEntry(userId, targetEntry.userId, code)
-                                reactionTargetEntry = null
-                            },
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.size(48.dp),
-                            color = if (isCurrentReaction) colorScheme.primaryContainer else colorScheme.surface
-                        ) {
-                            Box(
-                                contentAlignment = Alignment.Center,
-                                modifier = Modifier.fillMaxSize()
-                            ) {
-                                Text(text = emoji, style = MaterialTheme.typography.headlineMedium)
-                            }
-                        }
-                    }
-                }
-                Spacer(modifier = Modifier.height(16.dp))
-            }
-        }
-    }
-}
-
-@Composable
-private fun LeaderboardRow(
-    entry: LeaderboardEntry,
-    category: LeaderboardCategory,
-    isCurrentUser: Boolean,
-    unitSystem: UnitSystem,
-    currentUserId: String,
-    onLongPress: () -> Unit
-) {
-    val colorScheme = MaterialTheme.colorScheme
-    val crownRes = when (entry.rank) {
-        1 -> R.drawable.ic_crown_gold
-        2 -> R.drawable.ic_crown_silver
-        3 -> R.drawable.ic_crown_bronze
-        else -> null
-    }
-    val subtitle = when (category) {
-        LeaderboardCategory.COMBINED -> {
-            if (unitSystem.usesMetricDistance()) {
-                "${(entry.totalDistance / 1000.0).format(2)} km • ${entry.totalSessions} sessions • ${entry.co2Conserved.format(2)} kg CO₂ saved"
-            } else {
-                "${(entry.totalDistance / 1609.344).format(2)} mi • ${entry.totalSessions} sessions • ${entry.co2Conserved.format(2)} kg CO₂ saved"
-            }
-        }
-        LeaderboardCategory.DISTANCE -> {
-            if (unitSystem.usesMetricDistance()) {
-                "${(entry.totalDistance / 1000.0).format(2)} km"
-            } else {
-                "${(entry.totalDistance / 1609.344).format(2)} mi"
-            }
-        }
-        LeaderboardCategory.TOP_SPEED -> formatSpeedMax(entry.topSpeedMps, unitSystem)
-        LeaderboardCategory.WALKING -> {
-            if (unitSystem.usesMetricDistance()) {
-                "${(entry.distanceWalking / 1000.0).format(2)} km walking"
-            } else {
-                "${(entry.distanceWalking / 1609.344).format(2)} mi walking"
-            }
-        }
-        LeaderboardCategory.RUNNING -> {
-            if (unitSystem.usesMetricDistance()) {
-                "${(entry.distanceRunning / 1000.0).format(2)} km running"
-            } else {
-                "${(entry.distanceRunning / 1609.344).format(2)} mi running"
-            }
-        }
-        LeaderboardCategory.CYCLING -> {
-            if (unitSystem.usesMetricDistance()) {
-                "${(entry.distanceCycling / 1000.0).format(2)} km cycling"
-            } else {
-                "${(entry.distanceCycling / 1609.344).format(2)} mi cycling"
-            }
-        }
-    }
-    val modifier = if (isCurrentUser) Modifier.fillMaxWidth() else Modifier
-        .fillMaxWidth()
-        .pointerInput(entry.userId) {
-            detectTapGestures(onLongPress = { onLongPress() })
-        }
-    Surface(
-        modifier = modifier,
-        shape = RoundedCornerShape(12.dp),
-        color = if (isCurrentUser) colorScheme.primaryContainer else colorScheme.surfaceVariant.copy(alpha = 0.5f)
-    ) {
-        Column(modifier = Modifier.padding(12.dp)) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(4.dp),
-                modifier = Modifier.widthIn(min = 36.dp)
-            ) {
-                Text(
-                    text = "#${entry.rank}",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold,
-                    color = if (isCurrentUser) colorScheme.onPrimaryContainer else colorScheme.onSurfaceVariant
-                )
-                if (crownRes != null) {
-                    Image(
-                        painter = painterResource(crownRes),
-                        contentDescription = null,
-                        modifier = Modifier.size(20.dp)
-                    )
-                }
-            }
-            Box(
-                modifier = Modifier
-                    .size(40.dp)
-                    .clip(CircleShape)
-                    .background(colorScheme.surface),
-                contentAlignment = Alignment.Center
-            ) {
-                if (entry.photoUrl != null && entry.photoUrl.isNotEmpty()) {
-                    AsyncImage(
-                        model = entry.photoUrl,
-                        contentDescription = null,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .clip(CircleShape),
-                        contentScale = ContentScale.Crop
-                    )
-                } else {
-                    Icon(
-                        Icons.Default.Person,
-                        contentDescription = null,
-                        modifier = Modifier.size(24.dp),
-                        tint = colorScheme.primary
-                    )
-                }
-            }
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = entry.displayName ?: "User",
-                    style = MaterialTheme.typography.titleSmall,
-                    fontWeight = if (isCurrentUser) FontWeight.SemiBold else FontWeight.Normal,
-                    color = if (isCurrentUser) colorScheme.onPrimaryContainer else colorScheme.onSurface
-                )
-                Text(
-                    text = subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = if (isCurrentUser) colorScheme.onPrimaryContainer.copy(alpha = 0.8f) else colorScheme.onSurfaceVariant
-                )
-            }
-            }
-            if (entry.reactions.isNotEmpty()) {
-                val emojiDisplay = listOf(
-                    "fire" to "🔥", "sweat" to "😅", "clap" to "👏",
-                    "joy" to "😂", "thumbs" to "👍", "cool" to "😎"
-                )
-                val myReaction = entry.reactions[currentUserId]
-                val counts = emojiDisplay.map { (code, emoji) ->
-                    val count = entry.reactions.values.count { it == code }
-                    if (count > 0) Triple(emoji, count, code == myReaction) else null
-                }.filterNotNull()
-                if (counts.isNotEmpty()) {
-                    Row(
-                        modifier = Modifier.padding(top = 6.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        counts.forEach { (emoji, count, isMine) ->
-                            Text(
-                                text = "$emoji $count",
-                                style = MaterialTheme.typography.labelSmall,
-                                fontWeight = if (isMine) FontWeight.SemiBold else FontWeight.Normal,
-                                color = if (isCurrentUser) colorScheme.onPrimaryContainer.copy(alpha = 0.8f) else colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                }
-            }
-        }
-    }
 }

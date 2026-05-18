@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Kinetic Eco Tracker</string>
+    <string name="nav_dashboard">仪表盘</string>
     <string name="nav_tracker">追踪</string>
     <string name="nav_analytics">分析</string>
     <string name="nav_profile">我</string>
@@ -11,7 +12,6 @@
     <string name="default_web_client_id">gen-lang-client-0114974661</string>
 
     <string name="theme">主题</string>
-    <string name="theme_system">跟随系统</string>
     <string name="theme_light">浅色</string>
     <string name="theme_dark">深色</string>
     <string name="theme_subtitle">跟随设备或选择浅色/深色</string>

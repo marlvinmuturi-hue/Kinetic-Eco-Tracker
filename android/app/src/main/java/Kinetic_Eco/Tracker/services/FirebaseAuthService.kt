@@ -62,9 +62,16 @@ class FirebaseAuthService(private val context: Context) {
             code == "ERROR_INVALID_EMAIL" -> "Invalid email address."
             code == "ERROR_USER_DISABLED" -> "This account has been disabled."
             code == "ERROR_TOO_MANY_REQUESTS" -> "Too many failed attempts. Please try again later."
-            code == "ERROR_EMAIL_ALREADY_IN_USE" -> "An account with this email already exists. Please check your password or use Forgot password."
-            code.contains("EMAIL_ALREADY_IN_USE") -> "An account with this email already exists. Please check your password or use Forgot password."
+            code == "ERROR_EMAIL_ALREADY_IN_USE" -> "An account with this email already exists. Please sign in instead, or use Forgot password to reset it."
+            code.contains("EMAIL_ALREADY_IN_USE") -> "An account with this email already exists. Please sign in instead, or use Forgot password to reset it."
             code == "ERROR_WEAK_PASSWORD" -> "Password should be at least 6 characters."
+            // ERROR_OPERATION_NOT_ALLOWED is thrown when the Email/Password
+            // sign-in provider is disabled in Firebase Console. This is the
+            // most common reason "only Google works" for users — surface a
+            // clear, actionable message instead of the cryptic default.
+            code == "ERROR_OPERATION_NOT_ALLOWED" -> "Email/password authentication is not enabled. Enable it in Firebase Console > Authentication > Sign-in method, or use Continue with Google."
+            code.contains("OPERATION_NOT_ALLOWED") -> "Email/password authentication is not enabled. Enable it in Firebase Console > Authentication > Sign-in method, or use Continue with Google."
+            code == "ERROR_NETWORK_REQUEST_FAILED" -> "Network error. Check your connection and try again."
             else -> authEx?.message ?: "Authentication failed."
         }
         return Exception(message)

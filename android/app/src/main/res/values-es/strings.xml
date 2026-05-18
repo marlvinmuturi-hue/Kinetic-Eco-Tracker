@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">Kinetic Eco Tracker</string>
+    <string name="nav_dashboard">Panel</string>
     <string name="nav_tracker">Seguimiento</string>
     <string name="nav_analytics">Análisis</string>
     <string name="nav_profile">Yo</string>
@@ -11,7 +12,6 @@
     <string name="default_web_client_id">gen-lang-client-0114974661</string>
 
     <string name="theme">Tema</string>
-    <string name="theme_system">Sistema</string>
     <string name="theme_light">Claro</string>
     <string name="theme_dark">Oscuro</string>
     <string name="theme_subtitle">Seguir dispositivo o elegir Claro/Oscuro</string>

@@ -5,6 +5,7 @@ import android.net.Uri
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -35,10 +36,16 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
     private val _leaderboardEntries = MutableStateFlow<List<LeaderboardEntry>>(emptyList())
     val leaderboardEntries: StateFlow<List<LeaderboardEntry>> = _leaderboardEntries.asStateFlow()
 
-    private val _leaderboardPeriod = MutableStateFlow<LeaderboardPeriod>(LeaderboardPeriod.AllTime)
+    /** Default rolling window so the day wheel is enabled (All time would disable the wheel). */
+    private val _leaderboardPeriod = MutableStateFlow<LeaderboardPeriod>(LeaderboardPeriod.Rolling(30))
     val leaderboardPeriod: StateFlow<LeaderboardPeriod> = _leaderboardPeriod.asStateFlow()
 
-    private val _leaderboardCategory = MutableStateFlow(LeaderboardCategory.COMBINED)
+    /**
+     * Single supported leaderboard category — CO₂ saved. Kept as a flow so
+     * server-call signatures don't need to change and so a future re-introduction
+     * of multiple categories is a small additive edit.
+     */
+    private val _leaderboardCategory = MutableStateFlow(LeaderboardCategory.CO2_SAVED)
     val leaderboardCategory: StateFlow<LeaderboardCategory> = _leaderboardCategory.asStateFlow()
 
     /** yyyy-MM-dd session start date; when set, leaderboard uses global daily #1 for that day. */
@@ -49,7 +56,7 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
     val leaderboardLoading: StateFlow<Boolean> = _leaderboardLoading.asStateFlow()
 
     fun loadProfile(userId: String) {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             _isLoading.value = true
             _profile.value = profileService.getProfile(userId)
             _isLoading.value = false
@@ -71,7 +78,7 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun uploadPhoto(userId: String, uri: Uri) {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             _isLoading.value = true
             _errorMessage.value = null
             profileService.uploadProfilePhoto(getApplication(), userId, uri)
@@ -99,13 +106,13 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun loadLeaderboardOptIn(userId: String) {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             _leaderboardOptedIn.value = leaderboardService.isOptedIn(userId)
         }
     }
 
     fun setLeaderboardOptIn(userId: String, enabled: Boolean) {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             _errorMessage.value = null
             _leaderboardLoading.value = true
             val result = if (enabled) leaderboardService.optIn(userId) else leaderboardService.optOut(userId)
@@ -132,6 +139,16 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
         _leaderboardPeriod.value = period
     }
 
+    /** All-time chip: turn on all-time scores, or turn off and return to a rolling window. */
+    fun toggleLeaderboardAllTime() {
+        _leaderboardSessionDayKey.value = null
+        _leaderboardPeriod.value = if (_leaderboardPeriod.value is LeaderboardPeriod.AllTime) {
+            LeaderboardPeriod.Rolling(30)
+        } else {
+            LeaderboardPeriod.AllTime
+        }
+    }
+
     fun setLeaderboardRollingDays(days: Int) {
         _leaderboardSessionDayKey.value = null
         _leaderboardPeriod.value = LeaderboardPeriod.Rolling(days.coerceIn(1, 366))
@@ -149,7 +166,7 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
     }
 
     fun loadLeaderboard(_userId: String) {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             _leaderboardLoading.value = true
             val dayKey = _leaderboardSessionDayKey.value
             val result = if (dayKey != null) {
@@ -170,7 +187,7 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
      */
     fun reactToEntry(currentUserId: String, targetUserId: String, emojiCode: String) {
         if (currentUserId == targetUserId) return
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             val entry = _leaderboardEntries.value.find { it.userId == targetUserId } ?: return@launch
             val currentReaction = entry.reactions[currentUserId]
             val newEmoji = if (currentReaction == emojiCode) null else emojiCode
@@ -179,17 +196,25 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
-    /** Refresh leaderboard entry after session sync (if opted in). */
+    /**
+     * Refresh own leaderboard entry (if opted in) and then reload the list.
+     *
+     * Always reloads the list so users that have NOT opted in still see fresh
+     * data for everyone else. The own-entry refresh is the critical part for
+     * the user themselves: without it, the leaderboard doc is only ever
+     * written once at opt-in time, leaving people stuck at 0.00 kg if they
+     * opted in before any sessions had synced to Firestore.
+     */
     fun refreshLeaderboardIfOptedIn(userId: String) {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             try {
                 if (leaderboardService.isOptedIn(userId)) {
                     leaderboardService.updateLeaderboardEntry(userId)
-                    loadLeaderboard(userId)
                 }
             } catch (t: Throwable) {
                 Log.e(TAG, "refreshLeaderboardIfOptedIn failed", t)
             }
+            loadLeaderboard(userId)
         }
     }
 

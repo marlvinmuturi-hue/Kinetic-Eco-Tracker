@@ -19,6 +19,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import Kinetic_Eco.Tracker.R
 import Kinetic_Eco.Tracker.data.SessionStats
@@ -26,7 +27,6 @@ import Kinetic_Eco.Tracker.data.UnitSystem
 import Kinetic_Eco.Tracker.ui.components.ActivityDonutChart
 import Kinetic_Eco.Tracker.ui.components.SingleLineValueText
 import Kinetic_Eco.Tracker.ui.components.RouteMapView
-import Kinetic_Eco.Tracker.ui.theme.*
 import Kinetic_Eco.Tracker.ui.utils.EnergyUnit
 import Kinetic_Eco.Tracker.ui.utils.format
 import Kinetic_Eco.Tracker.ui.utils.formatEnergyValue
@@ -136,7 +136,7 @@ fun SessionDetailScreen(
                 SimplifiedStatCard(
                     title = stringResource(R.string.co2_conserved_label),
                     iconPainter = painterResource(R.drawable.ic_co2_carbon_neutral),
-                    color = colorScheme.secondary,
+                    color = colorScheme.onSurfaceVariant,
                     value = displayStats.co2Conserved.format(2),
                     unit = "kg",
                     emphasize = true
@@ -149,7 +149,7 @@ fun SessionDetailScreen(
                     SimplifiedStatCardCompact(
                         title = stringResource(R.string.co2_emissions),
                         icon = Icons.Default.LocalFireDepartment,
-                        color = Red500,
+                        color = colorScheme.onSurfaceVariant,
                         value = displayStats.co2Emissions.format(2),
                         unit = "kg"
                     )
@@ -165,7 +165,7 @@ fun SessionDetailScreen(
                 SimplifiedStatCard(
                     title = if (isIndividualSession) stringResource(R.string.distance) else stringResource(R.string.total_distance_label),
                     icon = Icons.Default.Straighten,
-                    color = colorScheme.tertiary,
+                    color = colorScheme.onSurfaceVariant,
                     value = distValue,
                     unit = distUnit
                 )
@@ -175,7 +175,7 @@ fun SessionDetailScreen(
                 SimplifiedStatCard(
                     title = if (isIndividualSession) stringResource(R.string.duration_label) else stringResource(R.string.total_duration),
                     icon = Icons.Default.Timer,
-                    color = colorScheme.primary,
+                    color = colorScheme.onSurfaceVariant,
                     value = formatTime(displayStats.totalDuration),
                     unit = ""
                 )
@@ -185,7 +185,7 @@ fun SessionDetailScreen(
                 SimplifiedStatCard(
                     title = stringResource(R.string.top_speed),
                     icon = Icons.Default.ShowChart,
-                    color = colorScheme.tertiary,
+                    color = colorScheme.onSurfaceVariant,
                     value = formatSpeedMax(displayStats.topSpeedMps, unitSystem),
                     unit = ""
                 )
@@ -195,7 +195,7 @@ fun SessionDetailScreen(
                 SimplifiedStatCard(
                     title = if (energyUnit == EnergyUnit.KCAL) stringResource(R.string.calories_burned) else stringResource(R.string.energy_burned),
                     icon = Icons.Default.FitnessCenter,
-                    color = Amber500,
+                    color = colorScheme.onSurfaceVariant,
                     value = formatEnergyValue(displayStats.caloriesBurned, energyUnit),
                     unit = energyUnitLabel(energyUnit)
                 )
@@ -239,7 +239,7 @@ fun SessionDetailScreen(
                         SimplifiedStatCard(
                             title = stringResource(R.string.ascent),
                             icon = Icons.AutoMirrored.Filled.TrendingUp,
-                            color = colorScheme.secondary,
+                            color = colorScheme.onSurfaceVariant,
                             value = value,
                             unit = unit
                         )
@@ -251,7 +251,7 @@ fun SessionDetailScreen(
                         SimplifiedStatCard(
                             title = stringResource(R.string.descent),
                             icon = Icons.AutoMirrored.Filled.TrendingDown,
-                            color = colorScheme.tertiary,
+                            color = colorScheme.onSurfaceVariant,
                             value = value,
                             unit = unit
                         )
@@ -304,12 +304,13 @@ fun SimplifiedStatCard(
                     text = title,
                     style = if (emphasize) MaterialTheme.typography.titleLarge else MaterialTheme.typography.titleMedium,
                     color = colorScheme.onSurface,
-                    fontWeight = FontWeight.SemiBold
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
-            
+
             Row(
-                modifier = Modifier.weight(1f),
                 horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -318,7 +319,6 @@ fun SimplifiedStatCard(
                     style = if (emphasize) MaterialTheme.typography.headlineMedium else MaterialTheme.typography.headlineSmall,
                     color = color,
                     fontWeight = FontWeight.Bold,
-                    modifier = Modifier.weight(1f),
                     textAlign = TextAlign.End
                 )
                 if (unit.isNotEmpty()) {
@@ -372,12 +372,13 @@ fun SimplifiedStatCard(
                     text = title,
                     style = if (emphasize) MaterialTheme.typography.titleLarge else MaterialTheme.typography.titleMedium,
                     color = colorScheme.onSurface,
-                    fontWeight = FontWeight.SemiBold
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
 
             Row(
-                modifier = Modifier.weight(1f),
                 horizontalArrangement = Arrangement.End,
                 verticalAlignment = Alignment.CenterVertically
             ) {
@@ -386,7 +387,6 @@ fun SimplifiedStatCard(
                     style = if (emphasize) MaterialTheme.typography.headlineMedium else MaterialTheme.typography.headlineSmall,
                     color = color,
                     fontWeight = FontWeight.Bold,
-                    modifier = Modifier.weight(1f),
                     textAlign = TextAlign.End
                 )
                 if (unit.isNotEmpty()) {

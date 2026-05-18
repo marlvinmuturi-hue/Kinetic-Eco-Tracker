@@ -27,15 +27,40 @@ object CO2Factors {
     const val FLYING = 0.255    // Avg domestic flight emissions
     
     fun getFactor(activity: ActivityType): Double {
+        return getFactor(activity, VehicleProfile.DEFAULT)
+    }
+
+    fun getFactor(activity: ActivityType, profile: VehicleProfile): Double {
         return when (activity) {
+            // Combustion driving: blend engine displacement, body type
+            // (sedan reference, SUV/pickup heavier, hatch lighter), and the
+            // diesel-vs-petrol bump.
+            ActivityType.DRIVING -> IceFuel.co2FromCcBandAndBody(
+                ccBand = profile.drivingCcBand,
+                bodyType = profile.bodyType,
+                fuel = profile.iceFuel
+            )
+            // Electric road vehicle: pick a base by class (2-/3-wheeler/car)
+            // and scale by motor power band — a 200 kW dual-motor sedan draws
+            // markedly more per km than a 5 kW e-scooter.
+            ActivityType.ELECTRIC_VEHICLE ->
+                profile.electricVehicleClass.baseCo2KgPerKm * profile.electricMotorPower.multiplier
+            ActivityType.TRAIN -> profile.trainPropulsion.co2KgPerKm
+            ActivityType.FLYING -> profile.aircraftCategory.co2KgPerKm
             ActivityType.IDLE -> IDLE
             ActivityType.WALKING -> WALKING
             ActivityType.RUNNING -> RUNNING
             ActivityType.CYCLING -> CYCLING
-            ActivityType.TRAIN -> TRAIN
-            ActivityType.DRIVING -> DRIVING
-            ActivityType.ELECTRIC_VEHICLE -> ELECTRIC_VEHICLE
-            ActivityType.FLYING -> FLYING
+            ActivityType.MOTORCYCLE -> when (profile.primaryFuelType) {
+                PrimaryFuelType.ELECTRIC ->
+                    ElectricVehicleClass.TWO_WHEELER.baseCo2KgPerKm * profile.electricMotorPower.multiplier
+                PrimaryFuelType.PETROL, PrimaryFuelType.DIESEL ->
+                    IceFuel.co2FromCcBandAndBody(
+                        profile.drivingCcBand,
+                        VehicleBodyType.HATCHBACK,
+                        profile.iceFuel
+                    ) * 0.42
+            }
         }
     }
 }
@@ -46,6 +71,7 @@ object CalorieFactorsPerHour {
     const val WALKING = 250
     const val RUNNING = 600
     const val CYCLING = 400
+    const val MOTORCYCLE = 280 // Active riding posture; between cycling and seated car
     const val TRAIN = 100       // Seated travel
     const val DRIVING = 100
     const val ELECTRIC_VEHICLE = 100
@@ -57,6 +83,7 @@ object CalorieFactorsPerHour {
             ActivityType.WALKING -> WALKING
             ActivityType.RUNNING -> RUNNING
             ActivityType.CYCLING -> CYCLING
+            ActivityType.MOTORCYCLE -> MOTORCYCLE
             ActivityType.TRAIN -> TRAIN
             ActivityType.DRIVING -> DRIVING
             ActivityType.ELECTRIC_VEHICLE -> ELECTRIC_VEHICLE
@@ -73,6 +100,7 @@ object ActivityColors {
             ActivityType.WALKING -> Green500
             ActivityType.RUNNING -> Emerald500
             ActivityType.CYCLING -> Cyan500
+            ActivityType.MOTORCYCLE -> Orange500
             ActivityType.TRAIN -> Teal500
             ActivityType.DRIVING -> Amber500
             ActivityType.ELECTRIC_VEHICLE -> Violet500

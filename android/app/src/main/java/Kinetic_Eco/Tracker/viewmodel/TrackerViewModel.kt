@@ -9,6 +9,7 @@ import android.os.Build
 import android.os.IBinder
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import com.google.firebase.auth.FirebaseAuth
@@ -29,51 +30,50 @@ class TrackerViewModel(application: Application) : AndroidViewModel(application)
     private var trackingService: TrackingService? = null
     private var isBound = false
 
+    /** Cancels when service disconnects or reconnects — avoids duplicate collectors and stale activity after auto-stop. */
+    private var serviceCollectJob: Job? = null
+
     private val _isServiceBound = MutableStateFlow(false)
     val isServiceBound = _isServiceBound.asStateFlow()
 
     private val serviceConnection = object : ServiceConnection {
         override fun onServiceConnected(name: ComponentName?, service: IBinder?) {
             val binder = service as TrackingService.LocalBinder
-            trackingService = binder.getService()
+            val svc = binder.getService()
+            trackingService = svc
             isBound = true
             _isServiceBound.value = true
-            if (gpsWarmUpJob?.isActive == true) trackingService?.startSensorWarmUp()
-            
-            // Connect flows from service to ViewModel
-            viewModelScope.launch {
-                trackingService?.isTracking?.collect { _isTracking.value = it }
-            }
-            viewModelScope.launch {
-                trackingService?.currentSpeed?.collect { _currentSpeed.value = it }
-            }
-            viewModelScope.launch {
-                trackingService?.currentActivity?.collect { _currentActivity.value = it }
-            }
-            viewModelScope.launch {
-                trackingService?.sessionDuration?.collect { _sessionDuration.value = it }
-            }
-            viewModelScope.launch {
-                trackingService?.sessionDistance?.collect { _sessionDistance.value = it }
-            }
-            viewModelScope.launch {
-                trackingService?.sessionSteps?.collect { _sessionSteps.value = it }
-            }
-            viewModelScope.launch {
-                trackingService?.sessionStats?.collect { _sessionStats.value = it }
-            }
-            viewModelScope.launch {
-                trackingService?.currentPosition?.collect { _currentPosition.value = it }
-            }
-            viewModelScope.launch {
-                trackingService?.manualActivityMode?.collect { _manualActivityMode.value = it }
+            if (gpsWarmUpJob?.isActive == true) svc.startSensorWarmUp()
+
+            serviceCollectJob?.cancel()
+            serviceCollectJob = viewModelScope.launch {
+                coroutineScope {
+                    launch { svc.isTracking.collect { _isTracking.value = it } }
+                    launch { svc.currentSpeed.collect { _currentSpeed.value = it } }
+                    launch { svc.currentActivity.collect { _currentActivity.value = it } }
+                    launch { svc.sessionDuration.collect { _sessionDuration.value = it } }
+                    launch { svc.sessionDistance.collect { _sessionDistance.value = it } }
+                    launch { svc.sessionSteps.collect { _sessionSteps.value = it } }
+                    launch { svc.sessionStats.collect { _sessionStats.value = it } }
+                    launch { svc.currentPosition.collect { _currentPosition.value = it } }
+                    launch { svc.manualActivityMode.collect { _manualActivityMode.value = it } }
+                    launch { svc.leanActivityHint.collect { _leanActivityHint.value = it } }
+                }
             }
         }
 
         override fun onServiceDisconnected(name: ComponentName?) {
+            serviceCollectJob?.cancel()
+            serviceCollectJob = null
             trackingService = null
             isBound = false
             _isServiceBound.value = false
+            // Auto-stop / stopSelf() does not go through resetSession() — clear stale driving/walking UI state
+            _isTracking.value = false
+            _currentSpeed.value = 0f
+            _currentActivity.value = ActivityType.IDLE
+            _manualActivityMode.value = null
+            _leanActivityHint.value = null
         }
     }
 
@@ -89,6 +89,9 @@ class TrackerViewModel(application: Application) : AndroidViewModel(application)
     
     private val _manualActivityMode = MutableStateFlow<ActivityType?>(null)
     val manualActivityMode: StateFlow<ActivityType?> = _manualActivityMode.asStateFlow()
+
+    private val _leanActivityHint = MutableStateFlow<ActivityType?>(null)
+    val leanActivityHint: StateFlow<ActivityType?> = _leanActivityHint.asStateFlow()
     
     private val _sessionDuration = MutableStateFlow(0L)
     val sessionDuration: StateFlow<Long> = _sessionDuration.asStateFlow()
@@ -199,6 +202,9 @@ class TrackerViewModel(application: Application) : AndroidViewModel(application)
             _sessionDuration.value = 0L
             _sessionDistance.value = 0.0
             _sessionStats.value = SessionStats()
+            _currentActivity.value = ActivityType.IDLE
+            _currentSpeed.value = 0f
+            _manualActivityMode.value = null
             return
         }
         
@@ -244,6 +250,10 @@ class TrackerViewModel(application: Application) : AndroidViewModel(application)
             _sessionDuration.value = 0L
             _sessionDistance.value = 0.0
             _sessionStats.value = SessionStats()
+            _currentActivity.value = ActivityType.IDLE
+            _currentSpeed.value = 0f
+            _manualActivityMode.value = null
+            _leanActivityHint.value = null
             android.util.Log.d(TAG, "💾 ===== stopAndSaveSession COMPLETED =====")
         }
     }
@@ -259,14 +269,26 @@ class TrackerViewModel(application: Application) : AndroidViewModel(application)
         _sessionDuration.value = 0L
         _sessionDistance.value = 0.0
         _sessionStats.value = SessionStats()
+        _currentActivity.value = ActivityType.IDLE
+        _currentSpeed.value = 0f
+        _manualActivityMode.value = null
+        _leanActivityHint.value = null
     }
     
+    fun dismissLeanActivityHint() {
+        trackingService?.dismissLeanActivityHint()
+    }
+
     /**
      * Reload physical profile in the tracking service
      * Call this after the user updates their profile in settings
      */
     fun reloadPhysicalProfile() {
         trackingService?.reloadPhysicalProfile()
+    }
+
+    fun reloadVehicleProfile() {
+        trackingService?.reloadVehicleProfile()
     }
 
     fun getSessionStats(): SessionStats = _sessionStats.value

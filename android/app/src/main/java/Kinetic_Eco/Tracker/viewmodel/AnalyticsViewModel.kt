@@ -3,8 +3,10 @@ package Kinetic_Eco.Tracker.viewmodel
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.Locale
 import Kinetic_Eco.Tracker.R
 import Kinetic_Eco.Tracker.data.ActivityAnalysis
@@ -22,8 +24,13 @@ class AnalyticsViewModel(application: Application) : AndroidViewModel(applicatio
     private val _aiAnalysisState = MutableStateFlow<AIAnalysisState>(AIAnalysisState.Idle)
     val aiAnalysisState: StateFlow<AIAnalysisState> = _aiAnalysisState.asStateFlow()
     
-    /** Rolling window for AI analysis (1–366 days). Single-day mode uses [analysisSessionDateKey] instead. */
-    private val _rollingAnalysisDays = MutableStateFlow(30)
+    /**
+     * Rolling window for AI analysis (1–366 days). Defaults to the past 7 days so a
+     * fresh user (or anyone tapping "Analyze" without first picking a window) gets a
+     * focused weekly summary instead of "everything since signup". Single-day mode
+     * uses [analysisSessionDateKey] instead.
+     */
+    private val _rollingAnalysisDays = MutableStateFlow(7)
     val rollingAnalysisDays: StateFlow<Int> = _rollingAnalysisDays.asStateFlow()
 
     /** yyyy-MM-dd: AI uses sessions on this session date only (third mode vs rolling 7/30/90). */
@@ -67,7 +74,8 @@ class AnalyticsViewModel(application: Application) : AndroidViewModel(applicatio
      * Called on login and app launch when user is logged in.
      */
     fun restoreSessionsFromFirestore(userId: String) {
-        viewModelScope.launch {
+        // Must not run on Main: Firestore + many Room writes will ANR ("app isn't responding").
+        viewModelScope.launch(Dispatchers.IO) {
             sessionManager.restoreSessionsFromFirestore(userId)
         }
     }
@@ -126,27 +134,30 @@ class AnalyticsViewModel(application: Application) : AndroidViewModel(applicatio
     }
 
     fun analyzeActivity(userId: String) {
-        viewModelScope.launch {
+        viewModelScope.launch(Dispatchers.IO) {
             val day = _analysisSessionDateKey.value
             if (day != null) {
                 val sessions = sessionManager.getAllSessions(userId).first()
                 if (sessions.none { it.date == day }) {
-                    _aiAnalysisState.value = AIAnalysisState.Error(
-                        getApplication<Application>().getString(Kinetic_Eco.Tracker.R.string.analysis_no_sessions_this_day)
+                    val msg = getApplication<Application>().getString(
+                        Kinetic_Eco.Tracker.R.string.analysis_no_sessions_this_day
                     )
+                    withContext(Dispatchers.Main.immediate) { _aiAnalysisState.value = AIAnalysisState.Error(msg) }
                     return@launch
                 }
             }
 
-            _aiAnalysisState.value = AIAnalysisState.Loading
+            withContext(Dispatchers.Main.immediate) { _aiAnalysisState.value = AIAnalysisState.Loading }
 
             val locale = resolveLocaleForAnalysis()
             val result = aiAnalysisService.analyzeActivity(_rollingAnalysisDays.value, locale, sessionDateKey = day)
 
-            _aiAnalysisState.value = result.fold(
-                onSuccess = { analysis -> AIAnalysisState.Success(analysis) },
-                onFailure = { error -> AIAnalysisState.Error(error.message ?: "Unknown error") }
-            )
+            withContext(Dispatchers.Main.immediate) {
+                _aiAnalysisState.value = result.fold(
+                    onSuccess = { analysis -> AIAnalysisState.Success(analysis) },
+                    onFailure = { error -> AIAnalysisState.Error(error.message ?: "Unknown error") }
+                )
+            }
         }
     }
     

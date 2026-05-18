@@ -59,6 +59,7 @@ private fun ActivityType.toActivityStringResId(): Int = when (this) {
     ActivityType.WALKING -> R.string.walking
     ActivityType.RUNNING -> R.string.running
     ActivityType.CYCLING -> R.string.cycling
+    ActivityType.MOTORCYCLE -> R.string.motorcycle
     ActivityType.TRAIN -> R.string.train
     ActivityType.DRIVING -> R.string.driving
     ActivityType.ELECTRIC_VEHICLE -> R.string.electric_vehicle
@@ -111,22 +112,38 @@ private fun RouteMapLegendLabel(text: String, color: Color) {
 }
 
 /**
- * Displays an OSM map with a route polyline colored by activity.
- * Works offline using OsmDroid's tile cache.
- * @param routePath List of GPS points to draw as route (empty = show default view)
- * @param modifier Size modifier (default fillMaxWidth)
- * @param heightDp Height in dp (default 250)
+ * Signature for [LaunchedEffect] so the map updates when any path's points change
+ * without depending on unstable list identity.
+ */
+private fun routePathsContentSignature(paths: List<List<RoutePoint>>): String =
+    paths.joinToString("|") { path ->
+        "${path.size}_${path.firstOrNull()?.latitude}_${path.firstOrNull()?.longitude}_" +
+            "${path.lastOrNull()?.latitude}_${path.lastOrNull()?.longitude}"
+    }
+
+/**
+ * Displays an OSM map with route polylines colored by activity.
+ * Pass one inner list per session so gaps between sessions are not drawn as lines.
+ *
+ * @param routePaths Non-empty inner lists only; each list is one session's path.
+ * @param showElevationProfile If false, hides [RouteElevationProfile] (e.g. multiple sessions).
  */
 @Composable
-fun RouteMapView(
-    routePath: List<RoutePoint>,
+fun RouteMapMultiSessionView(
+    routePaths: List<List<RoutePoint>>,
     modifier: Modifier = Modifier.fillMaxWidth(),
-    heightDp: Int = 250
+    heightDp: Int = 250,
+    showElevationProfile: Boolean = true
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val colorScheme = MaterialTheme.colorScheme
-    
+
+    val pathsForDraw = remember(routePaths) {
+        routePaths.filter { it.size >= 2 }
+    }
+    val routeSignature = remember(routePaths) { routePathsContentSignature(routePaths) }
+
     val mapView = remember {
         MapView(context).apply {
             setTileSource(TileSourceFactory.MAPNIK)
@@ -138,7 +155,7 @@ fun RouteMapView(
             }
         }
     }
-    
+
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
@@ -153,10 +170,13 @@ fun RouteMapView(
         }
     }
 
-    LaunchedEffect(routePath) {
+    LaunchedEffect(routeSignature) {
         try {
             mapView.overlays.removeAll { it is Polyline }
-            if (routePath.size >= 2) {
+            val allLats = mutableListOf<Double>()
+            val allLons = mutableListOf<Double>()
+
+            for (routePath in pathsForDraw) {
                 val segments = splitRouteIntoSegments(routePath)
                 for ((points, activity) in segments) {
                     val polyline = Polyline(mapView).apply {
@@ -168,31 +188,47 @@ fun RouteMapView(
                     }
                     mapView.overlays.add(0, polyline)
                 }
-
-                val allLats = routePath.map { it.latitude }
-                val allLons = routePath.map { it.longitude }
-                val bounds = BoundingBox(
-                    allLats.max(),
-                    allLons.max(),
-                    allLats.min(),
-                    allLons.min()
-                )
-                mapView.zoomToBoundingBox(bounds, false, 48)
-                mapView.post { mapView.invalidate() }
-            } else if (routePath.size == 1) {
-                val controller = mapView.controller
-                controller.setZoom(15.0)
-                controller.setCenter(GeoPoint(routePath[0].latitude, routePath[0].longitude))
-                mapView.post { mapView.invalidate() }
+                allLats.addAll(routePath.map { it.latitude })
+                allLons.addAll(routePath.map { it.longitude })
             }
+
+            for (single in routePaths.filter { it.size == 1 }) {
+                allLats.add(single[0].latitude)
+                allLons.add(single[0].longitude)
+            }
+
+            when {
+                allLats.size >= 2 -> {
+                    val bounds = BoundingBox(
+                        allLats.max(),
+                        allLons.max(),
+                        allLats.min(),
+                        allLons.min()
+                    )
+                    mapView.zoomToBoundingBox(bounds, false, 48)
+                }
+                allLats.size == 1 -> {
+                    val controller = mapView.controller
+                    controller.setZoom(15.0)
+                    controller.setCenter(GeoPoint(allLats[0], allLons[0]))
+                }
+            }
+            mapView.post { mapView.invalidate() }
         } catch (_: Throwable) {
             // MapView may be detaching while LazyColumn recycles; ignore
         }
     }
-    
-    val activitiesInRoute = remember(routePath) {
-        routePath.map { it.activity }.distinct()
+
+    val elevationPath = remember(routePaths, showElevationProfile) {
+        if (!showElevationProfile || routePaths.size != 1) return@remember emptyList()
+        routePaths.firstOrNull() ?: emptyList()
     }
+
+    val activitiesInRoute = remember(routePaths) {
+        routePaths.flatMap { it.map { p -> p.activity } }.distinct()
+    }
+
+    val mapEmpty = pathsForDraw.isEmpty() && routePaths.none { it.size == 1 }
     
     Column(modifier = modifier) {
         Box(
@@ -212,7 +248,7 @@ fun RouteMapView(
                     }
                 }
             )
-            if (routePath.isEmpty()) {
+            if (mapEmpty) {
                 Box(
                     modifier = Modifier
                         .fillMaxSize()
@@ -226,6 +262,13 @@ fun RouteMapView(
                     )
                 }
             }
+        }
+
+        if (elevationPath.isNotEmpty()) {
+            RouteElevationProfile(
+                routePath = elevationPath,
+                modifier = Modifier.padding(top = 8.dp)
+            )
         }
         
         if (activitiesInRoute.isNotEmpty()) {
@@ -271,4 +314,24 @@ fun RouteMapView(
             }
         }
     }
+}
+
+/**
+ * Single-session map: one route path.
+ */
+@Composable
+fun RouteMapView(
+    routePath: List<RoutePoint>,
+    modifier: Modifier = Modifier.fillMaxWidth(),
+    heightDp: Int = 250
+) {
+    val paths = remember(routePath) {
+        if (routePath.isEmpty()) emptyList() else listOf(routePath)
+    }
+    RouteMapMultiSessionView(
+        routePaths = paths,
+        modifier = modifier,
+        heightDp = heightDp,
+        showElevationProfile = true
+    )
 }

@@ -110,7 +110,11 @@ fun DraggableFloatingPlayButton(
                 if (isTracking) onShowStopDialog() else onClick()
             },
             modifier = Modifier.size(fabSize),
-            containerColor = (if (isTracking) Red500 else colorScheme.primary).copy(alpha = 0.75f),
+            containerColor = if (isTracking) {
+                Red500.copy(alpha = 0.88f)
+            } else {
+                colorScheme.surfaceVariant.copy(alpha = 0.92f)
+            },
             shape = CircleShape,
             elevation = FloatingActionButtonDefaults.elevation(
                 defaultElevation = 6.dp,
@@ -122,14 +126,14 @@ fun DraggableFloatingPlayButton(
                     imageVector = Icons.Default.Stop,
                     contentDescription = stringResource(R.string.stop),
                     modifier = Modifier.size(36.dp),
-                    tint = colorScheme.onPrimary
+                    tint = colorScheme.surface
                 )
             } else {
                 Icon(
                     painter = painterResource(R.drawable.ic_play),
                     contentDescription = stringResource(R.string.start),
                     modifier = Modifier.size(36.dp),
-                    tint = colorScheme.onPrimary
+                    tint = colorScheme.onSurface
                 )
             }
         }

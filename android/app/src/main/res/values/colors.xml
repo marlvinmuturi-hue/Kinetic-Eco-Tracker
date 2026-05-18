@@ -11,6 +11,13 @@
     
     <color name="green_primary">#4ade80</color>
     <color name="blue_primary">#60a5fa</color>
+    <!-- Match Compose kinetic theme (avoid XML-only dark slate #0f172a vs #0A0A0A drift) -->
+    <color name="kinetic_dark_background">#0A0A0A</color>
+    <color name="kinetic_dark_surface">#1F1F1F</color>
+    <color name="kinetic_light_background">#F5F5F5</color>
+    <color name="kinetic_light_surface">#FFFFFF</color>
+    <!-- Neutral AppCompat secondary (blue_secondary was tinting nav chrome on some OEMs) -->
+    <color name="theme_secondary_neutral">#64748B</color>
     <color name="red_primary">#ef4444</color>
     <color name="indigo_primary">#818cf8</color>
     

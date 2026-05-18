@@ -15,6 +15,8 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.launch
 import Kinetic_Eco.Tracker.R
@@ -85,48 +87,40 @@ fun FeedbackScreen(
             modifier = Modifier.padding(bottom = 8.dp)
         )
         
-        Row(
+        // Full-width chips: equal-weight rows squeezed labels at large font scales; stacking keeps whole words.
+        Column(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
-            FeedbackCategory.values().take(3).forEach { category ->
+            FeedbackCategory.values().forEach { category ->
                 FilterChip(
                     selected = selectedCategory == category,
                     onClick = { selectedCategory = category },
-                    label = { Text(stringResource(category.labelResId), style = MaterialTheme.typography.labelSmall) },
+                    label = {
+                        Text(
+                            text = stringResource(category.labelResId),
+                            style = MaterialTheme.typography.labelLarge,
+                            color = if (selectedCategory == category) {
+                                colorScheme.onPrimary
+                            } else {
+                                colorScheme.onSurfaceVariant
+                            },
+                            maxLines = 2,
+                            softWrap = true,
+                            overflow = TextOverflow.Clip,
+                            textAlign = TextAlign.Center,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                    },
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = colorScheme.primary,
                         selectedLabelColor = colorScheme.onPrimary,
                         containerColor = colorScheme.surface,
                         labelColor = colorScheme.onSurfaceVariant
                     ),
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.fillMaxWidth()
                 )
             }
-        }
-        
-        Spacer(modifier = Modifier.height(8.dp))
-        
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            FeedbackCategory.values().drop(3).forEach { category ->
-                FilterChip(
-                    selected = selectedCategory == category,
-                    onClick = { selectedCategory = category },
-                    label = { Text(stringResource(category.labelResId), style = MaterialTheme.typography.labelSmall) },
-                    colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = colorScheme.primary,
-                        selectedLabelColor = colorScheme.onPrimary,
-                        containerColor = colorScheme.surface,
-                        labelColor = colorScheme.onSurfaceVariant
-                    ),
-                    modifier = Modifier.weight(1f)
-                )
-            }
-            // Spacer to balance the row
-            Spacer(modifier = Modifier.weight(1f))
         }
         
         Spacer(modifier = Modifier.height(24.dp))

@@ -1,46 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <!-- Base application theme matching web app dark theme -->
-    <!-- AppCompat parent required for AppCompatDelegate.setApplicationLocales (language switching) -->
+    <!-- Day / non-night: aligns with Compose KineticEcoTheme light (cold start before first frame) -->
     <style name="Theme.KineticEcoTracker" parent="Theme.AppCompat.NoActionBar">
-        <!-- Primary brand color -->
         <item name="colorPrimary">@color/green_primary</item>
         <item name="colorPrimaryVariant">@color/green_primary</item>
         <item name="colorOnPrimary">@color/black</item>
-        
-        <!-- Secondary brand color -->
-        <item name="colorSecondary">@color/blue_primary</item>
-        <item name="colorSecondaryVariant">@color/blue_primary</item>
-        <item name="colorOnSecondary">@color/black</item>
-        
-        <!-- Background colors -->
-        <item name="android:colorBackground">@color/background_dark</item>
-        <item name="colorSurface">@color/background_card</item>
-        <item name="colorOnSurface">@color/text_primary</item>
-        
-        <!-- Status bar -->
-        <item name="android:statusBarColor">@color/background_dark</item>
-        <item name="android:windowLightStatusBar">false</item>
-        
-        <!-- Navigation bar -->
-        <item name="android:navigationBarColor">@color/background_dark</item>
-        
-        <!-- Ensure window draws content (fixes blank screen after install) -->
-        <item name="android:windowBackground">@color/background_dark</item>
+        <item name="colorSecondary">@color/theme_secondary_neutral</item>
+        <item name="colorSecondaryVariant">@color/theme_secondary_neutral</item>
+        <item name="colorOnSecondary">@color/white</item>
+        <item name="android:colorBackground">@color/kinetic_light_background</item>
+        <item name="colorSurface">@color/kinetic_light_surface</item>
+        <item name="colorOnSurface">#1a1a1a</item>
+        <item name="android:statusBarColor">@color/kinetic_light_background</item>
+        <item name="android:windowLightStatusBar">true</item>
+        <item name="android:navigationBarColor">@color/kinetic_light_background</item>
+        <item name="android:windowLightNavigationBar">true</item>
+        <item name="android:windowBackground">@color/kinetic_light_background</item>
         <item name="android:windowDrawsSystemBarBackgrounds">true</item>
     </style>
 </resources>
-
-
-
-
-
-
-
-
-
-
-
-
-
-

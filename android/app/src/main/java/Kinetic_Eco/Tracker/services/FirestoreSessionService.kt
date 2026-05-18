@@ -113,6 +113,7 @@ class FirestoreSessionService {
                         "longitude" to pt.longitude
                     ).apply {
                         pt.activity?.let { put("activity", it.name) }
+                        pt.altitudeMeters?.takeIf { it.isFinite() }?.let { put("altitude", it) }
                     }
                 },
                 "kmMilestones" to stats.kmMilestones.map { mapOf("km" to it.km, "secondsForKm" to it.secondsForKm) }
@@ -227,21 +228,29 @@ class FirestoreSessionService {
                     
                     @Suppress("UNCHECKED_CAST")
                     val routePathRaw = data["routePath"] as? List<Map<String, Any>> ?: emptyList()
-                    val routePath = routePathRaw.mapNotNull { m ->
-                        val lat = (m["latitude"] as? Number)?.toDouble() ?: return@mapNotNull null
-                        val lon = (m["longitude"] as? Number)?.toDouble() ?: return@mapNotNull null
+                    val routePath = routePathRaw.mapNotNull fe@{ m ->
+                        val lat = (m["latitude"] as? Number)?.toDouble() ?: return@fe null
+                        val lon = (m["longitude"] as? Number)?.toDouble() ?: return@fe null
                         val activityStr = m["activity"] as? String
                         val activity = activityStr?.let { str ->
                             try { Kinetic_Eco.Tracker.data.ActivityType.valueOf(str) } catch (_: Exception) { null }
                         }
-                        Kinetic_Eco.Tracker.data.RoutePoint(latitude = lat, longitude = lon, activity = activity)
+                        val alt = (m["altitude"] as? Number)?.toDouble()
+                            ?: (m["altitudeMeters"] as? Number)?.toDouble()
+                        val altitudeMeters = alt?.takeIf { it.isFinite() }
+                        Kinetic_Eco.Tracker.data.RoutePoint(
+                            latitude = lat,
+                            longitude = lon,
+                            activity = activity,
+                            altitudeMeters = altitudeMeters
+                        )
                     }
                     
                     @Suppress("UNCHECKED_CAST")
                     val kmMilestonesRaw = data["kmMilestones"] as? List<Map<String, Any>> ?: emptyList()
-                    val kmMilestones = kmMilestonesRaw.mapNotNull { m ->
-                        val kmVal = (m["km"] as? Number)?.toInt() ?: return@mapNotNull null
-                        val secondsVal = (m["secondsForKm"] as? Number)?.toLong() ?: return@mapNotNull null
+                    val kmMilestones = kmMilestonesRaw.mapNotNull km@{ m ->
+                        val kmVal = (m["km"] as? Number)?.toInt() ?: return@km null
+                        val secondsVal = (m["secondsForKm"] as? Number)?.toLong() ?: return@km null
                         KmMilestone(km = kmVal, secondsForKm = secondsVal)
                     }
                     

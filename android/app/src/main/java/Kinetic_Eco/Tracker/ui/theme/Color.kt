@@ -34,6 +34,7 @@ val Red200 = Color(0xFFFECACA)       // Very light red
 val Red400 = Color(0xFFF87171)       // Light red
 val Red500 = Color(0xFFEF4444)
 val Amber400 = Color(0xFFFBBF24)     // Light amber
+val Orange500 = Color(0xFFF97316)    // Motorcycle / 2-wheel motor (distinct from car amber)
 val GreenAccent = Color(0xFF4ADE80)
 val BlueAccent = Color(0xFF60A5FA)
 

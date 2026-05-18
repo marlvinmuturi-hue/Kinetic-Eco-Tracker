@@ -3,8 +3,18 @@ package Kinetic_Eco.Tracker
 import android.app.Application
 import android.util.Log
 import com.google.android.gms.ads.MobileAds
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 
 class KineticEcoApplication : Application() {
+
+    /**
+     * Outlives [TrackingService] so work (e.g. auto-stop save) can finish after [stopSelf]
+     * without being cancelled with the service's lifecycleScope.
+     */
+    val applicationScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
     override fun onCreate() {
         super.onCreate()
         installUncaughtExceptionLogger()

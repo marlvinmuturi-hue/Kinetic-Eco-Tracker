@@ -116,7 +116,16 @@ class FirestoreSessionService {
                         pt.altitudeMeters?.takeIf { it.isFinite() }?.let { put("altitude", it) }
                     }
                 },
-                "kmMilestones" to stats.kmMilestones.map { mapOf("km" to it.km, "secondsForKm" to it.secondsForKm) }
+                "kmMilestones" to stats.kmMilestones.map { mapOf("km" to it.km, "secondsForKm" to it.secondsForKm) },
+                "segments" to stats.segments.map { seg ->
+                    mapOf(
+                        "type" to seg.type.name,
+                        "startTime" to seg.startTime,
+                        "endTime" to seg.endTime,
+                        "distance" to seg.distance,
+                        "avgSpeed" to seg.avgSpeed
+                    )
+                }
             )
             
             Log.d(TAG, "Calling Firestore set()...")

@@ -127,6 +127,7 @@ class UserPreferencesManager(context: Context) {
 
         // Weekly digest notification opt-in (default: true)
         private const val KEY_WEEKLY_DIGEST_ENABLED = "weekly_digest_enabled"
+        private const val KEY_DAILY_DIGEST_ENABLED  = "daily_digest_enabled"
 
         /**
          * Personal weekly CO₂-saved goal in kilograms. Drives the dashboard's
@@ -167,6 +168,9 @@ class UserPreferencesManager(context: Context) {
          */
         private const val KEY_ONBOARDING_FLOW_VERSION = "kinetic_onboarding_flow_version"
         private const val CURRENT_ONBOARDING_FLOW_VERSION = 2
+
+        /** Display name cache — avoids email-prefix flicker on cold launch while Firestore loads. */
+        private const val KEY_CACHED_DISPLAY_NAME = "cached_display_name"
     }
     
     /**
@@ -620,6 +624,13 @@ class UserPreferencesManager(context: Context) {
         prefs.edit().putBoolean(KEY_WEEKLY_DIGEST_ENABLED, enabled).apply()
     }
 
+    fun isDailyDigestEnabled(): Boolean =
+        prefs.getBoolean(KEY_DAILY_DIGEST_ENABLED, true)
+
+    fun setDailyDigestEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_DAILY_DIGEST_ENABLED, enabled).apply()
+    }
+
     // ── Personal weekly CO₂-saved goal ────────────────────────────────────────
 
     /**
@@ -641,6 +652,16 @@ class UserPreferencesManager(context: Context) {
     fun setWeeklyCo2GoalKg(goalKg: Float) {
         val clamped = goalKg.coerceIn(MIN_WEEKLY_CO2_GOAL_KG, MAX_WEEKLY_CO2_GOAL_KG)
         prefs.edit().putFloat(KEY_WEEKLY_CO2_GOAL_KG, clamped).apply()
+    }
+
+    fun getCachedDisplayName(): String? = prefs.getString(KEY_CACHED_DISPLAY_NAME, null)
+
+    fun setCachedDisplayName(name: String?) {
+        if (name.isNullOrBlank()) {
+            prefs.edit().remove(KEY_CACHED_DISPLAY_NAME).apply()
+        } else {
+            prefs.edit().putString(KEY_CACHED_DISPLAY_NAME, name).apply()
+        }
     }
 
     /**

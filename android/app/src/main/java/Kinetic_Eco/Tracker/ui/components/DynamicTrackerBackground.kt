@@ -11,6 +11,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -19,6 +20,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.lerp
 import Kinetic_Eco.Tracker.data.ActivityType
 import java.util.Calendar
@@ -35,16 +37,23 @@ fun DynamicTrackerBackground(
     modifier: Modifier = Modifier,
     hourOverride: Int? = null
 ) {
+    val isLight = MaterialTheme.colorScheme.background.luminance() > 0.5f
     val hour = hourOverride
         ?: remember { Calendar.getInstance().get(Calendar.HOUR_OF_DAY) }
 
-    val (todTop, todBottom) = remember(hour) { monochromeTimeOfDayPalette(hour) }
+    val (todTop, todBottom) = remember(hour, isLight) {
+        if (isLight) lightTimeOfDayPalette(hour) else monochromeTimeOfDayPalette(hour)
+    }
 
     val activityAccent by animateColorAsState(
         targetValue = activityAccentColor(currentActivity),
         animationSpec = tween(durationMillis = 900),
         label = "activity_accent"
     )
+
+    val accentTopBlend = if (isLight) 0.10f else 0.20f
+    val accentMidBlend = if (isLight) 0.05f else 0.10f
+    val blobAlpha     = if (isLight) 0.12f else 0.25f
 
     val drift = rememberInfiniteTransition(label = "tracker_bg_drift")
     val driftAngle by drift.animateFloat(
@@ -63,8 +72,8 @@ fun DynamicTrackerBackground(
             .background(
                 brush = Brush.verticalGradient(
                     colorStops = arrayOf(
-                        0.0f to lerp(todTop, activityAccent, 0.20f),
-                        0.55f to lerp(lerp(todTop, todBottom, 0.35f), activityAccent, 0.10f),
+                        0.0f to lerp(todTop, activityAccent, accentTopBlend),
+                        0.55f to lerp(lerp(todTop, todBottom, 0.35f), activityAccent, accentMidBlend),
                         1.0f to todBottom
                     )
                 )
@@ -79,7 +88,7 @@ fun DynamicTrackerBackground(
             drawRect(
                 brush = Brush.radialGradient(
                     colors = listOf(
-                        activityAccent.copy(alpha = 0.25f),
+                        activityAccent.copy(alpha = blobAlpha),
                         Color.Transparent
                     ),
                     center = Offset(cx, cy),
@@ -112,4 +121,14 @@ private fun monochromeTimeOfDayPalette(hour: Int): Pair<Color, Color> = when (ho
     in 16..18 -> Color(0xFF201C22) to Color(0xFF0E1014)
     in 19..21 -> Color(0xFF18161C) to Color(0xFF0A0B0E)
     else      -> Color(0xFF12141A) to Color(0xFF050608)
+}
+
+/** Airy light palette for light mode — soft tints that shift by time of day. */
+private fun lightTimeOfDayPalette(hour: Int): Pair<Color, Color> = when (hour) {
+    in 5..7   -> Color(0xFFE8F4FD) to Color(0xFFD6EAF8)  // dawn — soft blue
+    in 8..11  -> Color(0xFFF0F8FF) to Color(0xFFE8F4FD)  // morning — bright airy
+    in 12..15 -> Color(0xFFF5FBFF) to Color(0xFFEDF6FF)  // midday — nearly white
+    in 16..18 -> Color(0xFFFFF8F0) to Color(0xFFFFF0E0)  // afternoon — warm
+    in 19..21 -> Color(0xFFF5F0FF) to Color(0xFFEDE0FF)  // dusk — soft lavender
+    else      -> Color(0xFFEEF0F8) to Color(0xFFE4E8F5)  // night — cool blue-gray
 }

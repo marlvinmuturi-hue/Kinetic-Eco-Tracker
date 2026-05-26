@@ -53,8 +53,8 @@ enum class DrivingEngineCcBand(val co2KgPerKm: Double) {
     UP_TO_1000(0.13),
     CC_1001_1400(0.15),
     CC_1401_1800(0.17),
-    CC_1801_2500(0.192),
-    OVER_2500(0.24);
+    CC_1801_2500(0.21),   // Standard car reference (IPCC/EEA 0.21 kg CO₂/km)
+    OVER_2500(0.26);
 
     companion object {
         fun fromStoredName(name: String?): DrivingEngineCcBand {
@@ -228,9 +228,17 @@ enum class ElectricMotorPowerBand(val multiplier: Double) {
     }
 }
 
+/**
+ * CO₂ factors follow the same "savings vs. car baseline" convention as
+ * [CO2Factors.WALKING] and [CO2Factors.CYCLING]: negative = saves vs. the
+ * 0.21 kg/km average petrol-car trip that the train journey replaces.
+ *
+ *  Electric rail:       0.04 kg/km direct → saves 0.21 − 0.04 = 0.17 kg/km
+ *  Diesel-electric:    0.078 kg/km direct → saves 0.21 − 0.078 = 0.132 kg/km
+ */
 enum class TrainPropulsion(val co2KgPerKm: Double) {
-    ELECTRIC(0.04),
-    DIESEL_ELECTRIC(0.078);
+    ELECTRIC(-0.17),
+    DIESEL_ELECTRIC(-0.132);
 
     companion object {
         fun fromStoredName(name: String?): TrainPropulsion {

@@ -25,7 +25,7 @@ private tailrec fun Context.findActivity(): Activity? = when (this) {
 // Two-variant palette — Dark and Light only.
 //
 // Dark : near-black background (#0A0A0A) + dark-gray cards (#1F1F1F)
-// Light: warm light-gray background (#F5F5F5) + pure white cards (#FFFFFF)
+// Light: pure white background (#FFFFFF) + very light gray cards (#F5F5F5)
 //
 // A single fixed accent (Emerald500, #10B981) drives buttons / FAB / selected
 // chips / progress indicators in both modes — there is no per-user accent
@@ -39,12 +39,12 @@ private val KineticDarkSurface = Color(0xFF1F1F1F)
 /** Slightly lighter elevated surface for input fields, dialogs, bottom sheets. */
 private val KineticDarkSurfaceVariant = Color(0xFF2A2A2A)
 
-/** Warm light-gray page background for light mode. */
-private val KineticLightBackground = Color(0xFFF5F5F5)
-/** Pure white "card" / surface tone for light mode — text content lives in here. */
+/** Pure white page background for light mode. */
+private val KineticLightBackground = Color(0xFFFFFFFF)
+/** Pure white card / surface tone for light mode — cards rely on borders/elevation, not color, for distinction. */
 private val KineticLightSurface = Color(0xFFFFFFFF)
-/** Slightly off-white elevated surface for input fields, dialogs, bottom sheets. */
-private val KineticLightSurfaceVariant = Color(0xFFEAEAEA)
+/** Very light gray elevated surface for input fields, dialogs, bottom sheets. */
+private val KineticLightSurfaceVariant = Color(0xFFF2F2F2)
 
 /** Single fixed primary used in both modes (also defined in Color.kt as Emerald500). */
 private val KineticPrimary = Color(0xFF10B981)
@@ -82,7 +82,7 @@ internal val KineticLightColorScheme = lightColorScheme(
     onSurface = Color(0xFF1A1A1A),
     onSurfaceVariant = Color(0xFF555555),
     onError = Color.White,
-    outline = Color(0xFFD4D4D4)
+    outline = Color(0xFFC4C4C4)
 )
 
 /**

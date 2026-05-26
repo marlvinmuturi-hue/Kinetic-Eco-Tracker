@@ -15,7 +15,7 @@ import com.google.android.gms.location.DetectedActivity
 
 /**
  * Manages Activity Recognition Transition API registration.
- * Registers for WALKING/RUNNING/ON_FOOT ENTER transitions to enable auto-start on motion.
+ * Registers for WALKING/RUNNING/ON_FOOT/IN_VEHICLE ENTER transitions to enable auto-start on motion.
  */
 class ActivityTransitionManager(private val context: Context) {
 
@@ -47,6 +47,10 @@ class ActivityTransitionManager(private val context: Context) {
                 .build(),
             ActivityTransition.Builder()
                 .setActivityType(DetectedActivity.ON_FOOT)
+                .setActivityTransition(ActivityTransition.ACTIVITY_TRANSITION_ENTER)
+                .build(),
+            ActivityTransition.Builder()
+                .setActivityType(DetectedActivity.IN_VEHICLE)
                 .setActivityTransition(ActivityTransition.ACTIVITY_TRANSITION_ENTER)
                 .build()
         )

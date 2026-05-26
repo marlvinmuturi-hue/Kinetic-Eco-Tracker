@@ -15,16 +15,17 @@ object SpeedThresholds {
     const val FLYING_MIN = 50.0  // 180 km/h - min for flying, max for driving
 }
 
-// CO2 Emissions in kg per km (positive = emissions, negative = conservation/savings)
+// CO2 in kg per km (negative = saved vs. standard car baseline; positive = direct emissions)
+// Baseline: 0.21 kg/km for an average petrol passenger car (IPCC/EEA reference)
 object CO2Factors {
     const val IDLE = 0.0
-    const val WALKING = -0.192  // Negative = CO2 saved vs driving
-    const val RUNNING = -0.192  // Same as walking - conserving by not driving
-    const val CYCLING = -0.192  // Conserving CO2 vs driving
-    const val TRAIN = 0.04      // Electric/regional rail (~20% of driving)
-    const val DRIVING = 0.192   // Avg passenger vehicle emissions (gas/diesel)
-    const val ELECTRIC_VEHICLE = 0.053  // EV emissions (70% less than gas)
-    const val FLYING = 0.255    // Avg domestic flight emissions
+    const val WALKING = -0.21   // Saves full baseline — human locomotion has negligible direct emissions
+    const val RUNNING = -0.21   // Same as walking
+    const val CYCLING = -0.17   // Saves slightly less — food-production lifecycle cost ~0.04 kg/km
+    const val TRAIN = -0.17     // Saves 0.17 kg/km vs. driving baseline (0.21 − 0.04 electric rail)
+    const val DRIVING = 0.21    // Standard car baseline (avg petrol passenger vehicle)
+    const val ELECTRIC_VEHICLE = 0.053  // EV well-to-wheel grid emissions (~75% less than gas)
+    const val FLYING = 0.255    // Avg narrow-body jet (emits MORE than driving — net emitter)
     
     fun getFactor(activity: ActivityType): Double {
         return getFactor(activity, VehicleProfile.DEFAULT)
@@ -109,8 +110,8 @@ object ActivityColors {
     }
 }
 
-// Baseline CO2 per km that would be emitted if driving (for conservation calculations)
-const val BASELINE_DRIVING_CO2_PER_KM = 0.192
+// Standard car baseline used for "CO2 saved vs. driving" calculations
+const val BASELINE_DRIVING_CO2_PER_KM = 0.21
 
 
 

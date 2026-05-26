@@ -25,6 +25,9 @@ import { showKmNotification, getKmNotificationsEnabled } from './services/kmNoti
 const UNIT_STORAGE_KEY = 'kinetic_unit_preference';
 const ACTIVE_SESSION_KEY = 'kinetic_active_session';
 
+/** Raw summed GPS segments ~15–20% long vs true path; matches Android TrackingService. */
+const GPS_PATH_DISTANCE_SCALE = 0.83;
+
 interface PersistedSessionState {
   isTracking: boolean;
   sessionDuration: number;
@@ -507,10 +510,15 @@ const App: React.FC = () => {
 
   // Apply EMA (Exponential Moving Average) smoothing to speed - Enhanced for flying
   const smoothSpeed = (newSpeed: number, activity: ActivityType = ActivityType.IDLE): number => {
-    // Flying: use larger threshold for speed changes during takeoff/landing
-    const MAX_SPEED_CHANGE = activity === ActivityType.FLYING ? 30.0 : 10.0; // 108 km/h vs 36 km/h
-    // Flying: faster alpha for quicker response
-    const alpha = activity === ActivityType.FLYING ? 0.4 : 0.3;
+    // Walking: small max change per fix — GPS position noise becomes huge m/s spikes
+    const MAX_SPEED_CHANGE =
+      activity === ActivityType.FLYING ? 30.0
+      : (activity === ActivityType.WALKING || activity === ActivityType.IDLE) ? 2.5
+      : 10.0;
+    const alpha =
+      activity === ActivityType.FLYING ? 0.4
+      : (activity === ActivityType.WALKING || activity === ActivityType.IDLE) ? 0.35
+      : 0.3;
     
     // First reading
     if (smoothedSpeedRef.current === 0) {
@@ -617,6 +625,12 @@ const App: React.FC = () => {
     // Apply EMA smoothing with outlier rejection (activity-aware)
     speed = smoothSpeed(speed, preliminaryActivity);
 
+    // Activity after smoothing — used to cap walking distance (avoid runaway GPS + speed inflation)
+    const activityAfterSpeed =
+      manualActivityModeRef.current !== 'AUTO'
+        ? manualActivityModeRef.current
+        : classifyActivity(speed);
+
     // Calculate distance from coordinate changes (more accurate than speed)
     let distanceDelta = 0;
     if (lastPositionRef.current) {
@@ -632,11 +646,28 @@ const App: React.FC = () => {
       if (distanceDelta < MIN_DISTANCE_THRESHOLD) {
         distanceDelta = 0;
       }
+
+      // Walking: only clip segments where implied speed is implausible (spike), not every segment —
+      // a flat ~2 m/s cap per tick undercounted real walks when GPS batches or steps lag.
+      if (activityAfterSpeed === ActivityType.WALKING && timeDelta > 0 && distanceDelta > 0.5) {
+        const impliedMps = distanceDelta / timeDelta;
+        const SPIKE_WALKING_MAX_MPS = 2.95; // ~10.6 km/h per segment — above this, treat as jitter
+        if (impliedMps > SPIKE_WALKING_MAX_MPS) {
+          distanceDelta = Math.min(distanceDelta, SPIKE_WALKING_MAX_MPS * timeDelta + 0.5);
+        }
+      }
       
-      // Speed-based distance fallback: use when coord delta is small but we're clearly moving
+      // Do not inflate distance with speed*time while walking/idle — that doubled GPS drift + speed
       if (speed > 0 && timeDelta > 0) {
         const speedBasedDistance = speed * timeDelta;
-        distanceDelta = Math.max(distanceDelta, speedBasedDistance * 0.9);
+        if (
+          activityAfterSpeed !== ActivityType.WALKING &&
+          activityAfterSpeed !== ActivityType.IDLE &&
+          distanceDelta < 2.5 &&
+          speed > 2.5
+        ) {
+          distanceDelta = Math.max(distanceDelta, speedBasedDistance * 0.85);
+        }
       }
     } else {
       console.log("First position received, no distance calculated yet");
@@ -707,7 +738,9 @@ const App: React.FC = () => {
     // Only accumulate if tracking and we have valid data
     // Use ref to avoid closure issues
     // Increased timeDelta limit from 60s to 300s (5 min) to handle background throttling/sleep better
-    if (isTrackingRef.current && timeDelta > 0 && timeDelta < 300) { 
+    if (isTrackingRef.current && timeDelta > 0 && timeDelta < 300) {
+      distanceDelta *= GPS_PATH_DISTANCE_SCALE;
+
       console.log("Accumulating tracking data:", {
         timeDelta: timeDelta.toFixed(2),
         distanceDelta: distanceDelta.toFixed(2),
@@ -1195,74 +1228,43 @@ const App: React.FC = () => {
     ];
   }, [activeUser]);
 
+  // Loads the Firestore profile for a freshly authenticated Firebase user
+  // and falls back to the legacy localStorage profile if Firestore has none.
+  const hydrateProfileForUser = async (
+    uid: string,
+    email: string,
+    password: string
+  ) => {
+    const profile = await getUserProfile(uid);
+    if (profile) {
+      setActiveUser(profile);
+      setAuthError(null);
+      return;
+    }
+    const legacyResult = authenticateOrCreateProfile(email, password);
+    if (legacyResult.profile) {
+      setActiveUser(legacyResult.profile);
+      setAuthError(null);
+    }
+  };
+
   const handleLogin = async (email: string, password: string) => {
     try {
-      // Try Firebase Auth first - attempt sign in
       const firebaseResult = await signInWithEmail(email, password);
-      
+
       if (firebaseResult.error) {
-        // If sign-in fails with invalid credential, try to create account
-        // This handles both "user doesn't exist" and "wrong password" scenarios
-        if (firebaseResult.error.includes('Invalid email or password') || 
-            firebaseResult.error.includes('No account found') ||
-            firebaseResult.error.includes('invalid-credential')) {
-          
-          // Try to create account - if it fails with "email already in use", 
-          // then the password was wrong
-          const signUpResult = await signUpWithEmail(email, password);
-          
-          if (signUpResult.error) {
-            // If email already exists, the password was wrong
-            if (signUpResult.error.includes('already exists') || 
-                signUpResult.error.includes('email-already-in-use')) {
-              setAuthError('Incorrect password.');
-            } else {
-              setAuthError(signUpResult.error);
-            }
-            return;
-          }
-          
-          // Account created successfully
-          if (signUpResult.user) {
-            // Load profile from Firestore
-            const profile = await getUserProfile(signUpResult.user.uid);
-            if (profile) {
-              setActiveUser(profile);
-              setAuthError(null);
-            } else {
-              // Fallback to localStorage for legacy support
-              const legacyResult = authenticateOrCreateProfile(email, password);
-              if (legacyResult.profile) {
-                setActiveUser(legacyResult.profile);
-                setAuthError(null);
-              }
-            }
-          }
-        } else {
-          // Other errors (disabled account, etc.)
-          setAuthError(firebaseResult.error);
-        }
+        // Surface the real sign-in error. Sign-up is now an explicit user
+        // action via handleSignUp (no more silent auto-create on first login).
+        setAuthError(firebaseResult.error);
         return;
       }
-      
-      // Sign in successful
+
       if (firebaseResult.user) {
-        // Load profile from Firestore
-        const profile = await getUserProfile(firebaseResult.user.uid);
-        if (profile) {
-          setActiveUser(profile);
-          setAuthError(null);
-        } else {
-          // Fallback to localStorage for legacy support
-          const legacyResult = authenticateOrCreateProfile(email, password);
-          if (legacyResult.profile) {
-            setActiveUser(legacyResult.profile);
-            setAuthError(null);
-          }
-        }
+        await hydrateProfileForUser(firebaseResult.user.uid, email, password);
       }
     } catch (error: any) {
-      // Fallback to localStorage-based auth for backward compatibility
+      // Network/Firebase outage: fall back to localStorage-based auth so
+      // existing offline users can still get into the app.
       const result = authenticateOrCreateProfile(email, password);
       if (result.error) {
         setAuthError(result.error);
@@ -1272,6 +1274,21 @@ const App: React.FC = () => {
         setActiveUser(result.profile);
         setAuthError(null);
       }
+    }
+  };
+
+  const handleSignUp = async (email: string, password: string) => {
+    try {
+      const result = await signUpWithEmail(email, password);
+      if (result.error) {
+        setAuthError(result.error);
+        return;
+      }
+      if (result.user) {
+        await hydrateProfileForUser(result.user.uid, email, password);
+      }
+    } catch (error: any) {
+      setAuthError(error?.message || 'Failed to create account. Please try again.');
     }
   };
 
@@ -1642,11 +1659,13 @@ const App: React.FC = () => {
   if (!activeUser) {
     return (
       <>
-        <LoginForm 
-          onSubmit={handleLogin} 
+        <LoginForm
+          onSubmit={handleLogin}
+          onSignUp={handleSignUp}
           onGoogleSignIn={handleGoogleSignIn}
           onForgotPassword={handleForgotPassword}
-          error={authError} 
+          onClearError={() => setAuthError(null)}
+          error={authError}
         />
         {renderFloatingMenu(false)}
       </>

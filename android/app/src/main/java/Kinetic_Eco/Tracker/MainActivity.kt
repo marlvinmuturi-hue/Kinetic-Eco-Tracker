@@ -20,8 +20,15 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
+import androidx.compose.ui.input.nestedscroll.NestedScrollSource
+import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.Modifier
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.ViewModelProvider
@@ -301,19 +308,30 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
 
-                    Box(modifier = Modifier.fillMaxSize()) {
-                        // Floating nav sits above content; taps on chrome still hit list/buttons underneath.
-                        // Tapping inactive space (anything that bubbles to this box) hides the bar;
-                        // tap again in the same way to bring it back. No idle auto-hide timer.
-                        Box(
-                            modifier = Modifier
-                                .fillMaxSize()
-                                .clickable(
-                                    indication = null,
-                                    interactionSource = remember { MutableInteractionSource() },
-                                    onClick = { isNavBarVisible = !isNavBarVisible }
-                                )
-                        ) {
+                    val autoHideScope = rememberCoroutineScope()
+                    val autoHideJob = remember { mutableStateOf<Job?>(null) }
+                    val nestedScrollConnection = remember {
+                        object : NestedScrollConnection {
+                            override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
+                                isNavBarVisible = true
+                                autoHideJob.value?.cancel()
+                                autoHideJob.value = autoHideScope.launch {
+                                    delay(3_000)
+                                    isNavBarVisible = false
+                                }
+                                return Offset.Zero
+                            }
+                        }
+                    }
+                    LaunchedEffect(Unit) {
+                        autoHideJob.value = autoHideScope.launch {
+                            delay(3_000)
+                            isNavBarVisible = false
+                        }
+                    }
+
+                    Box(modifier = Modifier.fillMaxSize().nestedScroll(nestedScrollConnection)) {
+                        Box(modifier = Modifier.fillMaxSize()) {
                         AppNavGraph(
                             navController = navController,
                             authViewModel = authViewModel,
@@ -448,7 +466,8 @@ class MainActivity : AppCompatActivity() {
                                         restoreState = true
                                     }
                                 },
-                                visible = isNavBarVisible,
+                                visible = isNavBarVisible &&
+                                    (currentRoute != Screen.MainTabs.route || selectedMainTabIndex != 1),
                                 modifier = Modifier.align(Alignment.BottomCenter),
                             )
                         }

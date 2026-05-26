@@ -305,6 +305,7 @@ fun AppNavGraph(
                 weeklyDigestEnabled = weeklyDigestEnabled,
                 onWeeklyDigestChange = onWeeklyDigestChange,
                 onProfileClick = { navController.navigate(Screen.Profile.route) },
+                onFeedbackClick = { navController.navigate(Screen.Feedback.route) },
                 onBack = { navController.popBackStack() }
             )
         }

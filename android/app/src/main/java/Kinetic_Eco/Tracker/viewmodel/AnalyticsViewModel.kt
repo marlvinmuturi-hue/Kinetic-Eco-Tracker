@@ -10,8 +10,12 @@ import kotlinx.coroutines.withContext
 import java.util.Locale
 import Kinetic_Eco.Tracker.R
 import Kinetic_Eco.Tracker.data.ActivityAnalysis
+import Kinetic_Eco.Tracker.data.CohortProfile
+import Kinetic_Eco.Tracker.data.RouteCluster
 import Kinetic_Eco.Tracker.data.SessionStats
 import Kinetic_Eco.Tracker.services.AIAnalysisService
+import Kinetic_Eco.Tracker.services.CohortAnalysisService
+import Kinetic_Eco.Tracker.services.RouteIntelligenceService
 import Kinetic_Eco.Tracker.services.SessionManager
 import Kinetic_Eco.Tracker.services.UserPreferencesManager
 
@@ -19,7 +23,19 @@ class AnalyticsViewModel(application: Application) : AndroidViewModel(applicatio
     private val sessionManager = SessionManager(application)
     private val aiAnalysisService = AIAnalysisService.getInstance()
     private val userPrefsManager = UserPreferencesManager(application)
+    private val routeIntelligenceService = RouteIntelligenceService(sessionManager)
     
+    // CO2 tier + cohort analysis (computed locally from session history)
+    private val _cohortProfile = MutableStateFlow<CohortProfile?>(null)
+    val cohortProfile: StateFlow<CohortProfile?> = _cohortProfile.asStateFlow()
+
+    // Route intelligence state
+    private val _routeClusters = MutableStateFlow<List<RouteCluster>>(emptyList())
+    val routeClusters: StateFlow<List<RouteCluster>> = _routeClusters.asStateFlow()
+
+    private val _routeClustersLoading = MutableStateFlow(false)
+    val routeClustersLoading: StateFlow<Boolean> = _routeClustersLoading.asStateFlow()
+
     // AI Analysis State
     private val _aiAnalysisState = MutableStateFlow<AIAnalysisState>(AIAnalysisState.Idle)
     val aiAnalysisState: StateFlow<AIAnalysisState> = _aiAnalysisState.asStateFlow()
@@ -161,8 +177,36 @@ class AnalyticsViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
     
+    /**
+     * Cluster the user's route history and surface repeat commutes with CO₂
+     * trends and greener-alternative suggestions.
+     *
+     * [lookbackDays] controls the analysis window — default 90 days gives
+     * enough data to detect weekly commute patterns while staying fast.
+     * Call this lazily (e.g. when the user opens a "commute insights" section)
+     * rather than on every session load.
+     */
+    fun loadRouteClusters(userId: String, lookbackDays: Int = 90) {
+        viewModelScope.launch(Dispatchers.IO) {
+            _routeClustersLoading.value = true
+            _routeClusters.value = routeIntelligenceService.getRouteClusters(userId, lookbackDays)
+            _routeClustersLoading.value = false
+        }
+    }
+
     fun resetAIAnalysis() {
         _aiAnalysisState.value = AIAnalysisState.Idle
+    }
+
+    /**
+     * Recompute the cohort profile from [sessions]. Called from the UI when the
+     * session list changes so the tier badge and insights stay current without a
+     * dedicated network call.
+     */
+    fun computeCohortProfile(sessions: List<SessionStats>) {
+        viewModelScope.launch(Dispatchers.Default) {
+            _cohortProfile.value = CohortAnalysisService.compute(sessions)
+        }
     }
     
     /** Resolves locale for AI analysis: "auto" -> device locale, else user preference. Returns en/fr/de/es/zh. */

@@ -156,10 +156,12 @@ class AutoStartMonitorService : LifecycleService() {
             val type = event.activityType
             if (type == DetectedActivity.WALKING ||
                 type == DetectedActivity.RUNNING ||
-                type == DetectedActivity.ON_FOOT
+                type == DetectedActivity.ON_FOOT ||
+                type == DetectedActivity.IN_VEHICLE
             ) {
-                Log.d(TAG, "Activity transition ENTER (type=$type) → starting tracking")
-                startTrackingFromAutoStart()
+                val vehicleColdStart = (type == DetectedActivity.IN_VEHICLE)
+                Log.d(TAG, "Activity transition ENTER (type=$type, vehicleColdStart=$vehicleColdStart) → starting tracking")
+                startTrackingFromAutoStart(vehicleColdStart)
                 break
             }
         }
@@ -236,16 +238,13 @@ class AutoStartMonitorService : LifecycleService() {
     private fun handleStepTrigger() {
         val prefs = UserPreferencesManager(this)
         if (!prefs.getAutoStartOnWalkEnabled() && !prefs.getPendingResumeAfterIdleAutoStop()) return
-        startTrackingFromAutoStart()
+        startTrackingFromAutoStart(vehicleColdStart = false)
     }
 
-    private fun startTrackingFromAutoStart() {
+    private fun startTrackingFromAutoStart(vehicleColdStart: Boolean = false) {
         val now = System.currentTimeMillis()
-        if (now - lastTriggerTimeMs < TRIGGER_COOLDOWN_MS) {
-            return
-        }
-        // Respect manual stop: if the user explicitly stopped/discarded within the last 30 s,
-        // suppress auto-restart so the timer doesn't immediately restart after a discard.
+        if (now - lastTriggerTimeMs < TRIGGER_COOLDOWN_MS) return
+
         val prefs = UserPreferencesManager(this)
         if (!prefs.getPendingResumeAfterIdleAutoStop()) {
             val msSinceManualStop = now - prefs.getManualStopMs()
@@ -254,10 +253,53 @@ class AutoStartMonitorService : LifecycleService() {
                 return
             }
         }
+
+        // Set cooldown before the async GPS check so concurrent step/transition
+        // triggers don't each spawn their own GPS query.
         lastTriggerTimeMs = now
 
+        val fine = ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) ==
+            PackageManager.PERMISSION_GRANTED
+        val coarse = ActivityCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) ==
+            PackageManager.PERMISSION_GRANTED
+        if (!fine && !coarse) {
+            launchTrackingService(vehicleColdStart)
+            return
+        }
+
+        // Vehicle cold-starts skip the indoor GPS gate — if the user is already driving,
+        // the indoor accuracy check would wrongly suppress the start in a parking garage.
+        if (vehicleColdStart) {
+            Log.d(TAG, "Auto-start: IN_VEHICLE cold start — bypassing indoor GPS gate")
+            launchTrackingService(vehicleColdStart = true)
+            return
+        }
+
+        // GPS accuracy gate: a recent fix with accuracy > GPS_INDOOR_ACCURACY_M strongly
+        // suggests the user is indoors (kitchen walk, climbing stairs, fidgeting).
+        // Suppress the auto-start and allow a quick retry — the gate will clear the
+        // moment the user steps outside and GPS locks on cleanly.
+        LocationServices.getFusedLocationProviderClient(applicationContext).lastLocation
+            .addOnCompleteListener { task ->
+                val loc = task.result
+                val ageMs = if (loc != null) System.currentTimeMillis() - loc.time else Long.MAX_VALUE
+                val accuracy = loc?.accuracy ?: 0f
+                if (loc != null && ageMs < GPS_FIX_STALE_MS && accuracy > GPS_INDOOR_ACCURACY_M) {
+                    Log.d(TAG, "Auto-start suppressed: GPS accuracy ${accuracy}m > ${GPS_INDOOR_ACCURACY_M}m — likely indoors")
+                    // Shorten the cooldown so the step-counter can retry sooner
+                    // (e.g. user walks to the door and GPS snaps into shape).
+                    lastTriggerTimeMs = now - TRIGGER_COOLDOWN_MS + GPS_INDOOR_RETRY_COOLDOWN_MS
+                    return@addOnCompleteListener
+                }
+                Log.d(TAG, "Auto-start GPS gate passed (accuracy=${accuracy}m age=${ageMs / 1000}s) — launching TrackingService")
+                launchTrackingService(vehicleColdStart = false)
+            }
+    }
+
+    private fun launchTrackingService(vehicleColdStart: Boolean = false) {
         val ts = Intent(this, TrackingService::class.java).apply {
             action = TrackingService.ACTION_START_TRACKING
+            if (vehicleColdStart) putExtra(TrackingService.EXTRA_COLD_START_VEHICLE, true)
         }
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -272,10 +314,14 @@ class AutoStartMonitorService : LifecycleService() {
 
     private fun startForegroundIfNeeded() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            // IMPORTANCE_MIN: no sound, no vibration, no status-bar icon — the
+            // notification only appears if the user manually opens the shade,
+            // collapsed at the very bottom. This is the least intrusive level
+            // Android allows for a foreground service.
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 getString(R.string.auto_start_channel_name),
-                NotificationManager.IMPORTANCE_LOW
+                NotificationManager.IMPORTANCE_MIN
             ).apply {
                 description = getString(R.string.auto_start_channel_desc)
                 setShowBadge(false)
@@ -288,8 +334,9 @@ class AutoStartMonitorService : LifecycleService() {
             .setContentTitle(getString(R.string.auto_start_notification_title))
             .setContentText(getString(R.string.auto_start_notification_text))
             .setSmallIcon(R.drawable.ic_notification)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setPriority(NotificationCompat.PRIORITY_MIN)
             .setOngoing(true)
+            .setSilent(true)
             .setContentIntent(
                 PendingIntent.getActivity(
                     this, 0,
@@ -344,6 +391,26 @@ class AutoStartMonitorService : LifecycleService() {
          * enough that an idle-stop → walk-again cycle re-fires promptly.
          */
         private const val TRIGGER_COOLDOWN_MS = 30_000L
+
+        /**
+         * GPS horizontal accuracy above which auto-start is suppressed.
+         * Values > 50 m are typical of indoor GPS and weak urban-canyon fixes.
+         * Outdoors with a clear sky, accuracy is usually < 20 m.
+         */
+        private const val GPS_INDOOR_ACCURACY_M = 50f
+
+        /**
+         * A GPS fix older than this is too stale to be a reliable indoor/outdoor
+         * indicator — allow auto-start even if the cached fix had poor accuracy.
+         */
+        private const val GPS_FIX_STALE_MS = 300_000L  // 5 minutes
+
+        /**
+         * After suppressing an indoor auto-start, retry after this delay
+         * instead of the full [TRIGGER_COOLDOWN_MS] — so tracking starts
+         * promptly once the user actually steps outside and GPS clears.
+         */
+        private const val GPS_INDOOR_RETRY_COOLDOWN_MS = 8_000L
 
         const val ACTION_START = "kinetic_eco.ACTION_START_AUTO_MONITOR"
         const val ACTION_STOP = "kinetic_eco.ACTION_STOP_AUTO_MONITOR"

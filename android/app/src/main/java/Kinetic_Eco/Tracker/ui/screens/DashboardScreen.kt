@@ -44,6 +44,7 @@ import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontStyle
@@ -55,6 +56,8 @@ import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.google.firebase.auth.FirebaseUser
+import android.content.Context
+import Kinetic_Eco.Tracker.R
 import Kinetic_Eco.Tracker.data.ActivityType
 import Kinetic_Eco.Tracker.data.LeaderboardEntry
 import Kinetic_Eco.Tracker.data.SessionStats
@@ -65,6 +68,7 @@ import Kinetic_Eco.Tracker.ui.components.Co2DistributionPieChart
 import Kinetic_Eco.Tracker.ui.theme.Green500
 import Kinetic_Eco.Tracker.ui.utils.format
 import Kinetic_Eco.Tracker.ui.utils.usesMetricDistance
+import Kinetic_Eco.Tracker.ui.utils.ShareUtils
 import Kinetic_Eco.Tracker.viewmodel.AnalyticsViewModel
 import Kinetic_Eco.Tracker.viewmodel.ProfileViewModel
 import java.text.SimpleDateFormat
@@ -151,8 +155,9 @@ fun DashboardScreen(
     // Highlights derived from this week's sessions only. Null fields are hidden
     // (e.g. no sessions yet → no highlights, but the hero card still renders
     // the 0.00 kg headline so the user has a visible "you're at zero" cue).
+    val ctx = LocalContext.current
     val highlights = remember(weekSessions, dailyCo2Saved) {
-        computeWeekHighlights(weekSessions, dailyCo2Saved, now)
+        computeWeekHighlights(ctx, weekSessions, dailyCo2Saved, now)
     }
 
     // Friendly equivalency line beneath the hero number — turns abstract kg
@@ -291,10 +296,28 @@ fun DashboardScreen(
                         color = colorScheme.onBackground,
                         lineHeight = 30.sp
                     )
-                    Text(
-                        text = "Last 7 days",
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = colorScheme.onSurfaceVariant
+
+                }
+                IconButton(
+                    onClick = {
+                        ShareUtils.launchShareSheet(
+                            context,
+                            ShareUtils.buildWeeklyShareText(
+                                weekCo2KgSaved = weekCo2Saved,
+                                weekDistanceM = weekDistanceM,
+                                sessionCount = weekSessions.size,
+                                equivalency = heroEquivalency,
+                                unitSystem = unitSystem
+                            )
+                        )
+                    },
+                    modifier = Modifier.size(52.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Share,
+                        contentDescription = "Share my week",
+                        modifier = Modifier.size(26.dp),
+                        tint = colorScheme.onBackground
                     )
                 }
                 IconButton(onClick = onSettingsClick, modifier = Modifier.size(52.dp)) {
@@ -335,7 +358,7 @@ fun DashboardScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 CompactStatCard(
-                    title = "Distance",
+                    title = stringResource(R.string.distance),
                     value = formatDistance(weekDistanceM, unitSystem),
                     icon = Icons.Default.Straighten,
                     accent = colorScheme.onSurfaceVariant,
@@ -343,7 +366,7 @@ fun DashboardScreen(
                     modifier = Modifier.weight(1f)
                 )
                 CompactStatCard(
-                    title = "Steps",
+                    title = stringResource(R.string.steps),
                     value = formatStepCount(weekSteps),
                     icon = Icons.AutoMirrored.Filled.DirectionsWalk,
                     accent = colorScheme.onSurfaceVariant,
@@ -416,11 +439,11 @@ private fun WeeklyGoalDialog(
     var draft by remember(currentGoalKg) { mutableFloatStateOf(currentGoalKg) }
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text("Weekly CO₂ goal") },
+        title = { Text(stringResource(R.string.weekly_co2_goal)) },
         text = {
             Column {
                 Text(
-                    text = "How much CO₂ would you like to save each week? Your dashboard plant grows toward this.",
+                    text = stringResource(R.string.weekly_co2_goal_desc),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -437,17 +460,17 @@ private fun WeeklyGoalDialog(
                     steps = 39
                 )
                 Text(
-                    text = "Light starter (0.5–2 kg)  ·  Solid (3–7 kg)  ·  Ambitious (8+ kg)",
+                    text = stringResource(R.string.weekly_co2_goal_hint),
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         },
         confirmButton = {
-            TextButton(onClick = { onConfirm(draft) }) { Text("Save goal") }
+            TextButton(onClick = { onConfirm(draft) }) { Text(stringResource(R.string.save_goal)) }
         },
         dismissButton = {
-            TextButton(onClick = onDismiss) { Text("Cancel") }
+            TextButton(onClick = onDismiss) { Text(stringResource(R.string.cancel)) }
         }
     )
 }
@@ -529,7 +552,7 @@ private fun WeeklyReportHeroCard(
                 )
                 Spacer(Modifier.width(6.dp))
                 Text(
-                    text = "Weekly report",
+                    text = stringResource(R.string.dashboard_weekly_report),
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.SemiBold,
                     color = colorScheme.onSurface
@@ -586,7 +609,8 @@ private fun WeeklyReportHeroCard(
                 }
                 Spacer(Modifier.width(14.dp))
                 Column(modifier = Modifier.weight(1f)) {
-                    // Big "1.23 kg" with a smaller, slightly de-emphasised "CO₂"
+                    val savedLabel = stringResource(R.string.hero_co2_saved)
+                    // Big "1.23 kg" with a smaller, slightly de-emphasised "CO₂ saved"
                     // sitting alongside it. Single Text + AnnotatedString keeps the
                     // baseline aligned (a Row of two Texts would need explicit
                     // baseline alignment to match) and preserves the displaySmall
@@ -605,7 +629,7 @@ private fun WeeklyReportHeroCard(
                                     fontWeight = FontWeight.SemiBold,
                                     color = colorScheme.onSurface.copy(alpha = 0.75f)
                                 )
-                            ) { append(" CO₂") }
+                            ) { append(" CO₂ $savedLabel") }
                         },
                         style = MaterialTheme.typography.displaySmall,
                         color = colorScheme.onSurface
@@ -674,7 +698,7 @@ private fun WeeklyReportHeroCard(
                     if (hasAnySessions) {
                         DeltaBadge(
                             deltaPct = deltaPct,
-                            suffix = " vs last week",
+                            suffix = stringResource(R.string.vs_last_week),
                             invertPolarity = false  // higher CO2 saved vs last week
                         )
                     }
@@ -710,7 +734,7 @@ private fun WeeklyReportHeroCard(
                     )
                     Spacer(Modifier.width(6.dp))
                     Text(
-                        text = if (highlightsExpanded) "Hide your wins" else "See your wins",
+                        text = if (highlightsExpanded) stringResource(R.string.hide_wins) else stringResource(R.string.see_wins),
                         style = MaterialTheme.typography.labelLarge,
                         color = colorScheme.onSurface
                     )
@@ -746,7 +770,7 @@ private fun DeltaBadge(
             modifier = Modifier.padding(top = 2.dp)
         ) {
             Text(
-                text = "✨ NEW THIS WEEK",
+                text = stringResource(R.string.new_this_week),
                 style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.SemiBold,
                 color = colorScheme.onSurfaceVariant,
@@ -876,7 +900,7 @@ private fun EquivalencyLine(
                 exit = fadeOut()
             ) {
                 Text(
-                    text = "Tap to switch comparison",
+                    text = stringResource(R.string.tap_switch_comparison),
                     style = MaterialTheme.typography.labelSmall,
                     fontStyle = FontStyle.Italic,
                     color = hintColor,
@@ -1144,7 +1168,7 @@ private fun AIInsightCard(
                 )
                 Spacer(Modifier.width(8.dp))
                 Text(
-                    text = "AI insight",
+                    text = stringResource(R.string.ai_analysis),
                     style = MaterialTheme.typography.labelLarge,
                     fontWeight = FontWeight.SemiBold,
                     color = colorScheme.onSurface
@@ -1167,19 +1191,19 @@ private fun AIInsightCard(
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    text = "Tap for the full breakdown →",
+                    text = stringResource(R.string.tap_full_breakdown),
                     style = MaterialTheme.typography.labelSmall,
                     color = colorScheme.onSurfaceVariant
                 )
             } else {
                 Text(
-                    text = "Run an AI analysis to unlock personalised insights",
+                    text = stringResource(R.string.run_ai_analysis_prompt),
                     style = MaterialTheme.typography.bodyMedium,
                     color = colorScheme.onSurfaceVariant
                 )
                 Spacer(Modifier.height(4.dp))
                 Text(
-                    text = "Tap to analyze →",
+                    text = stringResource(R.string.tap_to_analyze),
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.SemiBold,
                     color = colorScheme.onSurface
@@ -1212,7 +1236,7 @@ private fun LeaderboardOverviewCard(
                 )
                 Spacer(Modifier.width(6.dp))
                 Text(
-                    text = "Leaderboard (7d)",
+                    text = stringResource(R.string.dashboard_leaderboard_7d),
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = colorScheme.onSurface
@@ -1222,18 +1246,18 @@ private fun LeaderboardOverviewCard(
 
             if (!optedIn) {
                 Text(
-                    text = "Opt in via Settings to see your rank and compete with friends.",
+                    text = stringResource(R.string.dashboard_leaderboard_opt_in),
                     style = MaterialTheme.typography.bodySmall,
                     color = colorScheme.onSurfaceVariant
                 )
                 Spacer(Modifier.height(8.dp))
-                TextButton(onClick = onSettingsClick) { Text("Open settings") }
+                TextButton(onClick = onSettingsClick) { Text(stringResource(R.string.open_settings)) }
                 return@Card
             }
 
             if (entries.isEmpty()) {
                 Text(
-                    text = "Loading leaderboard…",
+                    text = stringResource(R.string.loading_leaderboard),
                     style = MaterialTheme.typography.bodySmall,
                     color = colorScheme.onSurfaceVariant
                 )
@@ -1298,14 +1322,14 @@ private fun LeaderboardCompactRow(rank: Int, entry: LeaderboardEntry, isMe: Bool
         }
         Spacer(Modifier.width(10.dp))
         Text(
-            text = (entry.displayName ?: "User") + if (isMe) " (you)" else "",
+            text = (entry.displayName ?: stringResource(R.string.user)) + if (isMe) stringResource(R.string.you_suffix) else "",
             style = MaterialTheme.typography.bodyMedium,
             color = colorScheme.onSurface,
             fontWeight = if (isMe) FontWeight.SemiBold else FontWeight.Normal,
             modifier = Modifier.weight(1f)
         )
         Text(
-            text = "${entry.co2Conserved.format(2)} kg CO₂",
+            text = "${entry.co2Conserved.format(2)} kg CO₂ ${stringResource(R.string.hero_co2_saved)}",
             style = MaterialTheme.typography.bodySmall,
             color = colorScheme.onSurfaceVariant
         )
@@ -1343,7 +1367,7 @@ private fun RecentSessionRow(
             Spacer(Modifier.width(12.dp))
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = session.date.ifBlank { "Session" },
+                    text = session.date.ifBlank { stringResource(R.string.session) },
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.SemiBold,
                     color = colorScheme.onSurface
@@ -1447,6 +1471,7 @@ private fun computeDailyCo2Saved(sessions: List<SessionStats>, now: Long): List<
 }
 
 private fun computeWeekHighlights(
+    context: Context,
     sessions: List<SessionStats>,
     dailyCo2Saved: List<Double>,
     now: Long
@@ -1466,7 +1491,7 @@ private fun computeWeekHighlights(
         ?.takeIf { it.totalDistance > 0.0 }
         ?.let { s ->
             val km = (s.totalDistance / 1000.0).format(1)
-            val activity = dominantActivityLabel(s)
+            val activity = dominantActivityLabel(context, s)
             if (activity != null) "$km km · $activity" else "$km km"
         }
 
@@ -1484,7 +1509,7 @@ private fun computeWeekHighlights(
         .maxByOrNull { it.value }
         ?.takeIf { it.value > 0.0 }
         ?.let { (activity, distance) ->
-            "${activityDisplayName(activity)} (${(distance / 1000.0).format(1)} km)"
+            "${activityDisplayName(context, activity)} (${(distance / 1000.0).format(1)} km)"
         }
 
     // Best single trip by CO2 conserved.
@@ -1502,25 +1527,25 @@ private fun computeWeekHighlights(
 }
 
 /** Dominant activity across a single session's breakdown (by distance). */
-private fun dominantActivityLabel(s: SessionStats): String? {
+private fun dominantActivityLabel(context: Context, s: SessionStats): String? {
     val dominant = s.breakdown
         .filterKeys { it != ActivityType.IDLE }
         .maxByOrNull { it.value.distance }
         ?.takeIf { it.value.distance > 0.0 }
         ?.key
-    return dominant?.let { activityDisplayName(it) }
+    return dominant?.let { activityDisplayName(context, it) }
 }
 
-private fun activityDisplayName(a: ActivityType): String = when (a) {
-    ActivityType.WALKING -> "Walking"
-    ActivityType.RUNNING -> "Running"
-    ActivityType.CYCLING -> "Cycling"
-    ActivityType.MOTORCYCLE -> "Motorcycle"
-    ActivityType.DRIVING -> "Driving"
-    ActivityType.ELECTRIC_VEHICLE -> "EV"
-    ActivityType.TRAIN -> "Train"
-    ActivityType.FLYING -> "Flying"
-    ActivityType.IDLE -> "Idle"
+private fun activityDisplayName(context: Context, a: ActivityType): String = when (a) {
+    ActivityType.WALKING -> context.getString(R.string.walking)
+    ActivityType.RUNNING -> context.getString(R.string.running)
+    ActivityType.CYCLING -> context.getString(R.string.cycling)
+    ActivityType.MOTORCYCLE -> context.getString(R.string.motorcycle)
+    ActivityType.DRIVING -> context.getString(R.string.driving)
+    ActivityType.ELECTRIC_VEHICLE -> context.getString(R.string.activity_ev_short)
+    ActivityType.TRAIN -> context.getString(R.string.train)
+    ActivityType.FLYING -> context.getString(R.string.flying)
+    ActivityType.IDLE -> context.getString(R.string.activity_idle)
 }
 
 /**
@@ -1784,12 +1809,13 @@ private fun SproutingPlantScene(
     }
 }
 
+@Composable
 private fun motivationalHeroSubtitle(weekCo2SavedKg: Double): String = when {
-    weekCo2SavedKg >= 10.0 -> "Crushing it this week 🌟"
-    weekCo2SavedKg >= 5.0  -> "Great week — keep it going!"
-    weekCo2SavedKg >= 1.0  -> "Nice work this week 🌱"
-    weekCo2SavedKg > 0.0   -> "Every step counts!"
-    else                   -> "Ready when you are — let's start small."
+    weekCo2SavedKg >= 10.0 -> stringResource(R.string.motivation_crushing_it)
+    weekCo2SavedKg >= 5.0  -> stringResource(R.string.motivation_great_week)
+    weekCo2SavedKg >= 1.0  -> stringResource(R.string.motivation_nice_work)
+    weekCo2SavedKg > 0.0   -> stringResource(R.string.motivation_every_step)
+    else                   -> stringResource(R.string.motivation_ready)
 }
 
 /**
@@ -1802,11 +1828,12 @@ private fun motivationalHeroSubtitle(weekCo2SavedKg: Double): String = when {
  *  17–20 → "Good evening"
  *  21–04 → "Good night"
  */
+@Composable
 private fun greetingForHour(hour: Int): String = when (hour) {
-    in 5..11  -> "Good morning"
-    in 12..16 -> "Good afternoon"
-    in 17..20 -> "Good evening"
-    else      -> "Good night"
+    in 5..11  -> stringResource(R.string.greeting_morning)
+    in 12..16 -> stringResource(R.string.greeting_afternoon)
+    in 17..20 -> stringResource(R.string.greeting_evening)
+    else      -> stringResource(R.string.greeting_night)
 }
 
 /**
@@ -1824,10 +1851,11 @@ private fun String.firstName(): String =
  * tend to create pressure when broken; milestones (3 / 7 / 30) feel like
  * little rewards instead.
  */
+@Composable
 private fun streakMilestoneLabel(streakDays: Int): String? = when {
-    streakDays >= 30 -> "🌳 ${streakDays}-day green streak!"
-    streakDays >= 7  -> "🌿 ${streakDays}-day streak"
-    streakDays >= 3  -> "✨ ${streakDays}-day streak"
+    streakDays >= 30 -> stringResource(R.string.streak_30_days, streakDays)
+    streakDays >= 7  -> stringResource(R.string.streak_7_days, streakDays)
+    streakDays >= 3  -> stringResource(R.string.streak_3_days, streakDays)
     else             -> null
 }
 

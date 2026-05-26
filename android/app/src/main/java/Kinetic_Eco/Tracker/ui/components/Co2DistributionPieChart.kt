@@ -18,9 +18,13 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import android.content.Context
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.stringResource
+import Kinetic_Eco.Tracker.R
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
@@ -31,7 +35,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import Kinetic_Eco.Tracker.data.ActivityType
 import Kinetic_Eco.Tracker.data.SessionStats
-import java.util.Locale
 import kotlin.math.roundToInt
 
 /**
@@ -49,7 +52,8 @@ fun Co2DistributionPieChart(
     modifier: Modifier = Modifier,
 ) {
     val scheme = MaterialTheme.colorScheme
-    val slices = remember(allSessions) { computeSlices(allSessions) }
+    val ctx = LocalContext.current
+    val slices = remember(allSessions) { computeSlices(ctx, allSessions) }
     val total = slices.sumOf { it.kg }
 
     Card(
@@ -59,22 +63,16 @@ fun Co2DistributionPieChart(
     ) {
         Column(modifier = Modifier.padding(20.dp)) {
             Text(
-                text = "CO₂ saved by activity",
+                text = stringResource(R.string.co2_saved_by_activity),
                 style = MaterialTheme.typography.titleMedium,
                 fontWeight = FontWeight.SemiBold,
                 color = scheme.onSurface,
             )
-            Text(
-                text = "Last 7 days",
-                style = MaterialTheme.typography.bodySmall,
-                color = scheme.onSurfaceVariant,
-            )
-
             Spacer(Modifier.height(16.dp))
 
             if (total <= 0.0 || slices.isEmpty()) {
                 Text(
-                    text = "Track an eco-friendly session this week and your CO₂ savings will show up here.",
+                    text = stringResource(R.string.co2_pie_empty),
                     style = MaterialTheme.typography.bodySmall,
                     color = scheme.onSurfaceVariant,
                 )
@@ -91,7 +89,7 @@ fun Co2DistributionPieChart(
                 Spacer(Modifier.width(20.dp))
                 Column(modifier = Modifier.fillMaxWidth()) {
                     Text(
-                        text = String.format(Locale.getDefault(), "%.2f kg total", total),
+                        text = stringResource(R.string.co2_pie_kg_total, total),
                         style = MaterialTheme.typography.titleSmall,
                         fontWeight = FontWeight.SemiBold,
                         color = scheme.onSurface,
@@ -186,14 +184,14 @@ private fun LegendRow(slice: Slice, total: Double) {
 
 private const val MS_PER_DAY = 24L * 60L * 60L * 1000L
 
-private const val CAR_KG_PER_KM = 0.171
+private const val CAR_KG_PER_KM = 0.21       // matches BASELINE_DRIVING_CO2_PER_KM
 private const val EV_KG_PER_KM = 0.053
-private const val TRAIN_KG_PER_KM = 0.041
+private const val TRAIN_KG_PER_KM = 0.04     // electric-rail direct; savings = 0.21 − 0.04 = 0.17
 private const val MOTORCYCLE_KG_PER_KM = 0.100
 
 private data class Slice(val label: String, val kg: Double, val color: Color)
 
-private fun computeSlices(sessions: List<SessionStats>): List<Slice> {
+private fun computeSlices(context: Context, sessions: List<SessionStats>): List<Slice> {
     val cutoff = System.currentTimeMillis() - 7 * MS_PER_DAY
     val perActivity = mutableMapOf<ActivityType, Double>()
     for (s in sessions) {
@@ -207,7 +205,7 @@ private fun computeSlices(sessions: List<SessionStats>): List<Slice> {
     }
     return perActivity.entries
         .sortedByDescending { it.value }
-        .map { (act, kg) -> Slice(label = act.displayName(), kg = kg, color = act.color()) }
+        .map { (act, kg) -> Slice(label = act.displayName(context), kg = kg, color = act.color()) }
 }
 
 private fun savedKgPerKm(activity: ActivityType): Double = when (activity) {
@@ -218,16 +216,16 @@ private fun savedKgPerKm(activity: ActivityType): Double = when (activity) {
     else -> 0.0
 }
 
-private fun ActivityType.displayName(): String = when (this) {
-    ActivityType.WALKING -> "Walking"
-    ActivityType.RUNNING -> "Running"
-    ActivityType.CYCLING -> "Cycling"
-    ActivityType.MOTORCYCLE -> "Motorcycle"
-    ActivityType.TRAIN -> "Train"
-    ActivityType.DRIVING -> "Driving"
-    ActivityType.ELECTRIC_VEHICLE -> "EV"
-    ActivityType.FLYING -> "Flying"
-    ActivityType.IDLE -> "Idle"
+private fun ActivityType.displayName(context: Context): String = when (this) {
+    ActivityType.WALKING -> context.getString(R.string.walking)
+    ActivityType.RUNNING -> context.getString(R.string.running)
+    ActivityType.CYCLING -> context.getString(R.string.cycling)
+    ActivityType.MOTORCYCLE -> context.getString(R.string.motorcycle)
+    ActivityType.TRAIN -> context.getString(R.string.train)
+    ActivityType.DRIVING -> context.getString(R.string.driving)
+    ActivityType.ELECTRIC_VEHICLE -> context.getString(R.string.activity_ev_short)
+    ActivityType.FLYING -> context.getString(R.string.flying)
+    ActivityType.IDLE -> context.getString(R.string.activity_idle)
 }
 
 private fun ActivityType.color(): Color = when (this) {

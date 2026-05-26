@@ -12,6 +12,8 @@ import kotlinx.coroutines.flow.callbackFlow
 import kotlin.math.sqrt
 import kotlin.math.pow
 import kotlin.math.abs
+import kotlin.math.cos
+import kotlin.math.PI
 
 data class SensorData(
     val acceleration: Float = 0f,
@@ -61,6 +63,159 @@ enum class SensorHint {
 }
 
 /**
+ * Spectral power profile computed from the accelerometer magnitude signal.
+ * All power values are in (m/s²)² — useful as ratios, not absolute thresholds.
+ */
+data class FrequencyProfile(
+    /** Summed Goertzel power in the pedestrian footfall band (0.8–2.5 Hz). */
+    val walkBandPower: Float,
+    /** Summed Goertzel power in the cycling road-vibration band (5–15 Hz). */
+    val cycleBandPower: Float,
+    /** Ratio of the peak bin to mean power — high values mean one frequency dominates (rhythmic motion). */
+    val peakToMeanRatio: Float,
+    /** The probe frequency (Hz) carrying the most power in this window. */
+    val dominantFreqHz: Float,
+    /**
+     * True when the dominant frequency is in the walk band and the peak clearly
+     * stands above the noise floor — strong indicator of on-foot locomotion.
+     */
+    val hasWalkingRhythm: Boolean,
+    /**
+     * True when the cycling band carries significantly more energy than the walk band,
+     * distinguishing tyre/road vibration (bicycle) from footfall noise or near-zero car floor noise.
+     */
+    val hasCycleVibration: Boolean
+)
+
+/**
+ * Goertzel-based frequency analyser for activity classification.
+ *
+ * Maintains a ~3.2 s ring buffer of linear-acceleration magnitude samples
+ * (fed at the device's SENSOR_DELAY_GAME rate, typically ~50 Hz) and computes
+ * spectral power at physiologically-relevant probe frequencies without a full FFT:
+ *
+ *   Walking cadence  : 0.8–2.5 Hz   one footfall every 0.4–1.25 s
+ *   Cycling vibration: 5–15 Hz      tyre + road vibration conducted through the frame
+ *
+ * Cars produce broadband, very-low-amplitude noise — no dominant spectral peak.
+ * Walking produces a sharp periodic peak at 1–2 Hz.
+ * Cycling shows elevated 5–15 Hz energy alongside a weaker 1–2 Hz pedalling signal.
+ */
+class FrequencyAnalyzer {
+    companion object {
+        private const val BUFFER_SIZE = 160         // ≈ 3.2 s at 50 Hz
+        private const val MIN_SAMPLES = 80          // require ≥ 1.6 s before analysing
+
+        private val PROBE_HZ = floatArrayOf(
+            0.8f, 1.0f, 1.25f, 1.5f, 2.0f, 2.5f,  // walk / run cadence
+            5.0f, 8.0f, 10.0f, 12.0f, 15.0f         // cycling tyre/road vibration
+        )
+
+        private const val WALK_LOW  = 0.8f
+        private const val WALK_HIGH = 2.5f
+        private const val CYCLE_LOW  = 5.0f
+        private const val CYCLE_HIGH = 15.0f
+
+        // Cycling band must carry this many times more energy than the walk band
+        private const val CYCLE_DOMINANCE = 1.8f
+        // Peak/mean ratio above which there is a clear dominant frequency (rhythmic motion)
+        private const val RHYTHMIC_RATIO = 3.0f
+    }
+
+    private val ring      = FloatArray(BUFFER_SIZE)
+    private var writeHead = 0
+    private var count     = 0
+
+    private var estimatedHz  = 50f
+    private var firstMs      = 0L
+    private var totalSamples = 0
+
+    fun addSample(magnitude: Float, nowMs: Long = System.currentTimeMillis()) {
+        ring[writeHead] = magnitude
+        writeHead = (writeHead + 1) % BUFFER_SIZE
+        if (count < BUFFER_SIZE) count++
+        totalSamples++
+
+        if (firstMs == 0L) firstMs = nowMs
+        // Re-estimate every 100 samples so we adapt if the sensor rate drifts
+        if (totalSamples % 100 == 0 && count >= 50) {
+            val elapsedS = (nowMs - firstMs) / 1000f
+            if (elapsedS > 1f) {
+                estimatedHz = (totalSamples.coerceAtMost(BUFFER_SIZE) / elapsedS)
+                    .coerceIn(20f, 100f)
+            }
+        }
+    }
+
+    /** Returns null until MIN_SAMPLES have been collected. */
+    fun analyze(): FrequencyProfile? {
+        if (count < MIN_SAMPLES) return null
+
+        val n = count
+        val x = FloatArray(n) { i -> ring[(writeHead - n + i + BUFFER_SIZE) % BUFFER_SIZE] }
+
+        // Remove DC offset so slow gravity drift doesn't bleed into the walk band
+        val dc = x.average().toFloat()
+        for (i in x.indices) x[i] -= dc
+
+        val powers = FloatArray(PROBE_HZ.size) { i -> goertzel(x, PROBE_HZ[i], estimatedHz) }
+
+        val maxPow    = powers.maxOrNull() ?: return null
+        val meanPow   = (powers.sum() / powers.size).coerceAtLeast(1e-8f)
+        val maxIdx    = powers.indexOfFirst { it == maxPow }
+        val walkPow   = bandSum(powers, WALK_LOW,  WALK_HIGH)
+        val cyclePow  = bandSum(powers, CYCLE_LOW, CYCLE_HIGH)
+        val dominantHz = PROBE_HZ[maxIdx]
+        val peakRatio  = maxPow / meanPow
+
+        return FrequencyProfile(
+            walkBandPower     = walkPow,
+            cycleBandPower    = cyclePow,
+            peakToMeanRatio   = peakRatio,
+            dominantFreqHz    = dominantHz,
+            hasWalkingRhythm  = dominantHz in WALK_LOW..WALK_HIGH && peakRatio > RHYTHMIC_RATIO,
+            hasCycleVibration = cyclePow > walkPow * CYCLE_DOMINANCE
+        )
+    }
+
+    fun reset() {
+        ring.fill(0f)
+        writeHead    = 0
+        count        = 0
+        firstMs      = 0L
+        totalSamples = 0
+        estimatedHz  = 50f
+    }
+
+    private fun bandSum(powers: FloatArray, low: Float, high: Float): Float {
+        var sum = 0f
+        for (i in PROBE_HZ.indices) {
+            if (PROBE_HZ[i] in low..high) sum += powers[i]
+        }
+        return sum
+    }
+
+    /**
+     * Goertzel algorithm: O(N) DFT power at a single target frequency.
+     * Returns squared DFT magnitude (proportional to spectral power at freqHz).
+     */
+    private fun goertzel(x: FloatArray, freqHz: Float, fs: Float): Float {
+        val n     = x.size
+        val k     = (n * freqHz / fs + 0.5).toInt().coerceIn(0, n / 2)
+        val coeff = (2.0 * cos(2.0 * PI * k / n)).toFloat()
+
+        var s1 = 0f
+        var s2 = 0f
+        for (v in x) {
+            val s0 = v + coeff * s1 - s2
+            s2 = s1
+            s1 = s0
+        }
+        return s1 * s1 + s2 * s2 - coeff * s1 * s2
+    }
+}
+
+/**
  * Multi-feature activity classifier using accelerometer magnitude variance,
  * gyroscope mean, and step-counter events together.
  *
@@ -86,13 +241,15 @@ class SensorActivityClassifier(private val deviceHasGyro: Boolean = true) {
     }
 
     private data class Sample(val ms: Long, val accel: Float, val gyro: Float)
-    private val samples   = mutableListOf<Sample>()
-    private var lastStepMs = 0L
+    private val samples      = mutableListOf<Sample>()
+    private var lastStepMs   = 0L
+    private val freqAnalyzer = FrequencyAnalyzer()
 
     fun addSample(accel: Float, gyro: Float, nowMs: Long = System.currentTimeMillis()) {
         val cutoff = nowMs - WINDOW_MS
         samples.removeAll { it.ms < cutoff }
         samples.add(Sample(nowMs, accel, gyro))
+        freqAnalyzer.addSample(accel, nowMs)
     }
 
     fun recordStep(nowMs: Long = System.currentTimeMillis()) { lastStepMs = nowMs }
@@ -100,23 +257,47 @@ class SensorActivityClassifier(private val deviceHasGyro: Boolean = true) {
     fun classify(): SensorHint {
         if (samples.size < MIN_SAMPLES) return SensorHint.UNKNOWN
 
-        val accelVar  = variance(samples.map { it.accel })
-        val gyroMean  = if (deviceHasGyro) samples.map { it.gyro }.average().toFloat() else 0f
+        val accelVar   = variance(samples.map { it.accel })
+        val gyroMean   = if (deviceHasGyro) samples.map { it.gyro }.average().toFloat() else 0f
         val stepActive = lastStepMs > 0 &&
             (System.currentTimeMillis() - lastStepMs) < STEP_ACTIVE_WINDOW_MS
 
         if (stepActive) return SensorHint.ON_FOOT
 
-        val gyroOk = !deviceHasGyro || gyroMean < GYRO_MOTOR_MAX
+        val gyroOk    = !deviceHasGyro || gyroMean < GYRO_MOTOR_MAX
         val gyroStill = !deviceHasGyro || gyroMean < GYRO_STILL
 
         if (accelVar < ACCEL_STILL && gyroStill) return SensorHint.STILL
-        if (accelVar < ACCEL_MOTOR_MAX && gyroOk)  return SensorHint.MOTOR_LIKELY
-        if (accelVar < ACCEL_CYCLING_MAX && gyroOk) return SensorHint.CYCLING_LIKELY
+
+        // Frequency-domain refinement: analyse spectral content of the acceleration signal
+        val freq = freqAnalyzer.analyze()
+        if (freq != null) {
+            // Elevated 5–15 Hz energy relative to the walk band is the clearest cycling indicator:
+            // tyre/road vibration conducts through the frame at this range, absent in walking or cars.
+            if (freq.hasCycleVibration && gyroOk && accelVar < ACCEL_CYCLING_MAX)
+                return SensorHint.CYCLING_LIKELY
+
+            // A sharp dominant peak at 1–2 Hz confirms rhythmic footfall even when the step
+            // counter has not fired (phone orientation or model may suppress step events).
+            if (freq.hasWalkingRhythm)
+                return SensorHint.ON_FOOT
+
+            // No rhythmic dominant peak + low overall variance = smooth motor travel (car, train).
+            if (!freq.hasWalkingRhythm && !freq.hasCycleVibration &&
+                freq.peakToMeanRatio < 2.5f && accelVar < ACCEL_MOTOR_MAX && gyroOk)
+                return SensorHint.MOTOR_LIKELY
+        }
+
+        // Variance-only fallback for when the frequency analyser has insufficient data
+        if (accelVar < ACCEL_MOTOR_MAX && gyroOk)   return SensorHint.MOTOR_LIKELY
+        if (accelVar < ACCEL_CYCLING_MAX && gyroOk)  return SensorHint.CYCLING_LIKELY
         return SensorHint.ON_FOOT
     }
 
-    fun reset() { samples.clear(); lastStepMs = 0L }
+    /** Exposes the current frequency profile for logging or downstream use. */
+    fun getFrequencyProfile(): FrequencyProfile? = freqAnalyzer.analyze()
+
+    fun reset() { samples.clear(); lastStepMs = 0L; freqAnalyzer.reset() }
     fun hasEnoughData() = samples.size >= MIN_SAMPLES
 
     private fun variance(v: List<Float>): Float {
@@ -339,6 +520,8 @@ class SensorService(private val context: Context) {
     fun getMotionPattern(): MotionPattern = patternAnalyzer.analyzePattern()
 
     fun getSensorHint(): SensorHint = sensorClassifier.classify()
+
+    fun getFrequencyProfile(): FrequencyProfile? = sensorClassifier.getFrequencyProfile()
 
     fun resetPatternAnalyzer() {
         patternAnalyzer.reset()

@@ -82,8 +82,26 @@ class TrackingService : LifecycleService() {
     private var previousAltitude: Double = 0.0
     private var lastUpdateTime: Long = 0
     private var smoothedSpeed: Float = 0f
+    // Ring buffer of raw GPS speeds (before EMA) used by the consistency gate in
+    // applyPedestrianToMotorPromotionLatency to detect indoor GPS bounce.
+    private val speedSampleBuf = ArrayDeque<Float>()
+    // Set to System.currentTimeMillis() when tracking is cold-started via IN_VEHICLE
+    // transition; allows faster motor promotion without the pedestrian-seed requirement.
+    private var coldStartVehicleMs = 0L
+    /** Whether we've already shown the EV-confirm prompt this session. */
+    private var evConfirmPromptShownThisSession = false
+    /** Consecutive GPS fix count with accuracy ≤ GPS_MOTOR_ACCURACY_GATE_M (requires 2 before motor promotion). */
+    private var consecutiveCleanGpsReadings = 0
+    /** Bearing (degrees, 0–360) of the last accepted GPS displacement vector. */
+    private var lastBearingDeg: Float? = null
+    /** Count of consecutive heading flips (>45 °) — high counts indicate GPS drift, not real movement. */
+    private var headingJitterCount = 0
+
+    private val _evConfirmPrompt = MutableStateFlow(false)
+    val evConfirmPrompt: StateFlow<Boolean> = _evConfirmPrompt.asStateFlow()
+
     private val activityHistory = mutableListOf<ActivityType>()
-    private val ACTIVITY_HISTORY_SIZE = 5
+    private val ACTIVITY_HISTORY_SIZE = 6
     
     // Activity persistence tracking - how long current activity has been ongoing
     private var activityStartTime: Long = System.currentTimeMillis()
@@ -91,10 +109,6 @@ class TrackingService : LifecycleService() {
 
     // Session start time - when user clicked Start (used for correct session date)
     private var sessionStartTimeMs: Long = 0
-
-    // Kilometer milestone notification tracking
-    private var lastNotifiedKm: Int = 0
-    private var durationAtLastKm: Long = 0  // seconds
 
     // Sensor data for hybrid
     private var currentAcceleration = 0f
@@ -152,12 +166,15 @@ class TrackingService : LifecycleService() {
     private var minAltitude: Double? = null
     private var maxAltitude: Double? = null
     
-    // Kilometer milestones for session summary (time per km)
-    private val kmMilestones = mutableListOf<KmMilestone>()
-    
     // Top speed (raw GPS max) for session summary
     private var sessionTopSpeedMps = 0.0
-    
+
+    // Multi-mode segment tracking
+    private val segmentList = mutableListOf<ActivitySegment>()
+    private var segmentActivity: ActivityType = ActivityType.IDLE
+    private var segmentStartTimeMs = 0L
+    private var segmentStartDistanceM = 0.0
+
     // Route path for map display - record points when tracking
     private val pathPoints = mutableListOf<RoutePoint>()
     private var lastPathRecordTime: Long = 0
@@ -192,6 +209,8 @@ class TrackingService : LifecycleService() {
     // Fallback thresholds: use alt sources when GPS speed is unreliable
     private val GPS_SPEED_UNRELIABLE_MAX = 0.5f  // m/s - treat as unreliable below this
     private val POOR_ACCURACY_METERS = 80f       // Use Kalman/fallback when accuracy worse
+    /** GPS accuracy above which motor-mode promotion is blocked unless sensors confirm a vehicle (SMOOTH pattern). */
+    private val GPS_MOTOR_ACCURACY_GATE_M = 30f
     private val SUSPICIOUS_ZERO_HOLD_SPEED = 2.0f // m/s - hold last speed if was above this
 
     // Dead reckoning during GPS gaps (flying, tunnels)
@@ -265,7 +284,13 @@ class TrackingService : LifecycleService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         when (intent?.action) {
-            ACTION_START_TRACKING -> startTracking()
+            ACTION_START_TRACKING -> {
+                if (intent.getBooleanExtra(EXTRA_COLD_START_VEHICLE, false)) {
+                    coldStartVehicleMs = System.currentTimeMillis()
+                    android.util.Log.d("TrackingService", "Cold-start vehicle flag set")
+                }
+                startTracking()
+            }
             ACTION_STOP_TRACKING -> stopTracking()
             ACTION_STOP_AND_SAVE -> stopAndSaveFromNotification()
             ACTION_DISCARD -> discardFromNotification()
@@ -296,8 +321,9 @@ class TrackingService : LifecycleService() {
         val startMs = sessionStartTimeMs
         val routePath = getRoutePath()
         val accelSamples = getAccelerometerSamples()
+        val segments = getFinalSegments()
         val adjustedStats = adjustStatsForSimplifiedPath(rawStats, routePath)
-        val statsWithRoute = adjustedStats.copy(routePath = routePath)
+        val statsWithRoute = adjustedStats.copy(routePath = routePath, segments = segments)
         val app = applicationContext as KineticEcoApplication
 
         // Surface the "Session saved" notification while we still have a live
@@ -360,6 +386,13 @@ class TrackingService : LifecycleService() {
         motorLowSpeedSinceMs = 0L
         lastDrivingBandMs = 0L
         pedestrianToMotorRiseSinceMs = 0L
+        speedSampleBuf.clear()
+        evConfirmPromptShownThisSession = false
+        consecutiveCleanGpsReadings = 0
+        lastBearingDeg = null
+        headingJitterCount = 0
+        // coldStartVehicleMs is intentionally NOT reset here — it is set in onStartCommand
+        // before startTracking() is called, so clearing it here would erase the flag.
         railLookupJob?.cancel()
         railLookupJob = null
         railMinDistanceM = null
@@ -423,14 +456,14 @@ class TrackingService : LifecycleService() {
         // Record session start for correct date when saving (e.g. session started at 11pm, saved at 12am next day)
         sessionStartTimeMs = System.currentTimeMillis()
 
-        // Reset kilometer milestone tracking for new session
-        lastNotifiedKm = 0
-        durationAtLastKm = 0
-        kmMilestones.clear()
         sessionTopSpeedMps = 0.0
         pathPoints.clear()
         lastPathRecordTime = 0
         lastRefinedActivity = ActivityType.IDLE
+        segmentList.clear()
+        segmentActivity = ActivityType.IDLE
+        segmentStartTimeMs = System.currentTimeMillis()
+        segmentStartDistanceM = 0.0
         startingAltitude = null
         stoppingAltitude = null
         minAltitude = null
@@ -511,7 +544,7 @@ class TrackingService : LifecycleService() {
                 val elapsedSinceStart = now - deadReckonStartMs
                 if (elapsedSinceStart > DEAD_RECKON_MAX_DURATION_MS) continue
                 val deltaSec = 2.0  // 2s since last tick
-                val distanceDelta = scaledGpsDistanceMeters(smoothedSpeed * deltaSec)
+                val distanceDelta = scaledGpsDistanceMeters(smoothedSpeed * deltaSec, activity)
                 _sessionDistance.value += distanceDelta
                 updateStats(distanceDelta, activity, smoothedSpeed.toDouble(), 0.0, 0.0)
             }
@@ -569,9 +602,16 @@ class TrackingService : LifecycleService() {
      * Scale raw summed GPS segments toward typical true path length (zig-zag / multipath overcount).
      * Step-based distance when GPS is stale is not scaled.
      */
-    private fun scaledGpsDistanceMeters(rawMeters: Double): Double {
+    private fun scaledGpsDistanceMeters(rawMeters: Double, activity: ActivityType = ActivityType.DRIVING): Double {
         if (!rawMeters.isFinite() || rawMeters <= 0.0) return 0.0
-        return rawMeters * GPS_PATH_DISTANCE_SCALE
+        val scale = when (activity) {
+            ActivityType.WALKING, ActivityType.RUNNING -> GPS_SCALE_WALKING
+            ActivityType.CYCLING, ActivityType.MOTORCYCLE -> GPS_SCALE_CYCLING
+            ActivityType.DRIVING, ActivityType.ELECTRIC_VEHICLE,
+            ActivityType.TRAIN, ActivityType.FLYING -> GPS_SCALE_DRIVING
+            else -> GPS_PATH_DISTANCE_SCALE
+        }
+        return rawMeters * scale
     }
 
     /** Auto-stop and save session when idle timeout is reached. */
@@ -631,7 +671,11 @@ class TrackingService : LifecycleService() {
         _leanActivityHint.value = null
         leanHintDismissedAtMs = System.currentTimeMillis()
     }
-    
+
+    fun dismissEvConfirmPrompt() {
+        _evConfirmPrompt.value = false
+    }
+
     /**
      * Reload user's physical profile from preferences
      * Call this after the user updates their profile in settings
@@ -656,6 +700,13 @@ class TrackingService : LifecycleService() {
         motorLowSpeedSinceMs = 0L
         lastDrivingBandMs = 0L
         pedestrianToMotorRiseSinceMs = 0L
+        speedSampleBuf.clear()
+        evConfirmPromptShownThisSession = false
+        consecutiveCleanGpsReadings = 0
+        lastBearingDeg = null
+        headingJitterCount = 0
+        _evConfirmPrompt.value = false
+        coldStartVehicleMs = 0L
         lastPosition = null
         previousAltitude = 0.0
         lastUpdateTime = 0
@@ -672,11 +723,14 @@ class TrackingService : LifecycleService() {
         stoppingAltitude = null
         minAltitude = null
         maxAltitude = null
-        kmMilestones.clear()
         sessionTopSpeedMps = 0.0
         pathPoints.clear()
         lastPathRecordTime = 0
         lastRefinedActivity = ActivityType.IDLE
+        segmentList.clear()
+        segmentActivity = ActivityType.IDLE
+        segmentStartTimeMs = 0L
+        segmentStartDistanceM = 0.0
         locationService.setFlyingMode(false)
         accelerometerSamples.clear()
         lastAccelSampleTimeMs = 0
@@ -700,6 +754,25 @@ class TrackingService : LifecycleService() {
     
     /** Get accelerometer samples collected during tracking (1 sample/sec) for Firestore analytics. */
     fun getAccelerometerSamples(): List<AccelerometerSample> = accelerometerSamples.toList()
+
+    /** Returns completed segments plus the still-open current segment (closed to now). */
+    fun getFinalSegments(): List<ActivitySegment> {
+        if (segmentStartTimeMs <= 0L) return segmentList.toList()
+        val now = System.currentTimeMillis()
+        val segDurationMs = now - segmentStartTimeMs
+        val segDistance = _sessionDistance.value - segmentStartDistanceM
+        val result = segmentList.toMutableList()
+        if (segDurationMs >= 15_000L || segDistance >= 50.0) {
+            result.add(ActivitySegment(
+                type = segmentActivity,
+                startTime = segmentStartTimeMs,
+                endTime = now,
+                distance = segDistance,
+                avgSpeed = if (segDurationMs > 0) segDistance / (segDurationMs / 1000.0) else 0.0
+            ))
+        }
+        return result
+    }
 
     /** Get recorded route path for map display (called when saving session). */
     fun getRoutePath(): List<RoutePoint> {
@@ -956,6 +1029,7 @@ class TrackingService : LifecycleService() {
         val maxChange = when {
             activity == ActivityType.FLYING -> MAX_SPEED_CHANGE_FLYING
             activity == ActivityType.WALKING || activity == ActivityType.IDLE -> MAX_SPEED_CHANGE_WALKING
+            smoothedSpeed < 1.0f -> COLD_START_MAX_SPEED_CHANGE
             else -> MAX_SPEED_CHANGE
         }
         return if (Math.abs(newSpeed - smoothedSpeed) > maxChange) smoothedSpeed else newSpeed
@@ -975,11 +1049,11 @@ class TrackingService : LifecycleService() {
         
         val maxChange = when {
             activity == ActivityType.FLYING -> MAX_SPEED_CHANGE_FLYING
-            activity == ActivityType.WALKING || activity == ActivityType.IDLE ->
-                MAX_SPEED_CHANGE_WALKING
+            activity == ActivityType.WALKING || activity == ActivityType.IDLE -> MAX_SPEED_CHANGE_WALKING
+            smoothedSpeed < 1.0f -> COLD_START_MAX_SPEED_CHANGE
             else -> MAX_SPEED_CHANGE
         }
-        
+
         // Reject outliers (sudden massive speed changes)
         val speedChange = Math.abs(newSpeed - smoothedSpeed)
         if (speedChange > maxChange) {
@@ -1020,7 +1094,8 @@ class TrackingService : LifecycleService() {
      */
     private fun applyPedestrianToMotorPromotionLatency(
         refinedActivity: ActivityType,
-        now: Long
+        now: Long,
+        horizontalAccuracyM: Float = POOR_ACCURACY_METERS
     ): ActivityType {
         if (_manualActivityMode.value != null) {
             pedestrianToMotorRiseSinceMs = 0L
@@ -1043,22 +1118,75 @@ class TrackingService : LifecycleService() {
             return refinedActivity
         }
 
-        // Real vehicles produce a SMOOTH accelerometer signature within
-        // ~3–5 s of starting to drive; promote immediately when we see one so
-        // legitimate vehicle starts aren't delayed.
-        if (sensorService.getMotionPattern() == MotionPattern.SMOOTH) {
+        // Real vehicles produce a SMOOTH accelerometer signature within ~3–5 s of
+        // starting to drive; promote immediately when GPS also confirms outdoor
+        // placement (good accuracy). Requiring both prevents indoor vibration
+        // (HVAC, footsteps nearby) from causing a false SMOOTH while GPS drifts.
+        if (sensorService.getMotionPattern() == MotionPattern.SMOOTH &&
+            horizontalAccuracyM <= GPS_MOTOR_ACCURACY_GATE_M) {
             pedestrianToMotorRiseSinceMs = 0L
             return refinedActivity
+        }
+
+        // Poor GPS with no SMOOTH sensor confirmation: GPS drift indoors (accuracy
+        // typically 20–80 m) can produce apparent speeds that look like driving or
+        // running. If accuracy is too weak to confirm vehicle-level displacement AND
+        // the accelerometer doesn't see a vehicle signature, keep the pedestrian mode.
+        if (horizontalAccuracyM > GPS_MOTOR_ACCURACY_GATE_M) {
+            pedestrianToMotorRiseSinceMs = 0L
+            android.util.Log.d("TrackingService", "Motor promotion blocked: poor GPS (${horizontalAccuracyM}m) without SMOOTH pattern")
+            return cur
+        }
+
+        // Heading consistency gate: erratic direction changes signal GPS drift, not real vehicle movement
+        if (headingJitterCount >= HEADING_JITTER_BLOCK_COUNT) {
+            pedestrianToMotorRiseSinceMs = 0L
+            android.util.Log.d("TrackingService", "Motor promotion blocked: heading jitter count=$headingJitterCount")
+            return cur
+        }
+
+        // Require 2 consecutive GPS fixes with accuracy ≤ GPS_MOTOR_ACCURACY_GATE_M before promoting
+        if (consecutiveCleanGpsReadings < 2) {
+            pedestrianToMotorRiseSinceMs = 0L
+            android.util.Log.d("TrackingService", "Motor promotion blocked: only $consecutiveCleanGpsReadings clean GPS reading(s), need 2")
+            return cur
+        }
+
+        val coldStartActive = coldStartVehicleMs > 0L && (now - coldStartVehicleMs) < COLD_START_VEHICLE_WINDOW_MS
+
+        // Speed consistency gate: require that ALL recent raw-GPS readings in the buffer
+        // are above DRIVING_MIN before allowing motor promotion. Indoor GPS produces an
+        // oscillating pattern (e.g. 0→12→0→12 m/s) where the minimum is always near zero.
+        // A real vehicle sustains above DRIVING_MIN for every reading once it's moving.
+        // Skipped for IN_VEHICLE cold-starts because the car may be accelerating from rest,
+        // producing a legitimate rising-speed pattern (0→5→10→14 m/s), and the Activity
+        // Recognition API is already a strong confirmation of vehicle context.
+        if (!coldStartActive && speedSampleBuf.size >= SPEED_BUF_MIN_SAMPLES) {
+            val minBufSpeed = speedSampleBuf.min()
+            if (minBufSpeed < SpeedThresholds.DRIVING_MIN.toFloat()) {
+                pedestrianToMotorRiseSinceMs = 0L
+                android.util.Log.d("TrackingService",
+                    "Motor promotion blocked: GPS bouncing (min in buf=${(minBufSpeed * 3.6f).toInt()} km/h < DRIVING_MIN)")
+                return cur
+            }
+        }
+
+        // Cold-start vehicle: halve the promotion latency — Activity Recognition already
+        // confirmed IN_VEHICLE context, so we need less GPS evidence.
+        val effectiveLatencyMs = if (coldStartActive) {
+            PEDESTRIAN_TO_MOTOR_PROMOTE_MS / 2
+        } else {
+            PEDESTRIAN_TO_MOTOR_PROMOTE_MS
         }
 
         if (pedestrianToMotorRiseSinceMs == 0L) {
             pedestrianToMotorRiseSinceMs = now
         }
         val sustainedFor = now - pedestrianToMotorRiseSinceMs
-        return if (sustainedFor < PEDESTRIAN_TO_MOTOR_PROMOTE_MS) {
+        return if (sustainedFor < effectiveLatencyMs) {
             android.util.Log.d(
                 "TrackingService",
-                "Promotion latency: holding $cur (candidate $refinedActivity sustained ${sustainedFor}ms / required ${PEDESTRIAN_TO_MOTOR_PROMOTE_MS}ms)"
+                "Promotion latency: holding $cur (candidate $refinedActivity sustained ${sustainedFor}ms / required ${effectiveLatencyMs}ms${if (coldStartActive) " [cold-start]" else ""})"
             )
             cur
         } else {
@@ -1296,6 +1424,16 @@ class TrackingService : LifecycleService() {
         }
     }
 
+    /** Compute forward bearing in degrees [0, 360) from (fromLat, fromLon) to (toLat, toLon). */
+    private fun computeHeadingDeg(toLat: Double, toLon: Double, fromLat: Double, fromLon: Double): Float {
+        val dLon = Math.toRadians(toLon - fromLon)
+        val lat1 = Math.toRadians(fromLat)
+        val lat2 = Math.toRadians(toLat)
+        val y = Math.sin(dLon) * Math.cos(lat2)
+        val x = Math.cos(lat1) * Math.sin(lat2) - Math.sin(lat1) * Math.cos(lat2) * Math.cos(dLon)
+        return ((Math.toDegrees(Math.atan2(y, x)).toFloat() + 360f) % 360f)
+    }
+
     private fun updateLocation(position: GeoPosition) {
         // === STEP 1: Apply Kalman Filter for GPS smoothing ===
         val location = android.location.Location("gps").apply {
@@ -1318,8 +1456,26 @@ class TrackingService : LifecycleService() {
         )
         
         val now = System.currentTimeMillis()
+
+        // Update heading consistency and GPS accuracy streak
+        if (lastPosition != null) {
+            val bearing = computeHeadingDeg(filtered.latitude, filtered.longitude, lastPosition!!.latitude, lastPosition!!.longitude)
+            val prev = lastBearingDeg
+            lastBearingDeg = bearing
+            if (prev != null) {
+                val delta = Math.abs(((bearing - prev + 540f) % 360f) - 180f)
+                if (delta > HEADING_JITTER_THRESHOLD_DEG) headingJitterCount = (headingJitterCount + 1).coerceAtMost(10)
+                else headingJitterCount = (headingJitterCount - 1).coerceAtLeast(0)
+            }
+        }
+        if (position.accuracy <= GPS_MOTOR_ACCURACY_GATE_M) {
+            consecutiveCleanGpsReadings = (consecutiveCleanGpsReadings + 1).coerceAtMost(10)
+        } else {
+            consecutiveCleanGpsReadings = 0
+        }
+
         val timeDelta = if (lastUpdateTime > 0) (now - lastUpdateTime) / 1000.0 else 0.0
-        
+
         // Get altitude: GPS first, barometric fallback when GPS altitude missing or poor (e.g. flying)
         val gpsAltitude = position.altitude
         val currentAltitude = when {
@@ -1463,6 +1619,24 @@ class TrackingService : LifecycleService() {
             }
         }
 
+        // Physics plausibility gate: reject readings where the implied acceleration
+        // between consecutive fixes exceeds physical limits. GPS indoors can jump from
+        // 0 → 40 km/h in one 1-second interval (~11 m/s²), which no ground vehicle
+        // produces at that GPS sampling rate. Capped at MAX_PHYSICAL_ACCEL_MPS2.
+        if (lastPosition != null && timeDelta in 0.1..4.0) {
+            val impliedAccel = Math.abs(speed - smoothedSpeed) / timeDelta.toFloat()
+            if (impliedAccel > MAX_PHYSICAL_ACCEL_MPS2 && smoothedSpeed < SpeedThresholds.DRIVING_MIN.toFloat()) {
+                android.util.Log.d("TrackingService",
+                    "Physics gate: implied ${impliedAccel.toInt()} m/s² (Δspeed=${((speed - smoothedSpeed) * 3.6f).toInt()} km/h in ${timeDelta.toInt()}s) — spike rejected")
+                speed = smoothedSpeed
+            }
+        }
+
+        // Record raw speed (post-gate, pre-EMA) for the GPS consistency ring buffer
+        // used by applyPedestrianToMotorPromotionLatency to veto indoor bounce patterns.
+        if (speedSampleBuf.size >= SPEED_BUF_SIZE) speedSampleBuf.removeFirst()
+        speedSampleBuf.addLast(speed)
+
         // Display: outlier-gated raw GPS speed (no EMA lag) for real-time feel.
         // Classification: EMA-smoothed speed for stable activity decisions.
         _currentSpeed.value = rejectOutlierForDisplay(speed, preliminaryActivity)
@@ -1484,9 +1658,13 @@ class TrackingService : LifecycleService() {
             refinedActivity = when {
                 speed < SpeedThresholds.IDLE_SPEED_MAX -> ActivityType.IDLE
                 speed >= SpeedThresholds.DRIVING_MIN -> {
-                    // >= 18 km/h: FLYING, CYCLING (sensor-confirmed), or DRIVING
+                    // >= 18 km/h: FLYING (altitude + speed confirmed), CYCLING (sensor-confirmed), or DRIVING
                     when (refinedActivity) {
-                        ActivityType.FLYING -> ActivityType.FLYING
+                        ActivityType.FLYING -> if (speed >= FLYING_MIN_SPEED_MPS && currentAltitude > HIGH_ALTITUDE_M) {
+                            ActivityType.FLYING
+                        } else {
+                            ActivityType.DRIVING
+                        }
                         ActivityType.CYCLING -> ActivityType.CYCLING
                         else -> ActivityType.DRIVING
                     }
@@ -1494,7 +1672,7 @@ class TrackingService : LifecycleService() {
                 else -> enforceActivitySpeedConsistency(refinedActivity, speed, currentAltitude)
             }
             refinedActivity = applyStickyMotorActivity(refinedActivity, speed, now)
-            refinedActivity = applyPedestrianToMotorPromotionLatency(refinedActivity, now)
+            refinedActivity = applyPedestrianToMotorPromotionLatency(refinedActivity, now, position.accuracy)
             refinedActivity = applyRailwayTrainDetection(
                 refinedActivity,
                 speed,
@@ -1595,12 +1773,11 @@ class TrackingService : LifecycleService() {
             }
 
             if (isActuallyMoving && meetsDistanceThreshold && dd > 0) {
-                val ddScaled = scaledGpsDistanceMeters(dd)
+                val ddScaled = scaledGpsDistanceMeters(dd, refinedActivity)
                 _sessionDistance.value += ddScaled
                 lastGpsDistanceUpdateMs = now
                 stepCountAtLastGps = lastStepCount
                 updateStats(ddScaled, refinedActivity, speed.toDouble(), elevationGainDelta, elevationLossDelta)
-                checkAndShowKmMilestoneNotification()
                 // Record route point on movement (in addition to time interval)
                 recordPathPointIfNeeded(filtered.latitude, filtered.longitude, routeAltitudeMeters, refinedActivity, now)
             }
@@ -1757,26 +1934,32 @@ class TrackingService : LifecycleService() {
                     activityHistory.add(activity)
                     if (activityHistory.size > ACTIVITY_HISTORY_SIZE) activityHistory.removeAt(0)
                     val motorCount = activityHistory.count { it == activity }
-                    if (motorCount >= 2 && _currentActivity.value != activity) {
+                    if (motorCount >= 3 && _currentActivity.value != activity) {
                         activityStartTime = System.currentTimeMillis()
                         activityDurationSeconds = 0
                         idleStartTimeMs = 0L
                         _currentActivity.value = activity
-                        android.util.Log.d("TrackingService", "Activity: → $activity (2-reading motor confirm)")
+                        android.util.Log.d("TrackingService", "Activity: → $activity (3-reading motor confirm)")
+                        // Show EV-confirm prompt once when the session first locks to DRIVING
+                        if (activity == ActivityType.DRIVING && !evConfirmPromptShownThisSession &&
+                            _manualActivityMode.value == null) {
+                            evConfirmPromptShownThisSession = true
+                            _evConfirmPrompt.value = true
+                        }
                     }
                     return
                 }
                 ActivityType.FLYING -> {
-                    if (_currentActivity.value != activity) {
+                    activityHistory.add(activity)
+                    if (activityHistory.size > ACTIVITY_HISTORY_SIZE) activityHistory.removeAt(0)
+                    val flyCount = activityHistory.count { it == ActivityType.FLYING }
+                    if (flyCount >= 3 && _currentActivity.value != activity) {
                         activityStartTime = System.currentTimeMillis()
                         activityDurationSeconds = 0
                         idleStartTimeMs = 0L
                         _currentActivity.value = activity
-                        android.util.Log.d("TrackingService", "Activity immediate: → FLYING")
+                        android.util.Log.d("TrackingService", "Activity: → FLYING (3-reading confirm)")
                     }
-                    activityHistory.clear()
-                    activityHistory.add(activity)
-                    activityHistory.add(activity)
                     return
                 }
                 else -> { /* debounced below */ }
@@ -1887,7 +2070,6 @@ class TrackingService : LifecycleService() {
         // to avoid noisy initial GPS from switching away from IDLE too soon.
     }
 
-    /** Merge elevation, km milestones, and top speed into session stats (for session summary). */
     private fun withElevationAndMilestones(stats: SessionStats): SessionStats = stats.copy(
         elevationGain = totalElevationGain,
         elevationLoss = totalElevationLoss,
@@ -1895,7 +2077,6 @@ class TrackingService : LifecycleService() {
         stoppingAltitude = stoppingAltitude,
         minAltitude = minAltitude,
         maxAltitude = maxAltitude,
-        kmMilestones = kmMilestones.toList(),
         topSpeedMps = sessionTopSpeedMps
     )
     
@@ -1947,7 +2128,26 @@ class TrackingService : LifecycleService() {
                     val currentStats = _sessionStats.value
                     // When manual mode is set, use it for breakdown so all data goes to the chosen category only
                     val activity = _manualActivityMode.value ?: _currentActivity.value
-                    
+
+                    // Segment boundary: close previous segment when activity changes
+                    val tickNow = System.currentTimeMillis()
+                    if (activity != segmentActivity && segmentStartTimeMs > 0L) {
+                        val segDurationMs = tickNow - segmentStartTimeMs
+                        val segDistance = _sessionDistance.value - segmentStartDistanceM
+                        if (segDurationMs >= 15_000L || segDistance >= 50.0) {
+                            segmentList.add(ActivitySegment(
+                                type = segmentActivity,
+                                startTime = segmentStartTimeMs,
+                                endTime = tickNow,
+                                distance = segDistance,
+                                avgSpeed = if (segDurationMs > 0) segDistance / (segDurationMs / 1000.0) else 0.0
+                            ))
+                        }
+                        segmentActivity = activity
+                        segmentStartTimeMs = tickNow
+                        segmentStartDistanceM = _sessionDistance.value
+                    }
+
                     val breakdown = currentStats.breakdown.toMutableMap()
                     val currentBreakdown = breakdown[activity] ?: ActivityBreakdown()
                     
@@ -2074,30 +2274,6 @@ class TrackingService : LifecycleService() {
             builder.setSilent(true)
         }
         return builder.build()
-    }
-
-    /**
-     * Check if we've crossed a distance milestone (1 km in metric, 1 mile in imperial).
-     * Records intervals for session summary — no standalone notification is posted (product choice).
-     */
-    private fun checkAndShowKmMilestoneNotification() {
-        val metersPerUnit = userPrefsManager.getMetersPerUnit()
-        val currentDistanceM = _sessionDistance.value
-        val currentSegment = (currentDistanceM / metersPerUnit).toInt()
-        if (currentSegment <= 0 || currentSegment <= lastNotifiedKm) return
-        
-        val currentDurationSec = _sessionDuration.value
-        val secondsForThisSegment = if (lastNotifiedKm == 0) {
-            currentDurationSec  // First unit = total duration so far
-        } else {
-            currentDurationSec - durationAtLastKm
-        }
-        
-        // Always log for session summary (km field stores segment index)
-        kmMilestones.add(KmMilestone(km = currentSegment, secondsForKm = secondsForThisSegment))
-
-        lastNotifiedKm = currentSegment
-        durationAtLastKm = currentDurationSec
     }
 
     private fun updateNotification() {
@@ -2338,6 +2514,9 @@ class TrackingService : LifecycleService() {
         /** ID for the weekly CO₂-goal progress nudge. */
         const val WEEKLY_GOAL_NOTIFICATION_ID = 105
 
+        /** Intent extra: set to true when auto-start was triggered by an IN_VEHICLE transition. */
+        const val EXTRA_COLD_START_VEHICLE = "extra_cold_start_vehicle"
+
         const val ACTION_START_TRACKING = "ACTION_START_TRACKING"
         const val ACTION_STOP_TRACKING = "ACTION_STOP_TRACKING"
         /** Foreground-notification action: save the in-flight session and stop. */
@@ -2384,6 +2563,35 @@ class TrackingService : LifecycleService() {
          * a real car ride sustains driving-band speed for far longer than 4 s.
          */
         private const val PEDESTRIAN_TO_MOTOR_PROMOTE_MS = 4_000L
+
+        /** Maximum physically plausible ground-vehicle acceleration (m/s²) between GPS fixes.
+         *  Sports cars peak ~9 m/s²; indoor GPS can imply 10–15 m/s² in a single 1-second window. */
+        private const val MAX_PHYSICAL_ACCEL_MPS2 = 12f
+
+        /** Size of the raw-speed ring buffer fed to the GPS consistency gate. */
+        private const val SPEED_BUF_SIZE = 8
+        /** Minimum samples in the buffer before the consistency gate activates. */
+        private const val SPEED_BUF_MIN_SAMPLES = 6
+
+        /** Minimum altitude (m) required alongside high speed for FLYING classification. */
+        private const val HIGH_ALTITUDE_M = 1000.0
+        /** Minimum speed (m/s = 200 km/h) required alongside HIGH_ALTITUDE_M for FLYING. */
+        private const val FLYING_MIN_SPEED_MPS = 200f / 3.6f
+        /** Relaxed max-speed-change threshold during cold-start (smoothedSpeed < 1 m/s). */
+        private const val COLD_START_MAX_SPEED_CHANGE = 15.0f
+
+        /** Heading delta (degrees) beyond which a fix is counted as a jitter sample. */
+        private const val HEADING_JITTER_THRESHOLD_DEG = 45f
+        /** Consecutive jitter samples before motor promotion is blocked. */
+        private const val HEADING_JITTER_BLOCK_COUNT = 4
+
+        /** Activity-specific GPS path scale factors (overcount correction per activity). */
+        private const val GPS_SCALE_WALKING = 0.78
+        private const val GPS_SCALE_CYCLING = 0.88
+        private const val GPS_SCALE_DRIVING = 0.88
+
+        /** Window after an IN_VEHICLE cold-start during which the promotion latency is halved. */
+        private const val COLD_START_VEHICLE_WINDOW_MS = 25_000L
 
         /**
          * If the step counter ticked within this window, treat the user as

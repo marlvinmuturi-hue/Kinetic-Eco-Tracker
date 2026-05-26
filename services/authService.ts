@@ -56,6 +56,12 @@ export const signInWithEmail = async (email: string, password: string): Promise<
       case 'auth/too-many-requests':
         errorMessage = 'Too many failed attempts. Please try again later.';
         break;
+      case 'auth/operation-not-allowed':
+        errorMessage = 'Email/password sign-in is not enabled. Please enable Email/Password in Firebase Console > Authentication > Sign-in method, or use "Continue with Google".';
+        break;
+      case 'auth/network-request-failed':
+        errorMessage = 'Network error. Check your connection and try again.';
+        break;
       default:
         errorMessage = authError.message || errorMessage;
     }
@@ -82,13 +88,22 @@ export const signUpWithEmail = async (email: string, password: string): Promise<
     
     switch (authError.code) {
       case 'auth/email-already-in-use':
-        errorMessage = 'An account with this email already exists. Please check your password or use "Forgot password" to reset it.';
+        errorMessage = 'An account with this email already exists. Please sign in instead, or use "Forgot password" to reset it.';
         break;
       case 'auth/invalid-email':
         errorMessage = 'Invalid email address.';
         break;
       case 'auth/weak-password':
         errorMessage = 'Password should be at least 6 characters.';
+        break;
+      case 'auth/operation-not-allowed':
+        // Email/Password provider is disabled in Firebase Console.
+        // Surface a clear, actionable message so users (and the dev) know
+        // it's a config issue, not a per-email-domain restriction.
+        errorMessage = 'Email/password sign-up is not enabled. Please enable Email/Password in Firebase Console > Authentication > Sign-in method, or use "Continue with Google".';
+        break;
+      case 'auth/network-request-failed':
+        errorMessage = 'Network error. Check your connection and try again.';
         break;
       default:
         errorMessage = authError.message || errorMessage;

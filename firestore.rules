@@ -1,40 +1,72 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    // Users collection - users can only read/write their own document
+
+    // ── User documents ──────────────────────────────────────────────────────
+    // Each user may read/write only their own top-level document.
     match /users/{userId} {
       allow read, write: if request.auth != null && request.auth.uid == userId;
-      // Sessions subcollection - required for Cloud Sync and AI Analysis
+
+      // Sessions: only the owning user may read/write.
       match /sessions/{sessionId} {
         allow read, write: if request.auth != null && request.auth.uid == userId;
       }
-    }
-    
-    // Top-level sessions (legacy/unused) - keep for backward compatibility
-    match /sessions/{sessionId} {
-      allow read, write: if request.auth != null && 
-        resource.data.userId == request.auth.uid;
-      allow create: if request.auth != null && 
-        request.resource.data.userId == request.auth.uid;
-    }
-    
-    // Feedback collection - authenticated users can create feedback, only admins can read
-    match /feedback/{feedbackId} {
-      allow create: if request.auth != null;
-      allow read: if false;  // Only admins can read via Firebase Console
-      allow update, delete: if false;  // Immutable feedback
+
+      // FCM tokens: device registers its own token; Cloud Functions read all.
+      // Deletion is also allowed by the owning user (e.g. on logout).
+      match /fcmTokens/{tokenId} {
+        allow read, write, delete: if request.auth != null && request.auth.uid == userId;
+      }
     }
 
-    // Leaderboard - opted-in users write their own entry, all auth users can read
+    // ── Top-level sessions (legacy / backward-compat) ────────────────────────
+    match /sessions/{sessionId} {
+      allow read, write: if request.auth != null &&
+        resource.data.userId == request.auth.uid;
+      allow create: if request.auth != null &&
+        request.resource.data.userId == request.auth.uid;
+    }
+
+    // ── Feedback ─────────────────────────────────────────────────────────────
+    // Any authenticated user may submit feedback; nobody reads it from the client
+    // (admins use the Firebase Console / Admin SDK).
+    match /feedback/{feedbackId} {
+      allow create: if request.auth != null;
+      allow read, update, delete: if false;
+    }
+
+    // ── Leaderboard ───────────────────────────────────────────────────────────
+    // Authenticated clients may read the full leaderboard.
+    // Each user may create/update/delete only their own entry (LeaderboardService
+    // computes the per-window aggregates client-side on opt-in and after each
+    // session sync). Cloud Functions also write here via the Admin SDK, which
+    // bypasses these rules.
     match /leaderboard/{userId} {
       allow read: if request.auth != null;
-      allow write: if request.auth != null && request.auth.uid == userId;
-      // Reactions: users can only write their own reaction doc
+      allow create, update, delete: if request.auth != null &&
+        request.auth.uid == userId;
+
+      // Reactions: each user controls only their own reaction sub-document.
       match /reactions/{reactorUserId} {
         allow read: if request.auth != null;
-        allow create, update, delete: if request.auth.uid == reactorUserId;
+        allow create, update, delete: if request.auth != null &&
+          request.auth.uid == reactorUserId;
       }
+    }
+
+    // ── Daily leaderboard cache (read via Cloud Function only) ──────────────
+    // The dailyLeaderboardTop function reads/writes via Admin SDK. Direct
+    // client access is unnecessary and disallowed.
+    match /leaderboardDaily/{dateKey}/users/{userId} {
+      allow read, write: if false;
+    }
+
+    // ── Analysis cache & rate limit (managed by Cloud Functions only) ───────
+    match /analysisCache/{userId} {
+      allow read, write: if false;
+    }
+    match /analysisRateLimit/{userId} {
+      allow read, write: if false;
     }
   }
 }
-

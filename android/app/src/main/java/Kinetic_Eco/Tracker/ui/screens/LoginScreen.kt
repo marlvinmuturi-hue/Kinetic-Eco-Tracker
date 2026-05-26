@@ -1,5 +1,6 @@
 package Kinetic_Eco.Tracker.ui.screens
 
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.text.KeyboardOptions
@@ -12,6 +13,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.res.stringResource
@@ -84,6 +87,14 @@ fun LoginScreen(
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center
     ) {
+        Image(
+            painter = painterResource(id = R.drawable.ic_app_logo),
+            contentDescription = stringResource(R.string.app_name),
+            modifier = Modifier
+                .size(96.dp)
+                .clip(MaterialTheme.shapes.extraLarge)
+        )
+        Spacer(Modifier.height(20.dp))
         Text(
             text = stringResource(R.string.kinetic),
             style = MaterialTheme.typography.displayLarge,
@@ -318,7 +329,15 @@ fun LoginScreen(
                 onDismissRequest = { showResetDialog = false },
                 title = { Text(stringResource(R.string.reset_password)) },
                 text = {
-                    Column {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Image(
+                            painter = painterResource(id = R.drawable.ic_app_logo),
+                            contentDescription = null,
+                            modifier = Modifier
+                                .size(56.dp)
+                                .clip(MaterialTheme.shapes.large)
+                        )
+                        Spacer(Modifier.height(12.dp))
                         Text(
                             stringResource(R.string.reset_password_hint),
                             modifier = Modifier.padding(bottom = 16.dp),

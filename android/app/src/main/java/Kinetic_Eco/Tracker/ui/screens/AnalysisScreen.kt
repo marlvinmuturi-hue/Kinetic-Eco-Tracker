@@ -1,5 +1,7 @@
 package Kinetic_Eco.Tracker.ui.screens
 
+import android.content.Context
+import android.graphics.Paint as AndroidPaint
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -8,20 +10,30 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.DirectionsBike
+import androidx.compose.material.icons.automirrored.filled.DirectionsRun
 import androidx.compose.material.icons.automirrored.filled.DirectionsWalk
 import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.TwoWheeler
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.nativeCanvas
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
@@ -107,6 +119,10 @@ fun AnalysisScreen(
     }
     val weeklyReport = remember(calWeekSessions) { computeWeeklyReportData(calWeekSessions) }
 
+    val recentSessions = remember(allSessions) {
+        allSessions.sortedByDescending { it.sessionEndTimeMs }.take(5)
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -124,13 +140,13 @@ fun AnalysisScreen(
         ) {
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = "Analysis",
+                    text = stringResource(R.string.analysis_tab_title),
                     style = MaterialTheme.typography.headlineSmall,
                     fontWeight = FontWeight.Bold,
                     color = colorScheme.onBackground
                 )
                 Text(
-                    text = "AI insights & carbon footprint",
+                    text = stringResource(R.string.analysis_tab_subtitle),
                     style = MaterialTheme.typography.bodySmall,
                     color = colorScheme.onSurfaceVariant
                 )
@@ -166,7 +182,7 @@ fun AnalysisScreen(
                     )
                     Spacer(Modifier.width(8.dp))
                     Text(
-                        text = "AI activity analysis",
+                        text = stringResource(R.string.analysis_ai_card_title),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = colorScheme.onSurface
@@ -204,7 +220,7 @@ fun AnalysisScreen(
                     )
                     Spacer(Modifier.width(8.dp))
                     Text(
-                        text = "CO₂ this week",
+                        text = stringResource(R.string.analysis_co2_this_week),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = colorScheme.onSurface
@@ -226,7 +242,7 @@ fun AnalysisScreen(
                 ) {
                     LegendDot(
                         color = Green500,
-                        label = AnnotatedString("Saved (${weekCo2Saved.format(2)} kg)")
+                        label = AnnotatedString(stringResource(R.string.analysis_legend_saved, weekCo2Saved))
                     )
                     // "Emitted" gets de-emphasised typography (smaller, italic)
                     // so the eye lands on the saved number first; the kg value
@@ -239,7 +255,7 @@ fun AnalysisScreen(
                                     fontSize = 10.sp,
                                     fontStyle = FontStyle.Italic
                                 )
-                            ) { append("Emitted ") }
+                            ) { append(stringResource(R.string.analysis_legend_emitted) + " ") }
                             append("(${weekCo2Emit.format(2)} kg)")
                         }
                     )
@@ -265,7 +281,7 @@ fun AnalysisScreen(
                     )
                     Spacer(Modifier.width(8.dp))
                     Text(
-                        text = if (net >= 0) "Net CO₂ saved" else "This week's footprint",
+                        text = if (net >= 0) stringResource(R.string.analysis_net_co2_saved) else stringResource(R.string.analysis_weeks_footprint),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = colorScheme.onSurface
@@ -283,7 +299,7 @@ fun AnalysisScreen(
                 if (equivalents.isNotEmpty()) {
                     Spacer(Modifier.height(12.dp))
                     Text(
-                        text = "That's equivalent to:",
+                        text = stringResource(R.string.analysis_equivalent_to),
                         style = MaterialTheme.typography.labelMedium,
                         color = colorScheme.onSurfaceVariant
                     )
@@ -305,13 +321,22 @@ fun AnalysisScreen(
                         }
                     }
                     Text(
-                        text = "Source: ADEME Base Carbone (impactco2.fr)",
+                        text = stringResource(R.string.analysis_source_ademe),
                         style = MaterialTheme.typography.labelSmall,
                         color = colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 6.dp)
                     )
                 }
             }
+        }
+
+        // ── Recent sessions ──────────────────────────────────────────────────
+        if (recentSessions.isNotEmpty()) {
+            RecentSessionsCard(
+                sessions = recentSessions,
+                unitSystem = unitSystem,
+                onSessionClick = onSessionClick
+            )
         }
 
         Spacer(Modifier.height(80.dp))
@@ -344,49 +369,111 @@ private fun Co2WeeklyChart(
     emittedColor: Color,
     axisColor: Color
 ) {
-    val maxVal = daily.maxOfOrNull { max(it.savedKg, it.emittedKg) } ?: 0.0
-    val maxScale = max(maxVal, 0.5)  // floor scale so empty days still render axis
+    // Independent scales: each axis sized to its own series so neither is dwarfed
+    val niceMaxSaved = niceChartMax(max(daily.maxOfOrNull { it.savedKg } ?: 0.0, 0.5))
+    val niceMaxEmit  = niceChartMax(max(daily.maxOfOrNull { it.emittedKg } ?: 0.0, 0.5))
 
     Canvas(
         modifier = Modifier
             .fillMaxWidth()
             .height(150.dp)
     ) {
-        val barGroupWidth = size.width / 7f
+        val yLeftWidth  = 40.dp.toPx()
+        val yRightWidth = 40.dp.toPx()
+        val barAreaWidth = size.width - yLeftWidth - yRightWidth
+        val barGroupWidth = barAreaWidth / 7f
         val barWidth = barGroupWidth * 0.32f
         val gap = barGroupWidth * 0.10f
-        val baseY = size.height - 24f
-        val chartHeight = baseY - 8f
+        val baseY = size.height - 20f
+        val topY = 8f
+        val chartHeight = baseY - topY
+        val chartRight = size.width - yRightWidth
 
-        // Baseline axis
+        val savedLabelPaint = AndroidPaint().apply {
+            isAntiAlias = true
+            textSize = 9.sp.toPx()
+            textAlign = AndroidPaint.Align.RIGHT
+            color = savedColor.copy(alpha = 0.85f).toArgb()
+        }
+        val emitLabelPaint = AndroidPaint().apply {
+            isAntiAlias = true
+            textSize = 9.sp.toPx()
+            textAlign = AndroidPaint.Align.LEFT
+            // emittedColor is already muted; boost alpha so labels are legible
+            color = axisColor.copy(alpha = 0.75f).toArgb()
+        }
+
+        // Baseline
         drawLine(
             color = axisColor.copy(alpha = 0.45f),
-            start = Offset(0f, baseY),
-            end = Offset(size.width, baseY),
+            start = Offset(yLeftWidth, baseY),
+            end = Offset(chartRight, baseY),
             strokeWidth = 2f
         )
 
-        daily.forEachIndexed { index, d ->
-            val groupCenter = barGroupWidth * index + barGroupWidth / 2f
-            val savedH = ((d.savedKg / maxScale) * chartHeight).toFloat().coerceAtLeast(0f)
-            val emitH = ((d.emittedKg / maxScale) * chartHeight).toFloat().coerceAtLeast(0f)
+        // Left axis rule (saved — green tint)
+        drawLine(
+            color = savedColor.copy(alpha = 0.35f),
+            start = Offset(yLeftWidth, topY),
+            end = Offset(yLeftWidth, baseY),
+            strokeWidth = 1f
+        )
 
-            // Saved bar (left)
-            drawRoundedBar(
-                color = savedColor,
-                left = groupCenter - barWidth - gap / 2f,
-                width = barWidth,
-                top = baseY - savedH,
-                baseY = baseY
+        // Right axis rule (emitted — muted)
+        drawLine(
+            color = axisColor.copy(alpha = 0.25f),
+            start = Offset(chartRight, topY),
+            end = Offset(chartRight, baseY),
+            strokeWidth = 1f
+        )
+
+        // Faint gridlines at 50% and 100% of the saved scale
+        listOf(0.5f, 1.0f).forEach { fraction ->
+            drawLine(
+                color = axisColor.copy(alpha = 0.09f),
+                start = Offset(yLeftWidth, baseY - fraction * chartHeight),
+                end = Offset(chartRight, baseY - fraction * chartHeight),
+                strokeWidth = 1f
             )
-            // Emitted bar (right)
-            drawRoundedBar(
-                color = emittedColor,
-                left = groupCenter + gap / 2f,
-                width = barWidth,
-                top = baseY - emitH,
-                baseY = baseY
-            )
+        }
+
+        // Bars — each series scaled to its own axis
+        daily.forEachIndexed { index, d ->
+            val groupCenter = yLeftWidth + barGroupWidth * index + barGroupWidth / 2f
+            val savedH = ((d.savedKg / niceMaxSaved) * chartHeight).toFloat().coerceAtLeast(0f)
+            val emitH  = ((d.emittedKg / niceMaxEmit) * chartHeight).toFloat().coerceAtLeast(0f)
+
+            drawRoundedBar(savedColor, groupCenter - barWidth - gap / 2f, barWidth, baseY - savedH, baseY)
+            drawRoundedBar(emittedColor, groupCenter + gap / 2f, barWidth, baseY - emitH, baseY)
+        }
+
+        // Axis tick labels
+        drawIntoCanvas { composeCanvas ->
+            val nc = composeCanvas.nativeCanvas
+
+            // Left axis — saved (right-aligned, green)
+            listOf(0.0f to 0.0, 0.5f to niceMaxSaved * 0.5, 1.0f to niceMaxSaved)
+                .forEach { (fraction, kg) ->
+                    val y = baseY - fraction * chartHeight
+                    val label = when {
+                        kg == 0.0        -> "0"
+                        fraction == 1.0f -> co2TickLabel(kg) + " kg"
+                        else             -> co2TickLabel(kg)
+                    }
+                    nc.drawText(label, yLeftWidth - 4.dp.toPx(), y + savedLabelPaint.textSize * 0.35f, savedLabelPaint)
+                }
+
+            // Right axis — emitted (left-aligned, muted)
+            listOf(0.0f to 0.0, 0.5f to niceMaxEmit * 0.5, 1.0f to niceMaxEmit)
+                .forEach { (fraction, kg) ->
+                    val y = baseY - fraction * chartHeight
+                    val label = when {
+                        kg == 0.0        -> "0"
+                        fraction == 1.0f -> co2TickLabel(kg) + " kg"
+                        else             -> co2TickLabel(kg)
+                    }
+                    nc.drawText(label, chartRight + 4.dp.toPx(), y + emitLabelPaint.textSize * 0.35f, emitLabelPaint)
+                }
         }
     }
 }
@@ -405,6 +492,153 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawRoundedBar(
         size = Size(width, baseY - top),
         cornerRadius = androidx.compose.ui.geometry.CornerRadius(width / 2f, width / 2f)
     )
+}
+
+// ── Recent sessions ──────────────────────────────────────────────────────────
+
+@Composable
+private fun RecentSessionsCard(
+    sessions: List<SessionStats>,
+    unitSystem: UnitSystem,
+    onSessionClick: ((SessionStats) -> Unit)?
+) {
+    val colorScheme = MaterialTheme.colorScheme
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = colorScheme.surfaceVariant),
+        shape = RoundedCornerShape(16.dp)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Default.History,
+                    contentDescription = null,
+                    tint = colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.width(8.dp))
+                Text(
+                    text = stringResource(R.string.recent_sessions),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = colorScheme.onSurface
+                )
+            }
+            Spacer(Modifier.height(12.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                sessions.forEach { session ->
+                    AnalysisSessionRow(
+                        session = session,
+                        unitSystem = unitSystem,
+                        onClick = { onSessionClick?.invoke(session) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AnalysisSessionRow(
+    session: SessionStats,
+    unitSystem: UnitSystem,
+    onClick: () -> Unit
+) {
+    val colorScheme = MaterialTheme.colorScheme
+    val (icon, tint) = sessionActivityIconAndTint(session, colorScheme)
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(12.dp),
+        color = colorScheme.surface.copy(alpha = 0.6f)
+    ) {
+        Row(
+            modifier = Modifier.padding(12.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(36.dp)
+                    .clip(CircleShape)
+                    .background(tint.copy(alpha = 0.15f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = tint,
+                    modifier = Modifier.size(18.dp)
+                )
+            }
+            Spacer(Modifier.width(12.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = session.date.ifBlank { stringResource(R.string.session) },
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = colorScheme.onSurface
+                )
+                Text(
+                    text = weeklyFormatDistance(session.totalDistance, unitSystem) +
+                        " • " + formatRouteDuration(session.totalDuration),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = colorScheme.onSurfaceVariant
+                )
+            }
+            if (session.co2Conserved > 0.001) {
+                Text(
+                    text = "+${session.co2Conserved.format(2)} kg",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    color = Green500
+                )
+            } else if (session.co2Emissions > 0.001) {
+                Text(
+                    text = "${session.co2Emissions.format(2)} kg",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    color = colorScheme.onSurfaceVariant
+                )
+            }
+        }
+    }
+}
+
+private fun sessionActivityIconAndTint(
+    s: SessionStats,
+    colorScheme: androidx.compose.material3.ColorScheme
+): Pair<ImageVector, Color> {
+    val dominant = s.breakdown.maxByOrNull { it.value.distance }?.key ?: ActivityType.WALKING
+    val icon: ImageVector = when (dominant) {
+        ActivityType.WALKING          -> Icons.AutoMirrored.Filled.DirectionsWalk
+        ActivityType.RUNNING          -> Icons.AutoMirrored.Filled.DirectionsRun
+        ActivityType.CYCLING          -> Icons.AutoMirrored.Filled.DirectionsBike
+        ActivityType.MOTORCYCLE       -> Icons.Outlined.TwoWheeler
+        ActivityType.DRIVING          -> Icons.Default.DirectionsCar
+        ActivityType.ELECTRIC_VEHICLE -> Icons.Default.ElectricCar
+        ActivityType.TRAIN            -> Icons.Default.Train
+        ActivityType.FLYING           -> Icons.Default.Flight
+        ActivityType.IDLE             -> Icons.Default.PauseCircle
+    }
+    return icon to colorScheme.onSurfaceVariant
+}
+
+// ── Chart helpers ─────────────────────────────────────────────────────────────
+
+private fun niceChartMax(value: Double): Double = when {
+    value <= 0.5  -> 0.5
+    value <= 1.0  -> 1.0
+    value <= 2.0  -> 2.0
+    value <= 5.0  -> 5.0
+    value <= 10.0 -> 10.0
+    value <= 20.0 -> 20.0
+    else -> kotlin.math.ceil(value / 10.0) * 10.0
+}
+
+private fun co2TickLabel(kg: Double): String = when {
+    kg >= 10  -> "%.0f".format(kg)
+    kg >= 1   -> "%.1f".format(kg)
+    else      -> "%.2f".format(kg)
 }
 
 @Composable
@@ -706,11 +940,11 @@ private fun AIAnalysisInline(
                     strokeWidth = 2.dp
                 )
                 Spacer(Modifier.width(10.dp))
-                Text("Analyzing…")
+                Text(stringResource(R.string.analyzing))
             } else {
                 Icon(Icons.Default.AutoAwesome, contentDescription = null)
                 Spacer(Modifier.width(8.dp))
-                Text("Run AI analysis")
+                Text(stringResource(R.string.analysis_run_ai_button))
             }
         }
 
@@ -723,7 +957,7 @@ private fun AIAnalysisInline(
             }
             else -> {
                 Text(
-                    text = "Tap the button to get a personalised AI breakdown of your last 7 days.",
+                    text = stringResource(R.string.analysis_ai_cta_text),
                     style = MaterialTheme.typography.bodySmall,
                     color = colorScheme.onSurfaceVariant
                 )
@@ -810,7 +1044,7 @@ private fun WeeklyReportCard(
                 Spacer(Modifier.width(8.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
-                        text = "Weekly report",
+                        text = stringResource(R.string.dashboard_weekly_report),
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                         color = colorScheme.onSurface
@@ -826,7 +1060,7 @@ private fun WeeklyReportCard(
                     color = colorScheme.primary.copy(alpha = 0.15f)
                 ) {
                     Text(
-                        text = "${data.sessionCount} session${if (data.sessionCount == 1) "" else "s"}",
+                        text = if (data.sessionCount == 1) stringResource(R.string.analysis_session_one) else stringResource(R.string.analysis_sessions_count, data.sessionCount),
                         style = MaterialTheme.typography.labelSmall,
                         color = colorScheme.primary,
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
@@ -837,15 +1071,21 @@ private fun WeeklyReportCard(
             if (data.sessionCount == 0) {
                 Spacer(Modifier.height(16.dp))
                 Text(
-                    text = "No sessions recorded this week yet.",
+                    text = stringResource(R.string.analysis_no_sessions_week),
                     style = MaterialTheme.typography.bodyMedium,
                     color = colorScheme.onSurfaceVariant
                 )
             } else {
                 Spacer(Modifier.height(14.dp))
 
+                val ctx = LocalContext.current
                 val isMetric = unitSystem.usesMetricDistance()
                 val co2Net = data.co2Saved - data.co2Emitted
+                val co2ImpactValue = if (co2Net >= 0) {
+                    stringResource(R.string.stat_co2_impact_saved, kotlin.math.abs(co2Net).format(2))
+                } else {
+                    stringResource(R.string.stat_co2_impact_net, kotlin.math.abs(co2Net).format(2))
+                }
 
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Row(
@@ -853,15 +1093,17 @@ private fun WeeklyReportCard(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         WeeklyMetricTile(
-                            label = "Distance",
+                            label = stringResource(R.string.stat_distance),
                             value = weeklyFormatDistance(data.totalDistance, unitSystem),
                             icon = Icons.AutoMirrored.Filled.DirectionsWalk,
+                            iconColor = Color(0xFF4CAF50),
                             modifier = Modifier.weight(1f)
                         )
                         WeeklyMetricTile(
-                            label = "Duration",
+                            label = stringResource(R.string.duration_label),
                             value = formatRouteDuration(data.totalDuration),
                             icon = Icons.Default.Timer,
+                            iconColor = Color(0xFF2196F3),
                             modifier = Modifier.weight(1f)
                         )
                     }
@@ -870,15 +1112,17 @@ private fun WeeklyReportCard(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         WeeklyMetricTile(
-                            label = "Top speed",
+                            label = stringResource(R.string.top_speed),
                             value = weeklyFormatSpeed(data.topSpeedMps, isMetric),
                             icon = Icons.AutoMirrored.Filled.TrendingUp,
+                            iconColor = Color(0xFFFF9800),
                             modifier = Modifier.weight(1f)
                         )
                         WeeklyMetricTile(
-                            label = "Avg speed",
+                            label = stringResource(R.string.stat_avg_speed),
                             value = weeklyFormatSpeed(data.avgSpeedMps, isMetric),
                             icon = Icons.Default.Speed,
+                            iconColor = Color(0xFFFFC107),
                             modifier = Modifier.weight(1f)
                         )
                     }
@@ -887,15 +1131,17 @@ private fun WeeklyReportCard(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         WeeklyMetricTile(
-                            label = "Main activity",
-                            value = data.mainActivity?.weeklyDisplayName() ?: "—",
+                            label = stringResource(R.string.stat_main_activity),
+                            value = data.mainActivity?.weeklyDisplayName(ctx) ?: "—",
                             icon = Icons.Default.DirectionsBike,
+                            iconColor = Color(0xFF00BCD4),
                             modifier = Modifier.weight(1f)
                         )
                         WeeklyMetricTile(
-                            label = "Steps",
+                            label = stringResource(R.string.stat_steps),
                             value = if (data.totalSteps > 0) "%,d".format(data.totalSteps) else "—",
                             icon = Icons.AutoMirrored.Filled.DirectionsWalk,
+                            iconColor = Color(0xFF009688),
                             modifier = Modifier.weight(1f)
                         )
                     }
@@ -904,15 +1150,17 @@ private fun WeeklyReportCard(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         WeeklyMetricTile(
-                            label = "Calories",
+                            label = stringResource(R.string.stat_calories),
                             value = "%.0f kcal".format(data.totalCalories),
                             icon = Icons.Default.LocalFireDepartment,
+                            iconColor = Color(0xFFFF5722),
                             modifier = Modifier.weight(1f)
                         )
                         WeeklyMetricTile(
-                            label = "CO₂ impact",
-                            value = "${kotlin.math.abs(co2Net).format(2)} kg ${if (co2Net >= 0) "saved" else "net"}",
+                            label = stringResource(R.string.stat_co2_impact),
+                            value = co2ImpactValue,
                             icon = Icons.Default.Eco,
+                            iconColor = Color(0xFF43A047),
                             modifier = Modifier.weight(1f)
                         )
                     }
@@ -927,7 +1175,8 @@ private fun WeeklyMetricTile(
     label: String,
     value: String,
     icon: androidx.compose.ui.graphics.vector.ImageVector,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    iconColor: Color = MaterialTheme.colorScheme.onSurfaceVariant
 ) {
     val colorScheme = MaterialTheme.colorScheme
     Surface(
@@ -940,13 +1189,21 @@ private fun WeeklyMetricTile(
             verticalArrangement = Arrangement.spacedBy(4.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(14.dp)
-                )
-                Spacer(Modifier.width(4.dp))
+                Box(
+                    modifier = Modifier
+                        .size(22.dp)
+                        .clip(CircleShape)
+                        .background(iconColor.copy(alpha = 0.15f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = icon,
+                        contentDescription = null,
+                        tint = iconColor,
+                        modifier = Modifier.size(13.dp)
+                    )
+                }
+                Spacer(Modifier.width(6.dp))
                 Text(
                     text = label,
                     style = MaterialTheme.typography.labelSmall,
@@ -972,14 +1229,14 @@ private fun weeklyFormatSpeed(mps: Double, isMetric: Boolean): String =
     else if (isMetric) "%.1f km/h".format(mps * 3.6)
     else "%.1f mph".format(mps * 2.237)
 
-private fun ActivityType.weeklyDisplayName(): String = when (this) {
-    ActivityType.IDLE             -> "Idle"
-    ActivityType.WALKING          -> "Walking"
-    ActivityType.RUNNING          -> "Running"
-    ActivityType.CYCLING          -> "Cycling"
-    ActivityType.MOTORCYCLE       -> "Motorcycle"
-    ActivityType.TRAIN            -> "Train"
-    ActivityType.DRIVING          -> "Driving"
-    ActivityType.ELECTRIC_VEHICLE -> "EV"
-    ActivityType.FLYING           -> "Flying"
+private fun ActivityType.weeklyDisplayName(context: Context): String = when (this) {
+    ActivityType.IDLE             -> context.getString(R.string.activity_idle)
+    ActivityType.WALKING          -> context.getString(R.string.walking)
+    ActivityType.RUNNING          -> context.getString(R.string.running)
+    ActivityType.CYCLING          -> context.getString(R.string.cycling)
+    ActivityType.MOTORCYCLE       -> context.getString(R.string.motorcycle)
+    ActivityType.TRAIN            -> context.getString(R.string.train)
+    ActivityType.DRIVING          -> context.getString(R.string.driving)
+    ActivityType.ELECTRIC_VEHICLE -> context.getString(R.string.activity_ev_short)
+    ActivityType.FLYING           -> context.getString(R.string.flying)
 }

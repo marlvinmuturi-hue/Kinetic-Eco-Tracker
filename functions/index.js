@@ -565,7 +565,14 @@ exports.onSessionWriteDailyLeaderboard = functions.firestore
     return null;
   });
 
+// Leaderboard ranking categories.
+// The Android client only sends CO2_SAVED today (the in-app category chip row
+// was removed in favour of a single CO₂-saved leaderboard). The legacy keys
+// are kept so older app versions and any third-party callers continue to work
+// against the same Cloud Function — they map to the same Firestore fields they
+// always did. New deployments should default to CO2_SAVED.
 const CATEGORY_SORT_FIELD = {
+  CO2_SAVED: 'co2Conserved',
   COMBINED: 'score',
   DISTANCE: 'totalDistance',
   TOP_SPEED: 'topSpeedMps',
@@ -597,7 +604,7 @@ exports.dailyLeaderboardTop = functions.https.onRequest(async (req, res) => {
     await admin.auth().verifyIdToken(authHeader.split('Bearer ')[1]);
 
     const dateKey = ((req.body.data && req.body.data.dateKey) || req.body.dateKey || '').trim();
-    const category = ((req.body.data && req.body.data.category) || req.body.category || 'COMBINED')
+    const category = ((req.body.data && req.body.data.category) || req.body.category || 'CO2_SAVED')
       .trim()
       .toUpperCase();
 
@@ -606,7 +613,7 @@ exports.dailyLeaderboardTop = functions.https.onRequest(async (req, res) => {
       return;
     }
 
-    const sortField = CATEGORY_SORT_FIELD[category] || CATEGORY_SORT_FIELD.COMBINED;
+    const sortField = CATEGORY_SORT_FIELD[category] || CATEGORY_SORT_FIELD.CO2_SAVED;
     const ref = db.collection('leaderboardDaily').doc(dateKey).collection('users');
     const snap = await ref.orderBy(sortField, 'desc').limit(1).get();
 
@@ -643,13 +650,449 @@ exports.dailyLeaderboardTop = functions.https.onRequest(async (req, res) => {
 });
 
 /**
+ * onSessionSave: Firestore trigger that rebuilds the all-time global leaderboard
+ * entry for the user whenever a session document is created or updated.
+ *
+ * Global leaderboard structure: /leaderboard/{userId}
+ *   totalDistance, co2Conserved, co2Emissions, totalSessions, score, ...
+ */
+exports.onSessionSave = functions.firestore
+  .document('users/{userId}/sessions/{sessionId}')
+  .onWrite(async (change, context) => {
+    const userId = context.params.userId;
+    try {
+      const userDoc = await db.collection('users').doc(userId).get();
+      const optedIn = !!(userDoc.data() || {}).leaderboardOptIn;
+
+      const leaderboardRef = db.collection('leaderboard').doc(userId);
+      if (!optedIn) {
+        // Remove from global leaderboard if user opted out
+        await leaderboardRef.delete().catch(() => {});
+        return null;
+      }
+
+      const sessionsSnap = await db
+        .collection('users')
+        .doc(userId)
+        .collection('sessions')
+        .get();
+
+      let totalDistance = 0;
+      let totalSessions = 0;
+      let co2Conserved = 0;
+      let co2Emissions = 0;
+      let topSpeedMps = 0;
+      let distanceWalking = 0;
+      let distanceRunning = 0;
+      let distanceCycling = 0;
+
+      sessionsSnap.docs.forEach((doc) => {
+        const data = doc.data();
+        totalDistance += Number(data.totalDistance) || 0;
+        totalSessions += 1;
+        co2Conserved += Number(data.co2Conserved) || 0;
+        co2Emissions += Number(data.co2Emissions) || 0;
+        topSpeedMps = Math.max(topSpeedMps, Number(data.topSpeedMps) || 0);
+        distanceWalking += breakdownDistance(data, 'WALKING');
+        distanceRunning += breakdownDistance(data, 'RUNNING');
+        distanceCycling += breakdownDistance(data, 'CYCLING');
+      });
+
+      const score = computeCombinedScore(totalDistance, co2Conserved, totalSessions);
+      const { displayName, photoUrl } = await getDisplayProfile(userId);
+
+      await leaderboardRef.set({
+        userId,
+        displayName,
+        photoUrl: photoUrl || '',
+        totalDistance,
+        totalSessions,
+        co2Conserved,
+        co2Emissions,
+        score,
+        topSpeedMps,
+        distanceWalking,
+        distanceRunning,
+        distanceCycling,
+        lastUpdated: admin.firestore.FieldValue.serverTimestamp()
+      });
+
+      console.log(`✅ Global leaderboard updated for user ${userId}: score=${score}`);
+    } catch (e) {
+      console.error('onSessionSave leaderboard update failed', e);
+    }
+    return null;
+  });
+
+// ── Weekly digest (FCM push) ────────────────────────────────────────────────
+//
+// Fires every Monday at 12:00 UTC = 15:00 UTC+3 (EAT).
+// Fetches each opted-in user's sessions from the past 7 days, computes a brief
+// stats summary, and sends an FCM data-only message to every registered device.
+//
+// Payload keys match what KineticFirebaseMessagingService expects:
+//   data.title, data.body
+
+exports.weeklyDigestScheduled = functions.pubsub
+  .schedule('0 12 * * 1')   // Every Monday at 12:00 UTC
+  .timeZone('UTC')
+  .onRun(async () => {
+    console.log('📬 weeklyDigestScheduled: starting fan-out');
+
+    // Collect all users with at least one FCM token
+    const usersSnap = await db.collection('users').get();
+    const fanOut = [];
+
+    for (const userDoc of usersSnap.docs) {
+      const userId = userDoc.id;
+      try {
+        // Fetch FCM tokens for this user
+        const tokensSnap = await db
+          .collection('users')
+          .doc(userId)
+          .collection('fcmTokens')
+          .get();
+
+        if (tokensSnap.empty) continue;
+
+        // Compute last-7-days stats
+        const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+        const sessionsSnap = await db
+          .collection('users')
+          .doc(userId)
+          .collection('sessions')
+          .where('timestamp', '>=', cutoff)
+          .get();
+
+        if (sessionsSnap.empty) continue;
+
+        let totalDistanceM = 0;
+        let totalCalories = 0;
+        let totalSessions = sessionsSnap.size;
+        sessionsSnap.docs.forEach((d) => {
+          totalDistanceM += Number(d.data().totalDistance) || 0;
+          totalCalories += Number(d.data().caloriesBurned) || 0;
+        });
+
+        const distanceKm = (totalDistanceM / 1000).toFixed(1);
+        const title = '📊 Your Kinetic Eco week recap';
+        const body =
+          `Last 7 days: ${totalSessions} session${totalSessions !== 1 ? 's' : ''}, ` +
+          `${distanceKm} km, ${Math.round(totalCalories)} kcal burned. Keep it up!`;
+
+        // Send to every registered device token
+        for (const tokenDoc of tokensSnap.docs) {
+          const token = tokenDoc.id;
+          fanOut.push(
+            admin.messaging().send({
+              token,
+              data: { title, body }
+            }).catch((err) => {
+              console.warn(`FCM send failed for ${userId}/${token}: ${err.message}`);
+              // Stale token cleanup
+              if (
+                err.code === 'messaging/registration-token-not-registered' ||
+                err.code === 'messaging/invalid-registration-token'
+              ) {
+                tokenDoc.ref.delete().catch(() => {});
+              }
+            })
+          );
+        }
+      } catch (e) {
+        console.error(`weeklyDigest: error processing user ${userId}`, e);
+      }
+    }
+
+    await Promise.allSettled(fanOut);
+    console.log(`📬 weeklyDigestScheduled: sent to ${fanOut.length} device(s)`);
+    return null;
+  });
+
+// ── CO₂ equivalency helper ──────────────────────────────────────────────────
+
+/**
+ * Returns a short, encouraging equivalency string for a given CO₂ saving in kg.
+ * Used in both daily notifications and weekly emails.
+ */
+function pickEquivalency(kg) {
+  if (kg <= 0) return null;
+  const equivalencies = [
+    { threshold: 0.01, text: (k) => `charging a smartphone ${Math.round(k / 0.008)} time${Math.round(k / 0.008) !== 1 ? 's' : ''}` },
+    { threshold: 0.05, text: (k) => `${Math.round(k / 0.033)} LED bulb-hours saved` },
+    { threshold: 0.1,  text: (k) => `skipping ${Math.round(k / 0.2 * 10) / 10} cups of coffee worth of emissions` },
+    { threshold: 0.5,  text: (k) => `${(k / 0.12).toFixed(1)} km not driven by car` },
+    { threshold: 2,    text: (k) => `${(k / 0.575).toFixed(1)} days of a tree's CO₂ absorption` },
+    { threshold: 10,   text: (k) => `planting ${(k / 21).toFixed(2)} trees for a year` },
+  ];
+  for (let i = equivalencies.length - 1; i >= 0; i--) {
+    if (kg >= equivalencies[i].threshold) return equivalencies[i].text(kg);
+  }
+  return `${(kg * 1000).toFixed(0)} g of CO₂ kept out of the atmosphere`;
+}
+
+// ── Weekly email helper ─────────────────────────────────────────────────────
+
+function buildWeeklyEmailHtml(firstName, stats) {
+  const { sessions, distanceKm, durationMin, calories, co2SavedKg, co2EmittedKg, topActivity } = stats;
+  const netKg = co2SavedKg - co2EmittedKg;
+  const netLabel = netKg >= 0
+    ? `<span style="color:#43A047">+${netKg.toFixed(2)} kg saved</span>`
+    : `<span style="color:#E53935">${netKg.toFixed(2)} kg emitted</span>`;
+  const equiv = pickEquivalency(Math.abs(netKg));
+  const name = firstName || 'there';
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Your Kinetic Eco Weekly Report</title></head>
+<body style="margin:0;padding:0;background:#f4f6f8;font-family:'Segoe UI',Arial,sans-serif;">
+<table width="100%" cellpadding="0" cellspacing="0" style="background:#f4f6f8;padding:32px 0;">
+<tr><td align="center">
+<table width="560" cellpadding="0" cellspacing="0" style="background:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08);">
+  <!-- Header -->
+  <tr><td style="background:linear-gradient(135deg,#2E7D32,#43A047);padding:32px 40px;text-align:center;">
+    <p style="margin:0;color:rgba(255,255,255,0.8);font-size:13px;letter-spacing:1px;text-transform:uppercase;">Weekly Report</p>
+    <h1 style="margin:8px 0 0;color:#ffffff;font-size:26px;font-weight:700;">Hey ${name}! 🌿</h1>
+    <p style="margin:8px 0 0;color:rgba(255,255,255,0.85);font-size:15px;">Here's your eco impact from the past 7 days.</p>
+  </td></tr>
+  <!-- Stats grid -->
+  <tr><td style="padding:32px 40px 0;">
+    <table width="100%" cellpadding="0" cellspacing="0">
+      <tr>
+        <td style="width:50%;padding:0 8px 16px 0;vertical-align:top;">
+          <div style="background:#f8fdf8;border-radius:12px;padding:18px;text-align:center;">
+            <p style="margin:0;font-size:28px;font-weight:700;color:#2E7D32;">${distanceKm}</p>
+            <p style="margin:4px 0 0;font-size:12px;color:#888;">km traveled</p>
+          </div>
+        </td>
+        <td style="width:50%;padding:0 0 16px 8px;vertical-align:top;">
+          <div style="background:#f8faf8;border-radius:12px;padding:18px;text-align:center;">
+            <p style="margin:0;font-size:28px;font-weight:700;color:#1565C0;">${sessions}</p>
+            <p style="margin:4px 0 0;font-size:12px;color:#888;">session${sessions !== 1 ? 's' : ''} logged</p>
+          </div>
+        </td>
+      </tr>
+      <tr>
+        <td style="width:50%;padding:0 8px 16px 0;vertical-align:top;">
+          <div style="background:#fff8f0;border-radius:12px;padding:18px;text-align:center;">
+            <p style="margin:0;font-size:28px;font-weight:700;color:#E65100;">${Math.round(calories)}</p>
+            <p style="margin:4px 0 0;font-size:12px;color:#888;">kcal burned</p>
+          </div>
+        </td>
+        <td style="width:50%;padding:0 0 16px 8px;vertical-align:top;">
+          <div style="background:#f3f8ff;border-radius:12px;padding:18px;text-align:center;">
+            <p style="margin:0;font-size:28px;font-weight:700;color:#0277BD;">${Math.round(durationMin)}</p>
+            <p style="margin:4px 0 0;font-size:12px;color:#888;">minutes active</p>
+          </div>
+        </td>
+      </tr>
+    </table>
+  </td></tr>
+  <!-- CO₂ net impact -->
+  <tr><td style="padding:0 40px;">
+    <div style="background:#f0faf0;border-radius:12px;padding:20px;text-align:center;">
+      <p style="margin:0;font-size:13px;color:#666;text-transform:uppercase;letter-spacing:0.5px;">Net CO₂ impact this week</p>
+      <p style="margin:8px 0 4px;font-size:32px;font-weight:700;">${netLabel}</p>
+      ${equiv ? `<p style="margin:4px 0 0;font-size:13px;color:#555;">That's like <em>${equiv}</em>.</p>` : ''}
+    </div>
+  </td></tr>
+  <!-- Top activity -->
+  ${topActivity ? `<tr><td style="padding:20px 40px 0;">
+    <p style="margin:0;font-size:14px;color:#444;">🏆 Your top activity this week: <strong>${topActivity}</strong></p>
+  </td></tr>` : ''}
+  <!-- Footer -->
+  <tr><td style="padding:28px 40px 32px;text-align:center;border-top:1px solid #f0f0f0;margin-top:24px;">
+    <p style="margin:0;font-size:13px;color:#888;">Keep building those habits — every trip counts.</p>
+    <p style="margin:8px 0 0;font-size:12px;color:#bbb;">Kinetic Eco Tracker &nbsp;·&nbsp; To unsubscribe, open the app → Settings → Notifications</p>
+  </td></tr>
+</table>
+</td></tr>
+</table>
+</body></html>`;
+}
+
+// ── Daily activity digest (FCM push) ────────────────────────────────────────
+//
+// Fires daily at 17:00 UTC = 20:00 EAT (Nairobi).
+// Only sends if the user has at least one session today — no guilt-tripping.
+// Includes distance, CO₂ saved, and a fun equivalency comparison.
+
+exports.dailyActivityDigest = functions.pubsub
+  .schedule('0 17 * * *')
+  .timeZone('UTC')
+  .onRun(async () => {
+    console.log('🌱 dailyActivityDigest: starting fan-out');
+
+    const todayKey = new Date().toISOString().slice(0, 10); // yyyy-MM-dd UTC
+    const startOfTodayUtc = new Date(todayKey + 'T00:00:00Z').getTime();
+
+    const usersSnap = await db.collection('users').get();
+    const fanOut = [];
+
+    for (const userDoc of usersSnap.docs) {
+      const userId = userDoc.id;
+      try {
+        const tokensSnap = await db
+          .collection('users').doc(userId)
+          .collection('fcmTokens').get();
+        if (tokensSnap.empty) continue;
+
+        const sessionsSnap = await db
+          .collection('users').doc(userId)
+          .collection('sessions')
+          .where('timestamp', '>=', startOfTodayUtc)
+          .get();
+        if (sessionsSnap.empty) continue; // no activity today — skip silently
+
+        let distanceM = 0, calories = 0, co2SavedKg = 0, co2EmittedKg = 0;
+        sessionsSnap.docs.forEach((d) => {
+          distanceM   += Number(d.data().totalDistance)   || 0;
+          calories    += Number(d.data().caloriesBurned)  || 0;
+          co2SavedKg  += Number(d.data().co2Saved)        || 0;
+          co2EmittedKg+= Number(d.data().co2Emitted)      || 0;
+        });
+
+        const netKg = co2SavedKg - co2EmittedKg;
+        const distanceKm = (distanceM / 1000).toFixed(1);
+        const equiv = pickEquivalency(Math.abs(netKg));
+
+        const title = '🌿 Today\'s Eco Impact';
+        let body = `You covered ${distanceKm} km today`;
+        if (netKg > 0) {
+          body += `, saving ${netKg.toFixed(2)} kg CO₂`;
+          if (equiv) body += ` — like ${equiv}`;
+        }
+        body += `. ${Math.round(calories)} kcal burned. Nice work!`;
+
+        for (const tokenDoc of tokensSnap.docs) {
+          fanOut.push(
+            admin.messaging().send({
+              token: tokenDoc.id,
+              data: { type: 'daily', title, body }
+            }).catch((err) => {
+              console.warn(`dailyDigest FCM failed ${userId}/${tokenDoc.id}: ${err.message}`);
+              if (
+                err.code === 'messaging/registration-token-not-registered' ||
+                err.code === 'messaging/invalid-registration-token'
+              ) tokenDoc.ref.delete().catch(() => {});
+            })
+          );
+        }
+      } catch (e) {
+        console.error(`dailyDigest: error for user ${userId}`, e);
+      }
+    }
+
+    await Promise.allSettled(fanOut);
+    console.log(`🌱 dailyActivityDigest: sent to ${fanOut.length} device(s)`);
+    return null;
+  });
+
+// ── Weekly email report ─────────────────────────────────────────────────────
+//
+// Fires every Monday at 05:00 UTC = 08:00 EAT.
+// Requires Firebase config:
+//   firebase functions:config:set email.user="your@gmail.com" email.pass="app-password"
+
+exports.weeklyEmailReport = functions.pubsub
+  .schedule('0 5 * * 0')
+  .timeZone('UTC')
+  .onRun(async () => {
+    console.log('📧 weeklyEmailReport: starting');
+
+    const emailCfg = functions.config().email || {};
+    if (!emailCfg.user || !emailCfg.pass) {
+      console.warn('weeklyEmailReport: email.user / email.pass not configured — skipping');
+      return null;
+    }
+
+    const nodemailer = require('nodemailer');
+    const transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: { user: emailCfg.user, pass: emailCfg.pass }
+    });
+
+    const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
+    const usersSnap = await db.collection('users').get();
+
+    for (const userDoc of usersSnap.docs) {
+      const userId = userDoc.id;
+      try {
+        let userEmail, displayName;
+        try {
+          const authUser = await admin.auth().getUser(userId);
+          userEmail   = authUser.email;
+          displayName = authUser.displayName || '';
+        } catch { continue; }
+
+        if (!userEmail) continue;
+
+        const sessionsSnap = await db
+          .collection('users').doc(userId)
+          .collection('sessions')
+          .where('timestamp', '>=', cutoff)
+          .get();
+        if (sessionsSnap.empty) continue; // no activity — skip silently
+
+        let distanceM = 0, durationMs = 0, calories = 0,
+            co2SavedKg = 0, co2EmittedKg = 0;
+        const activityCounts = {};
+
+        sessionsSnap.docs.forEach((d) => {
+          const data = d.data();
+          distanceM    += Number(data.totalDistance)  || 0;
+          durationMs   += Number(data.duration)       || 0;
+          calories     += Number(data.caloriesBurned) || 0;
+          co2SavedKg   += Number(data.co2Saved)       || 0;
+          co2EmittedKg += Number(data.co2Emitted)     || 0;
+          const act = data.activityType || data.activity || 'Unknown';
+          activityCounts[act] = (activityCounts[act] || 0) + 1;
+        });
+
+        const topActivity = Object.entries(activityCounts)
+          .sort((a, b) => b[1] - a[1])[0]?.[0] || null;
+        const firstName = displayName.split(' ')[0] || '';
+
+        const stats = {
+          sessions:    sessionsSnap.size,
+          distanceKm:  (distanceM / 1000).toFixed(1),
+          durationMin: durationMs / 60000,
+          calories,
+          co2SavedKg,
+          co2EmittedKg,
+          topActivity
+        };
+
+        const html = buildWeeklyEmailHtml(firstName, stats);
+        const netKg = co2SavedKg - co2EmittedKg;
+        const subjectTag = netKg >= 0 ? `+${netKg.toFixed(2)} kg CO₂ saved` : `${netKg.toFixed(2)} kg net CO₂`;
+
+        await transporter.sendMail({
+          from: `"Kinetic Eco" <${emailCfg.user}>`,
+          to:   userEmail,
+          subject: `Your Kinetic Eco week — ${subjectTag}`,
+          html
+        });
+
+        console.log(`📧 Weekly email sent to ${userEmail}`);
+      } catch (e) {
+        console.error(`weeklyEmailReport: error for user ${userId}`, e);
+      }
+    }
+
+    console.log('📧 weeklyEmailReport: done');
+    return null;
+  });
+
+/**
  * Health check endpoint
  */
 exports.healthCheck = functions.https.onRequest((req, res) => {
   res.json({ 
     status: 'ok', 
     timestamp: Date.now(),
-    version: '1.0.0',
-    message: 'Kinetic AI Analysis API is running'
+    version: '1.5.0',
+    message: 'Kinetic Eco API is running'
   });
 });

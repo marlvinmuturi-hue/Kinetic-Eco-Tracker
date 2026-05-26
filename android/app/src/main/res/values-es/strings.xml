@@ -72,8 +72,6 @@
     <string name="stop_alt">Alt. fin</string>
     <string name="ascent">Subida</string>
     <string name="descent">Bajada</string>
-    <string name="km_updates">Actualizaciones km</string>
-    <string name="mile_updates">Actualizaciones millas</string>
     <string name="continue_tracking">Continuar seguimiento</string>
     <string name="select_activity">Seleccionar actividad</string>
     <string name="stop">Detener</string>
@@ -87,8 +85,12 @@
     <string name="unit_km_wh">km, Wh</string>
     <string name="unit_miles_wh">Millas, Wh</string>
     <string name="unit_miles_kcal">Millas, kcal</string>
-    <string name="distance_alerts">Alertas de distancia</string>
-    <string name="distance_alerts_desc">Notificación al completar cada km o milla durante el seguimiento</string>
+    <string name="settings_profile_title">Perfil</string>
+    <string name="settings_profile_desc">Perfil físico, vehículo y cuenta</string>
+    <string name="settings_appearance_title">Apariencia</string>
+    <string name="settings_appearance_subtitle">Tema, idioma y unidades</string>
+    <string name="notifications_section_title">Notificaciones</string>
+    <string name="notifications_section_subtitle">Sonidos y resumen semanal</string>
     <string name="notification_sounds">Sonidos de notificación</string>
     <string name="notification_sounds_desc">Sonido para hitos, inicio/fin y resumen. Respeta No molestar.</string>
     <string name="auto_start_walk">Inicio automático al movimiento</string>
@@ -239,14 +241,122 @@
     <string name="notif_tracking_title">Seguimiento Kinetic</string>
     <string name="notif_tracking_desc">Estado en tiempo real</string>
     <string name="notif_recording">Registrando tu actividad…</string>
-    <string name="notif_milestones_title">Hitos de distancia</string>
-    <string name="notif_milestones_desc">Notificaciones al completar cada km o milla durante el seguimiento</string>
-    <string name="notif_segment_completed">%1$s %2$s completado(s)</string>
-    <string name="notif_this_segment">Este %1$s en %2$s</string>
     <string name="notif_summary_title">Resumen de sesión</string>
     <string name="notif_summary_desc">Notificación al guardar una sesión</string>
     <string name="notif_session_saved">Sesión guardada</string>
     <string name="notif_session_summary">%1$s en %2$d min • %3$d kcal</string>
 
     <string name="location_permission_rationale">Se requiere permiso de ubicación para el seguimiento GPS. Actívalo en ajustes.</string>
+
+    <string name="dashboard_weekly_report">Informe semanal</string>
+    <string name="dashboard_leaderboard_7d">Clasificación (7d)</string>
+    <string name="dashboard_leaderboard_opt_in">Actívalo en Ajustes para ver tu rango y competir.</string>
+    <string name="open_settings">Abrir ajustes</string>
+    <string name="loading_leaderboard">Cargando clasificación…</string>
+    <string name="weekly_co2_goal">Objetivo semanal de CO₂</string>
+    <string name="weekly_co2_goal_desc">¿Cuánto CO₂ quieres ahorrar cada semana? La planta de tu panel crece hacia este objetivo.</string>
+    <string name="weekly_co2_goal_hint">Iniciante (0,5–2 kg) · Sólido (3–7 kg) · Ambicioso (8+ kg)</string>
+    <string name="save_goal">Guardar objetivo</string>
+    <string name="tap_switch_comparison">Tocar para cambiar comparación</string>
+    <string name="hide_wins">Ocultar tus logros</string>
+    <string name="see_wins">Ver tus logros</string>
+    <string name="new_this_week">✨ NUEVO ESTA SEMANA</string>
+    <string name="vs_last_week"> vs semana pasada</string>
+    <string name="tap_full_breakdown">Ver el análisis completo →</string>
+    <string name="run_ai_analysis_prompt">Ejecuta un análisis IA para desbloquear insights personalizados</string>
+    <string name="tap_to_analyze">Tocar para analizar →</string>
+    <string name="you_suffix"> (tú)</string>
+
+    <string name="greeting_morning">Buenos días</string>
+    <string name="greeting_afternoon">Buenas tardes</string>
+    <string name="greeting_evening">Buenas tardes</string>
+    <string name="greeting_night">Buenas noches</string>
+
+    <string name="motivation_crushing_it">¡Lo estás petando esta semana! 🌟</string>
+    <string name="motivation_great_week">¡Gran semana — sigue así!</string>
+    <string name="motivation_nice_work">Buen trabajo esta semana 🌱</string>
+    <string name="motivation_every_step">¡Cada paso cuenta!</string>
+    <string name="motivation_ready">Listo cuando quieras — empecemos poco a poco.</string>
+
+    <string name="streak_30_days">🌳 ¡Racha verde de %1$d días!</string>
+    <string name="streak_7_days">🌿 Racha de %1$d días</string>
+    <string name="streak_3_days">✨ Racha de %1$d días</string>
+
+    <string name="analysis_activity_mix">Distribución de actividades</string>
+    <string name="analysis_distance_share">Distancia por actividad en los últimos %1$d días</string>
+    <string name="analysis_no_distance_yet">Sin distancia registrada en este período.</string>
+    <string name="analysis_km_total">%1$.1f km en total</string>
+    <string name="analysis_trends">Tendencias</string>
+    <string name="analysis_period_vs_previous">Este período vs el anterior</string>
+    <string name="analysis_not_enough_history">No hay suficiente historial para comparar con el período anterior.</string>
+    <string name="analysis_wins">Logros</string>
+    <string name="analysis_watch_outs">Puntos de atención</string>
+    <string name="analysis_context">Contexto</string>
+
+    <string name="wins_best_day">Mejor día</string>
+    <string name="wins_top_activity">Actividad principal</string>
+    <string name="wins_tracked_activity">Actividad registrada %1$d de los últimos %2$d días</string>
+
+    <string name="trend_total_distance">Distancia total</string>
+    <string name="trend_co2_saved">CO₂ ahorrado</string>
+    <string name="trend_co2_emitted">CO₂ emitido</string>
+    <string name="trend_sessions">Sesiones</string>
+
+    <string name="watchout_driving">Conducción: %1$.1f km en este período — aprox. %2$.1f kg de CO₂ evitable.</string>
+    <string name="watchout_flying">Vuelo: %1$.1f km registrados — ~%2$.1f kg de CO₂, el mayor emisor por km.</string>
+    <string name="watchout_net_emissions">Las emisiones netas superan los ahorros — prueba cambiar un trayecto a pie o en bici.</string>
+
+    <string name="tier_champion_reached">¡Has alcanzado el nivel más alto — Campeón!</string>
+    <string name="tier_insights">Análisis por nivel</string>
+    <string name="tier_session_patterns">Patrones de sesión por nivel</string>
+    <string name="tier_session_patterns_desc">¿Los niveles más altos hacen sesiones más cortas pero más frecuentes?</string>
+    <string name="tier_fastest_route">Ruta más rápida al siguiente nivel</string>
+    <string name="tier_fastest_route_desc">kg CO₂ ahorrado por hora por actividad</string>
+    <string name="tier_your_journey">Tu progreso</string>
+    <string name="tier_milestone_day1_session">Día 1 · sesión %1$d</string>
+    <string name="tier_milestone_day_session">Día %1$d · sesión %2$d</string>
+    <string name="tier_not_yet_reached">Aún no alcanzado</string>
+    <string name="tier_lifetime_co2">%1$.1f kg CO₂ conservado de por vida</string>
+    <string name="tier_kg_to_next">%1$.1f kg para alcanzar %2$s</string>
+    <string name="tier_sessions_avg">%1$d sesiones · %2$.0f min de media</string>
+    <string name="tier_freq_kg">%1$.1f×/sem. · %2$.1f kg ahorrado</string>
+    <string name="activity_ev_short">VE</string>
+
+    <!-- Analysis screen — tab title, headers, labels -->
+    <string name="analysis_tab_title">Análisis</string>
+    <string name="analysis_tab_subtitle">Perspectivas de IA &amp; huella de carbono</string>
+    <string name="analysis_ai_card_title">Análisis de actividad por IA</string>
+    <string name="analysis_co2_this_week">CO₂ esta semana</string>
+    <string name="analysis_legend_saved">Ahorrado (%1$.2f kg)</string>
+    <string name="analysis_legend_emitted">Emitido</string>
+    <string name="analysis_net_co2_saved">CO₂ neto ahorrado</string>
+    <string name="analysis_weeks_footprint">Huella de esta semana</string>
+    <string name="analysis_equivalent_to">Eso equivale a:</string>
+    <string name="analysis_source_ademe">Fuente: ADEME Base Carbone (impactco2.fr)</string>
+    <string name="analysis_run_ai_button">Ejecutar análisis de IA</string>
+    <string name="analysis_ai_cta_text">Pulsa el botón para obtener un desglose de IA personalizado de tus últimos 7 días.</string>
+    <string name="analysis_session_one">1 sesión</string>
+    <string name="analysis_sessions_count">%1$d sesiones</string>
+    <string name="analysis_no_sessions_week">No hay sesiones registradas esta semana.</string>
+
+    <!-- Weekly stats tile labels -->
+    <string name="stat_distance">Distancia</string>
+    <string name="stat_avg_speed">Vel. media</string>
+    <string name="stat_main_activity">Actividad principal</string>
+    <string name="stat_steps">Pasos</string>
+    <string name="stat_calories">Calorías</string>
+    <string name="stat_co2_impact">Impacto CO₂</string>
+    <string name="stat_co2_impact_saved">%1$s kg ahorrado</string>
+    <string name="stat_co2_impact_net">%1$s kg neto</string>
+
+    <!-- Recent sessions card -->
+    <string name="recent_sessions">Sesiones recientes</string>
+
+    <!-- Hero card CO₂ suffix -->
+    <string name="hero_co2_saved">ahorrado</string>
+
+    <!-- CO₂ distribution pie chart (dashboard) -->
+    <string name="co2_saved_by_activity">CO₂ ahorrado por actividad</string>
+    <string name="co2_pie_empty">Registra una sesión ecológica esta semana y tus ahorros de CO₂ aparecerán aquí.</string>
+    <string name="co2_pie_kg_total">%1$.2f kg en total</string>
 </resources>

@@ -17,6 +17,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -73,6 +74,7 @@ fun SettingsScreen(
     /** Vehicle profile primary fuel is electric — surface quick link to tracker activity picker. */
     electricRoadUser: Boolean = false,
     onOpenActivitySelector: () -> Unit = {},
+    onFeedbackClick: () -> Unit = {},
 ) {
     val colorScheme = MaterialTheme.colorScheme
 
@@ -137,12 +139,12 @@ fun SettingsScreen(
                         Spacer(Modifier.width(12.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text(
-                                text = "Profile",
+                                text = stringResource(R.string.settings_profile_title),
                                 style = MaterialTheme.typography.titleMedium,
                                 color = colorScheme.onSurface
                             )
                             Text(
-                                text = "Physical & vehicle details, account",
+                                text = stringResource(R.string.settings_profile_desc),
                                 style = MaterialTheme.typography.bodySmall,
                                 color = colorScheme.onSurfaceVariant
                             )
@@ -360,6 +362,15 @@ fun SettingsScreen(
         // synced automatically by the ViewModel after each save; the manual
         // "Sync now" button was redundant.)
 
+        // Feedback
+        item {
+            SettingsItem(
+                title = stringResource(R.string.send_feedback),
+                icon = Icons.Default.RateReview,
+                onClick = onFeedbackClick
+            )
+        }
+
         // App Version
         item {
             Card(
@@ -518,11 +529,12 @@ fun UnitSystemOption(
 @Composable
 fun GoPremiumCard(onClick: () -> Unit) {
     val colorScheme = MaterialTheme.colorScheme
+    val gold = Color(0xFFFFB300)
     Card(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = colorScheme.surfaceVariant),
-        border = androidx.compose.foundation.BorderStroke(1.dp, colorScheme.outline.copy(alpha = 0.38f))
+        border = androidx.compose.foundation.BorderStroke(1.dp, gold.copy(alpha = 0.6f))
     ) {
         Row(
             modifier = Modifier
@@ -534,14 +546,14 @@ fun GoPremiumCard(onClick: () -> Unit) {
             Icon(
                 imageVector = Icons.Filled.WorkspacePremium,
                 contentDescription = null,
-                tint = colorScheme.onSurface,
+                tint = gold,
                 modifier = Modifier.size(36.dp)
             )
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = stringResource(R.string.go_premium),
                     style = MaterialTheme.typography.titleMedium,
-                    color = colorScheme.onSurface
+                    color = gold
                 )
                 Text(
                     text = stringResource(R.string.go_premium_desc),
@@ -553,8 +565,8 @@ fun GoPremiumCard(onClick: () -> Unit) {
             Button(
                 onClick = onClick,
                 colors = ButtonDefaults.buttonColors(
-                    containerColor = colorScheme.onSurface,
-                    contentColor = colorScheme.surface
+                    containerColor = gold,
+                    contentColor = Color(0xFF1A1200)
                 )
             ) {
                 Text(stringResource(R.string.go_premium_cta))
@@ -1398,8 +1410,8 @@ private fun AppearanceSection(
         Column(modifier = Modifier.padding(16.dp)) {
             ExpandableSectionHeader(
                 icon = Icons.Default.Palette,
-                title = "Appearance",
-                subtitle = "Theme, language, and units",
+                title = stringResource(R.string.settings_appearance_title),
+                subtitle = stringResource(R.string.settings_appearance_subtitle),
                 expanded = expanded,
                 onToggle = { expanded = !expanded }
             )

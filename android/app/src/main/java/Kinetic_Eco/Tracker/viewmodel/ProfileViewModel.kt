@@ -15,11 +15,13 @@ import Kinetic_Eco.Tracker.data.LeaderboardEntry
 import Kinetic_Eco.Tracker.data.UserProfile
 import Kinetic_Eco.Tracker.services.LeaderboardPeriod
 import Kinetic_Eco.Tracker.services.LeaderboardService
+import Kinetic_Eco.Tracker.services.UserPreferencesManager
 import Kinetic_Eco.Tracker.services.UserProfileService
 
 class ProfileViewModel(application: Application) : AndroidViewModel(application) {
     private val profileService = UserProfileService()
     private val leaderboardService = LeaderboardService.getInstance()
+    private val userPrefsManager = UserPreferencesManager(application)
 
     private val _profile = MutableStateFlow<UserProfile?>(null)
     val profile: StateFlow<UserProfile?> = _profile.asStateFlow()
@@ -56,9 +58,16 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
     val leaderboardLoading: StateFlow<Boolean> = _leaderboardLoading.asStateFlow()
 
     fun loadProfile(userId: String) {
+        // Pre-populate from cache so the greeting shows the real name immediately
+        val cached = userPrefsManager.getCachedDisplayName()
+        if (cached != null && _profile.value == null) {
+            _profile.value = UserProfile(displayName = cached)
+        }
         viewModelScope.launch(Dispatchers.IO) {
             _isLoading.value = true
-            _profile.value = profileService.getProfile(userId)
+            val fetched = profileService.getProfile(userId)
+            _profile.value = fetched
+            userPrefsManager.setCachedDisplayName(fetched?.displayName)
             _isLoading.value = false
         }
     }
@@ -67,10 +76,12 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
         viewModelScope.launch {
             _isLoading.value = true
             _errorMessage.value = null
-            profileService.saveDisplayName(userId, displayName?.trim()?.takeIf { it.isNotEmpty() })
+            val trimmed = displayName?.trim()?.takeIf { it.isNotEmpty() }
+            profileService.saveDisplayName(userId, trimmed)
                 .onSuccess {
-                    _profile.value = _profile.value?.copy(displayName = displayName?.trim()?.takeIf { it.isNotEmpty() })
-                        ?: UserProfile(displayName = displayName?.trim()?.takeIf { it.isNotEmpty() })
+                    _profile.value = _profile.value?.copy(displayName = trimmed)
+                        ?: UserProfile(displayName = trimmed)
+                    userPrefsManager.setCachedDisplayName(trimmed)
                 }
                 .onFailure { _errorMessage.value = "Failed to save name" }
             _isLoading.value = false

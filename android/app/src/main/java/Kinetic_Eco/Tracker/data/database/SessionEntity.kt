@@ -27,6 +27,7 @@ data class SessionEntity(
     val maxAltitude: Double? = null, // meters (null = not available)
     val topSpeedMps: Double = 0.0, // max raw GPS speed in m/s
     val kmMilestonesJson: String = "[]", // JSON list of KmMilestone
+    val segmentsJson: String = "[]", // JSON list of ActivitySegment
     @ColumnInfo(name = "routePathJson") val routePath: List<RoutePoint> = emptyList(),
     val createdAt: Long, // timestamp
     val breakdown: Map<ActivityType, ActivityBreakdownEntity> // JSON stored as String

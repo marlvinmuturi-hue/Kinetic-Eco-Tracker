@@ -14,6 +14,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -22,6 +23,8 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import Kinetic_Eco.Tracker.R
+import Kinetic_Eco.Tracker.data.ActivitySegment
+import Kinetic_Eco.Tracker.data.ActivityType
 import Kinetic_Eco.Tracker.data.SessionStats
 import Kinetic_Eco.Tracker.data.UnitSystem
 import Kinetic_Eco.Tracker.ui.components.ActivityDonutChart
@@ -34,6 +37,7 @@ import Kinetic_Eco.Tracker.ui.utils.formatSpeedMax
 import Kinetic_Eco.Tracker.ui.utils.formatTime
 import Kinetic_Eco.Tracker.ui.utils.energyUnitLabel
 import Kinetic_Eco.Tracker.ui.utils.usesMetricDistance
+import Kinetic_Eco.Tracker.ui.utils.ShareUtils
 import java.util.*
 
 private fun formatAltitude(meters: Double, unitSystem: UnitSystem): Pair<String, String> {
@@ -54,6 +58,7 @@ fun SessionDetailScreen(
     onBack: () -> Unit
 ) {
     val colorScheme = MaterialTheme.colorScheme
+    val context = LocalContext.current
     val locales = LocalConfiguration.current.locales
     val locale = if (locales.isEmpty) Locale.getDefault() else (locales.get(0) ?: Locale.getDefault())
     // If a specific session is provided, show only that session's data
@@ -113,8 +118,25 @@ fun SessionDetailScreen(
                     Text(
                         text = if (isIndividualSession) stringResource(R.string.session_details) else stringResource(R.string.all_sessions_overview),
                         style = MaterialTheme.typography.headlineLarge,
-                        color = colorScheme.onBackground
+                        color = colorScheme.onBackground,
+                        modifier = Modifier.weight(1f)
                     )
+                    if (isIndividualSession) {
+                        IconButton(
+                            onClick = {
+                                ShareUtils.launchShareSheet(
+                                    context,
+                                    ShareUtils.buildSessionShareText(displayStats, unitSystem)
+                                )
+                            }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Share,
+                                contentDescription = "Share session",
+                                tint = colorScheme.onBackground
+                            )
+                        }
+                    }
                 }
             }
             
@@ -256,6 +278,16 @@ fun SessionDetailScreen(
                             unit = unit
                         )
                     }
+                }
+            }
+
+            // Mode timeline — only shown when a session had 2+ distinct activity segments
+            val meaningfulSegments = displayStats.segments.filter {
+                it.type != ActivityType.IDLE && (it.distance >= 50.0 || (it.endTime - it.startTime) >= 15_000L)
+            }
+            if (meaningfulSegments.map { it.type }.toSet().size >= 2) {
+                item {
+                    ModeTimelineCard(segments = meaningfulSegments, unitSystem = unitSystem)
                 }
             }
 
@@ -462,6 +494,103 @@ fun SimplifiedStatCardCompact(
                         color = colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.End
                     )
+                }
+            }
+        }
+    }
+}
+
+private fun ActivityType.toTimelineLabel(): Int = when (this) {
+    ActivityType.IDLE -> R.string.activity_idle
+    ActivityType.WALKING -> R.string.walking
+    ActivityType.RUNNING -> R.string.running
+    ActivityType.CYCLING -> R.string.cycling
+    ActivityType.MOTORCYCLE -> R.string.motorcycle
+    ActivityType.TRAIN -> R.string.train
+    ActivityType.DRIVING -> R.string.driving
+    ActivityType.ELECTRIC_VEHICLE -> R.string.electric_vehicle
+    ActivityType.FLYING -> R.string.flying
+}
+
+@Composable
+fun ModeTimelineCard(segments: List<ActivitySegment>, unitSystem: UnitSystem) {
+    val colorScheme = MaterialTheme.colorScheme
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = colorScheme.surface),
+        shape = RoundedCornerShape(12.dp)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                text = "Mode timeline",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = colorScheme.onSurface,
+                modifier = Modifier.padding(bottom = 12.dp)
+            )
+            segments.forEachIndexed { index, segment ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    // Connector line + dot
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.width(24.dp)
+                    ) {
+                        if (index > 0) {
+                            Box(
+                                modifier = Modifier
+                                    .width(2.dp)
+                                    .height(12.dp)
+                                    .background(colorScheme.outlineVariant)
+                            )
+                        } else {
+                            Spacer(modifier = Modifier.height(12.dp))
+                        }
+                        Box(
+                            modifier = Modifier
+                                .size(10.dp)
+                                .background(colorScheme.onSurface, shape = RoundedCornerShape(5.dp))
+                        )
+                        if (index < segments.lastIndex) {
+                            Box(
+                                modifier = Modifier
+                                    .width(2.dp)
+                                    .height(12.dp)
+                                    .background(colorScheme.outlineVariant)
+                            )
+                        } else {
+                            Spacer(modifier = Modifier.height(12.dp))
+                        }
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    // Label + distance
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = stringResource(segment.type.toTimelineLabel()),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = colorScheme.onSurface,
+                            fontWeight = FontWeight.Medium
+                        )
+                        val durationSec = (segment.endTime - segment.startTime) / 1000L
+                        val distText = if (unitSystem.usesMetricDistance()) {
+                            if (segment.distance >= 1000.0) "${(segment.distance / 1000.0).format(1)} km"
+                            else "${segment.distance.toInt()} m"
+                        } else {
+                            if (segment.distance >= 1609.0) "${(segment.distance / 1609.344).format(1)} mi"
+                            else "${(segment.distance * 3.28084).toInt()} ft"
+                        }
+                        Text(
+                            text = "$distText · ${formatTime(durationSec)}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
         }

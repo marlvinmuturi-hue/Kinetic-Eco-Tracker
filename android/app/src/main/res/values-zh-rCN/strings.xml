@@ -72,8 +72,6 @@
     <string name="stop_alt">结束海拔</string>
     <string name="ascent">上升</string>
     <string name="descent">下降</string>
-    <string name="km_updates">公里更新</string>
-    <string name="mile_updates">英里更新</string>
     <string name="continue_tracking">继续追踪</string>
     <string name="select_activity">选择活动</string>
     <string name="stop">停止</string>
@@ -87,8 +85,12 @@
     <string name="unit_km_wh">公里，瓦时</string>
     <string name="unit_miles_wh">英里，瓦时</string>
     <string name="unit_miles_kcal">英里，千卡</string>
-    <string name="distance_alerts">距离提醒</string>
-    <string name="distance_alerts_desc">追踪时每完成一公里或一英里时通知</string>
+    <string name="settings_profile_title">个人资料</string>
+    <string name="settings_profile_desc">体能、车辆及账户</string>
+    <string name="settings_appearance_title">外观</string>
+    <string name="settings_appearance_subtitle">主题、语言与单位</string>
+    <string name="notifications_section_title">通知</string>
+    <string name="notifications_section_subtitle">声音与每周摘要</string>
     <string name="notification_sounds">通知声音</string>
     <string name="notification_sounds_desc">里程碑、开始/停止和摘要时播放声音。遵循勿扰模式。</string>
     <string name="auto_start_walk">检测到运动时自动开始</string>
@@ -239,14 +241,122 @@
     <string name="notif_tracking_title">Kinetic 追踪</string>
     <string name="notif_tracking_desc">实时追踪状态</string>
     <string name="notif_recording">正在记录您的活动…</string>
-    <string name="notif_milestones_title">距离里程碑</string>
-    <string name="notif_milestones_desc">追踪时每完成一公里或一英里的通知</string>
-    <string name="notif_segment_completed">完成 %1$s %2$s</string>
-    <string name="notif_this_segment">本%1$s用时 %2$s</string>
     <string name="notif_summary_title">会话摘要</string>
     <string name="notif_summary_desc">保存追踪会话时的通知</string>
     <string name="notif_session_saved">会话已保存</string>
     <string name="notif_session_summary">%1$s，%2$d 分钟 • %3$d 卡路里</string>
 
     <string name="location_permission_rationale">GPS 追踪需要位置权限。请在设置中启用。</string>
+
+    <string name="dashboard_weekly_report">每周报告</string>
+    <string name="dashboard_leaderboard_7d">排行榜（7天）</string>
+    <string name="dashboard_leaderboard_opt_in">在设置中开启以查看排名并与朋友竞争。</string>
+    <string name="open_settings">打开设置</string>
+    <string name="loading_leaderboard">加载排行榜中…</string>
+    <string name="weekly_co2_goal">每周 CO₂ 目标</string>
+    <string name="weekly_co2_goal_desc">您希望每周节省多少 CO₂？仪表盘上的植物将向此目标生长。</string>
+    <string name="weekly_co2_goal_hint">轻松入门（0.5–2 kg）· 稳定（3–7 kg）· 雄心勃勃（8+ kg）</string>
+    <string name="save_goal">保存目标</string>
+    <string name="tap_switch_comparison">点击切换对比</string>
+    <string name="hide_wins">隐藏成就</string>
+    <string name="see_wins">查看成就</string>
+    <string name="new_this_week">✨ 本周新增</string>
+    <string name="vs_last_week"> 对比上周</string>
+    <string name="tap_full_breakdown">查看完整分析 →</string>
+    <string name="run_ai_analysis_prompt">运行 AI 分析以解锁个性化洞察</string>
+    <string name="tap_to_analyze">点击分析 →</string>
+    <string name="you_suffix">（你）</string>
+
+    <string name="greeting_morning">早上好</string>
+    <string name="greeting_afternoon">下午好</string>
+    <string name="greeting_evening">晚上好</string>
+    <string name="greeting_night">晚安</string>
+
+    <string name="motivation_crushing_it">本周表现超棒 🌟</string>
+    <string name="motivation_great_week">本周很棒——继续加油！</string>
+    <string name="motivation_nice_work">本周做得不错 🌱</string>
+    <string name="motivation_every_step">每一步都很重要！</string>
+    <string name="motivation_ready">准备好了就出发——从小处开始。</string>
+
+    <string name="streak_30_days">🌳 %1$d 天绿色连击！</string>
+    <string name="streak_7_days">🌿 %1$d 天连击</string>
+    <string name="streak_3_days">✨ %1$d 天连击</string>
+
+    <string name="analysis_activity_mix">活动构成</string>
+    <string name="analysis_distance_share">过去 %1$d 天的距离分布</string>
+    <string name="analysis_no_distance_yet">此时间窗口内暂无记录距离。</string>
+    <string name="analysis_km_total">共 %1$.1f 公里</string>
+    <string name="analysis_trends">趋势</string>
+    <string name="analysis_period_vs_previous">本期与上期对比</string>
+    <string name="analysis_not_enough_history">历史记录不足，无法与上期对比。</string>
+    <string name="analysis_wins">亮点</string>
+    <string name="analysis_watch_outs">注意事项</string>
+    <string name="analysis_context">背景信息</string>
+
+    <string name="wins_best_day">最佳日</string>
+    <string name="wins_top_activity">主要活动</string>
+    <string name="wins_tracked_activity">过去 %2$d 天中有 %1$d 天有活动记录</string>
+
+    <string name="trend_total_distance">总距离</string>
+    <string name="trend_co2_saved">CO₂ 节省</string>
+    <string name="trend_co2_emitted">CO₂ 排放</string>
+    <string name="trend_sessions">会话数</string>
+
+    <string name="watchout_driving">本期驾车 %1$.1f 公里——约 %2$.1f 千克可避免的 CO₂。</string>
+    <string name="watchout_flying">本期飞行 %1$.1f 公里——约 %2$.1f 千克 CO₂，每公里排放最高。</string>
+    <string name="watchout_net_emissions">净排放超过节省——试着将一次驾车换成步行或骑行。</string>
+
+    <string name="tier_champion_reached">您已达到最高等级——冠军！</string>
+    <string name="tier_insights">等级洞察</string>
+    <string name="tier_session_patterns">各等级会话模式</string>
+    <string name="tier_session_patterns_desc">更高等级的用户会话是否更短但更频繁？</string>
+    <string name="tier_fastest_route">到达下一等级的最快路径</string>
+    <string name="tier_fastest_route_desc">各活动每小时节省的 CO₂（千克）</string>
+    <string name="tier_your_journey">您的进程</string>
+    <string name="tier_milestone_day1_session">第 1 天 · 第 %1$d 次会话</string>
+    <string name="tier_milestone_day_session">第 %1$d 天 · 第 %2$d 次会话</string>
+    <string name="tier_not_yet_reached">尚未达到</string>
+    <string name="tier_lifetime_co2">累计节省 %1$.1f 千克 CO₂</string>
+    <string name="tier_kg_to_next">距 %2$s 还需 %1$.1f 千克</string>
+    <string name="tier_sessions_avg">%1$d 次会话 · 平均 %2$.0f 分钟</string>
+    <string name="tier_freq_kg">%1$.1f 次/周 · 节省 %2$.1f 千克</string>
+    <string name="activity_ev_short">电动车</string>
+
+    <!-- Analysis screen — tab title, headers, labels -->
+    <string name="analysis_tab_title">分析</string>
+    <string name="analysis_tab_subtitle">AI 洞察 &amp; 碳足迹</string>
+    <string name="analysis_ai_card_title">AI 活动分析</string>
+    <string name="analysis_co2_this_week">本周 CO₂</string>
+    <string name="analysis_legend_saved">已节省（%1$.2f 千克）</string>
+    <string name="analysis_legend_emitted">已排放</string>
+    <string name="analysis_net_co2_saved">净节省 CO₂</string>
+    <string name="analysis_weeks_footprint">本周碳足迹</string>
+    <string name="analysis_equivalent_to">相当于：</string>
+    <string name="analysis_source_ademe">数据来源：ADEME Base Carbone (impactco2.fr)</string>
+    <string name="analysis_run_ai_button">运行 AI 分析</string>
+    <string name="analysis_ai_cta_text">点击按钮，获取过去 7 天的个性化 AI 分析。</string>
+    <string name="analysis_session_one">1 次会话</string>
+    <string name="analysis_sessions_count">%1$d 次会话</string>
+    <string name="analysis_no_sessions_week">本周尚无已记录的会话。</string>
+
+    <!-- Weekly stats tile labels -->
+    <string name="stat_distance">距离</string>
+    <string name="stat_avg_speed">平均速度</string>
+    <string name="stat_main_activity">主要活动</string>
+    <string name="stat_steps">步数</string>
+    <string name="stat_calories">卡路里</string>
+    <string name="stat_co2_impact">CO₂ 影响</string>
+    <string name="stat_co2_impact_saved">%1$s 千克已节省</string>
+    <string name="stat_co2_impact_net">%1$s 千克净排放</string>
+
+    <!-- Recent sessions card -->
+    <string name="recent_sessions">最近会话</string>
+
+    <!-- Hero card CO₂ suffix -->
+    <string name="hero_co2_saved">已节省</string>
+
+    <!-- CO₂ distribution pie chart (dashboard) -->
+    <string name="co2_saved_by_activity">按活动的 CO₂ 节省量</string>
+    <string name="co2_pie_empty">本周追踪一个环保会话，您的 CO₂ 节省量将显示在此处。</string>
+    <string name="co2_pie_kg_total">共 %1$.2f 千克</string>
 </resources>

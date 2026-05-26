@@ -1,33 +1,91 @@
 import React, { useState } from 'react';
-import { Mail, Lock, ArrowRight } from 'lucide-react';
+import { Mail, Lock, ArrowRight, ShieldCheck } from 'lucide-react';
 
 interface LoginFormProps {
   onSubmit: (email: string, password: string) => Promise<void> | void;
+  onSignUp?: (email: string, password: string) => Promise<void> | void;
   onGoogleSignIn?: () => Promise<void> | void;
   onForgotPassword?: (email: string) => Promise<void> | void;
   error?: string | null;
+  /** Optional callback the parent can use to clear the error when the user changes mode. */
+  onClearError?: () => void;
 }
 
-export const LoginForm: React.FC<LoginFormProps> = ({ 
-  onSubmit, 
+type Mode = 'signin' | 'signup' | 'forgot';
+
+const MIN_PASSWORD_LENGTH = 6;
+
+export const LoginForm: React.FC<LoginFormProps> = ({
+  onSubmit,
+  onSignUp,
   onGoogleSignIn,
   onForgotPassword,
-  error 
+  error,
+  onClearError,
 }) => {
+  const [mode, setMode] = useState<Mode>('signin');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
-  const [showForgotPassword, setShowForgotPassword] = useState(false);
+
   const [forgotPasswordEmail, setForgotPasswordEmail] = useState('');
   const [forgotPasswordLoading, setForgotPasswordLoading] = useState(false);
   const [forgotPasswordMessage, setForgotPasswordMessage] = useState<string | null>(null);
 
-  const handleSubmit = async (event: React.FormEvent) => {
+  // Local validation error (e.g. mismatched confirm password). Kept separate
+  // from the parent `error` so we don't overwrite server errors.
+  const [localError, setLocalError] = useState<string | null>(null);
+
+  const switchMode = (next: Mode) => {
+    setMode(next);
+    setLocalError(null);
+    setConfirmPassword('');
+    if (onClearError) onClearError();
+  };
+
+  const handleSignIn = async (event: React.FormEvent) => {
     event.preventDefault();
+    setLocalError(null);
     setLoading(true);
-    await onSubmit(email, password);
-    setLoading(false);
+    try {
+      await onSubmit(email, password);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSignUp = async (event: React.FormEvent) => {
+    event.preventDefault();
+    setLocalError(null);
+
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail) {
+      setLocalError('Please enter your email.');
+      return;
+    }
+    if (password.length < MIN_PASSWORD_LENGTH) {
+      setLocalError(`Password must be at least ${MIN_PASSWORD_LENGTH} characters.`);
+      return;
+    }
+    if (password !== confirmPassword) {
+      setLocalError('Passwords do not match. Please re-enter your password.');
+      return;
+    }
+
+    setLoading(true);
+    try {
+      if (onSignUp) {
+        await onSignUp(trimmedEmail, password);
+      } else {
+        // Fallback: if the parent didn't wire a sign-up handler, try the
+        // sign-in path so we don't silently no-op.
+        await onSubmit(trimmedEmail, password);
+      }
+    } finally {
+      setLoading(false);
+    }
   };
 
   const handleGoogleSignIn = async () => {
@@ -47,16 +105,14 @@ export const LoginForm: React.FC<LoginFormProps> = ({
     if (!onForgotPassword || !forgotPasswordEmail.trim()) {
       return;
     }
-    
+
     setForgotPasswordLoading(true);
     setForgotPasswordMessage(null);
-    
+
     try {
       await onForgotPassword(forgotPasswordEmail);
       setForgotPasswordMessage('If an account exists with this email, a password reset link has been sent! Check your inbox and follow the instructions.');
     } catch (err: any) {
-      // Even on error, we show a generic message for security, 
-      // unless it's a specific user-actionable error like "invalid-email"
       if (err.message?.includes('email')) {
         setForgotPasswordMessage('Invalid email address.');
       } else {
@@ -67,7 +123,10 @@ export const LoginForm: React.FC<LoginFormProps> = ({
     }
   };
 
-  if (showForgotPassword) {
+  // ────────────────────────────────────────────────────────────────────────
+  // Forgot-password view
+  // ────────────────────────────────────────────────────────────────────────
+  if (mode === 'forgot') {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-950 px-4 safe-area-inset">
         <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-6 sm:p-8 shadow-2xl shadow-slate-900/40">
@@ -95,8 +154,8 @@ export const LoginForm: React.FC<LoginFormProps> = ({
 
             {forgotPasswordMessage && (
               <div className={`text-sm rounded-lg px-4 py-2 ${
-                forgotPasswordMessage.includes('sent') 
-                  ? 'text-green-400 bg-green-500/10 border border-green-500/40' 
+                forgotPasswordMessage.includes('sent')
+                  ? 'text-green-400 bg-green-500/10 border border-green-500/40'
                   : 'text-red-400 bg-red-500/10 border border-red-500/40'
               }`}>
                 {forgotPasswordMessage}
@@ -107,7 +166,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({
               <button
                 type="button"
                 onClick={() => {
-                  setShowForgotPassword(false);
+                  switchMode('signin');
                   setForgotPasswordEmail('');
                   setForgotPasswordMessage(null);
                 }}
@@ -136,7 +195,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({
             Remember your password?{' '}
             <button
               onClick={() => {
-                setShowForgotPassword(false);
+                switchMode('signin');
                 setForgotPasswordEmail('');
                 setForgotPasswordMessage(null);
               }}
@@ -150,12 +209,50 @@ export const LoginForm: React.FC<LoginFormProps> = ({
     );
   }
 
+  // ────────────────────────────────────────────────────────────────────────
+  // Sign-in / Sign-up shared layout
+  // ────────────────────────────────────────────────────────────────────────
+  const isSignUp = mode === 'signup';
+  const displayedError = localError ?? error;
+
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-950 px-4 safe-area-inset">
       <div className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-6 sm:p-8 shadow-2xl shadow-slate-900/40">
         <div className="mb-6 text-center">
           <h1 className="text-2xl font-bold text-white">Kinetic Eco Tracker</h1>
-          <p className="text-slate-400 text-sm mt-2">Sign in to track your daily impact</p>
+          <p className="text-slate-400 text-sm mt-2">
+            {isSignUp ? 'Create your account to start tracking' : 'Sign in to track your daily impact'}
+          </p>
+        </div>
+
+        {/* Mode toggle */}
+        <div
+          role="tablist"
+          aria-label="Authentication mode"
+          className="flex bg-slate-800/60 border border-slate-700 rounded-lg p-1 mb-5"
+        >
+          <button
+            role="tab"
+            type="button"
+            aria-selected={!isSignUp}
+            onClick={() => switchMode('signin')}
+            className={`flex-1 py-2 rounded-md text-sm font-semibold transition ${
+              !isSignUp ? 'bg-slate-900 text-white shadow' : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            Sign in
+          </button>
+          <button
+            role="tab"
+            type="button"
+            aria-selected={isSignUp}
+            onClick={() => switchMode('signup')}
+            className={`flex-1 py-2 rounded-md text-sm font-semibold transition ${
+              isSignUp ? 'bg-slate-900 text-white shadow' : 'text-slate-400 hover:text-slate-200'
+            }`}
+          >
+            Create account
+          </button>
         </div>
 
         {/* Google Sign-In Button */}
@@ -194,7 +291,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({
           </div>
         )}
 
-        <form className="space-y-4" onSubmit={handleSubmit}>
+        <form className="space-y-4" onSubmit={isSignUp ? handleSignUp : handleSignIn}>
           <div>
             <label className="text-slate-300 text-sm font-medium flex items-center space-x-2">
               <Mail size={16} />
@@ -206,6 +303,7 @@ export const LoginForm: React.FC<LoginFormProps> = ({
               onChange={(e) => setEmail(e.target.value)}
               className="w-full mt-1 rounded-lg bg-slate-800 border border-slate-700 px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-green-400"
               placeholder="you@example.com"
+              autoComplete="email"
               required
             />
           </div>
@@ -216,12 +314,12 @@ export const LoginForm: React.FC<LoginFormProps> = ({
                 <Lock size={16} />
                 <span>Password</span>
               </label>
-              {onForgotPassword && (
+              {!isSignUp && onForgotPassword && (
                 <button
                   type="button"
                   onClick={() => {
                     setForgotPasswordEmail(email);
-                    setShowForgotPassword(true);
+                    switchMode('forgot');
                   }}
                   className="text-xs text-green-400 hover:text-green-300 underline"
                 >
@@ -234,20 +332,49 @@ export const LoginForm: React.FC<LoginFormProps> = ({
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               className="w-full rounded-lg bg-slate-800 border border-slate-700 px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-green-400"
-              placeholder="********"
+              placeholder={isSignUp ? `At least ${MIN_PASSWORD_LENGTH} characters` : '********'}
+              autoComplete={isSignUp ? 'new-password' : 'current-password'}
+              minLength={isSignUp ? MIN_PASSWORD_LENGTH : undefined}
               required
             />
           </div>
 
-          {error && (
+          {isSignUp && (
+            <div>
+              <label className="text-slate-300 text-sm font-medium flex items-center space-x-2">
+                <ShieldCheck size={16} />
+                <span>Confirm password</span>
+              </label>
+              <input
+                type="password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                className={`w-full mt-1 rounded-lg bg-slate-800 px-4 py-3 text-white focus:outline-none focus:ring-2 focus:ring-green-400 border ${
+                  confirmPassword && confirmPassword !== password
+                    ? 'border-red-500/60'
+                    : 'border-slate-700'
+                }`}
+                placeholder="Re-enter your password"
+                autoComplete="new-password"
+                minLength={MIN_PASSWORD_LENGTH}
+                required
+                aria-invalid={!!confirmPassword && confirmPassword !== password}
+              />
+              {confirmPassword && confirmPassword !== password && (
+                <p className="text-xs text-red-400 mt-1">Passwords do not match.</p>
+              )}
+            </div>
+          )}
+
+          {displayedError && (
             <div className="text-sm text-red-400 bg-red-500/10 border border-red-500/40 rounded-lg px-4 py-2 flex flex-col">
-              <span>{error}</span>
-              {error.includes('Incorrect password') && onForgotPassword && (
+              <span>{displayedError}</span>
+              {!isSignUp && displayedError.includes('Incorrect password') && onForgotPassword && (
                 <button
                   type="button"
                   onClick={() => {
                     setForgotPasswordEmail(email);
-                    setShowForgotPassword(true);
+                    switchMode('forgot');
                   }}
                   className="text-left text-xs text-green-400 hover:text-green-300 underline mt-1"
                 >
@@ -259,14 +386,43 @@ export const LoginForm: React.FC<LoginFormProps> = ({
 
           <button
             type="submit"
-            disabled={loading || googleLoading}
+            disabled={
+              loading ||
+              googleLoading ||
+              (isSignUp && (password.length < MIN_PASSWORD_LENGTH || password !== confirmPassword))
+            }
             className="w-full bg-gradient-to-r from-green-400 to-blue-500 text-white font-semibold py-3 rounded-lg hover:opacity-90 active:opacity-80 transition disabled:opacity-60 min-h-[44px] touch-manipulation"
           >
-            {loading ? 'Signing in...' : 'Sign in'}
+            {loading
+              ? (isSignUp ? 'Creating account...' : 'Signing in...')
+              : (isSignUp ? 'Create account' : 'Sign in')}
           </button>
         </form>
+
         <p className="text-xs text-slate-500 text-center mt-4">
-          First time here? Enter your email and password to create a profile.
+          {isSignUp ? (
+            <>
+              Already have an account?{' '}
+              <button
+                type="button"
+                onClick={() => switchMode('signin')}
+                className="text-green-400 hover:text-green-300 underline"
+              >
+                Sign in
+              </button>
+            </>
+          ) : (
+            <>
+              First time here?{' '}
+              <button
+                type="button"
+                onClick={() => switchMode('signup')}
+                className="text-green-400 hover:text-green-300 underline"
+              >
+                Create an account
+              </button>
+            </>
+          )}
         </p>
         <p className="text-[10px] text-slate-600 text-center mt-2">
           Note: Google sign-in may redirect if popups are blocked.
@@ -275,13 +431,3 @@ export const LoginForm: React.FC<LoginFormProps> = ({
     </div>
   );
 };
-
-
-
-
-
-
-
-
-
-

@@ -10,8 +10,10 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import Kinetic_Eco.Tracker.data.*
+import Kinetic_Eco.Tracker.data.ActivitySegment
 import Kinetic_Eco.Tracker.data.KmMilestone
 import Kinetic_Eco.Tracker.data.database.*
+import com.google.gson.reflect.TypeToken
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -61,7 +63,8 @@ class SessionManager(private val context: Context) {
         Log.d(TAG, "💾 Breakdown: ${stats.breakdown.size} activities, total steps: ${stats.totalSteps}")
         
         val kmMilestonesJson = com.google.gson.Gson().toJson(stats.kmMilestones)
-        
+        val segmentsJson = com.google.gson.Gson().toJson(stats.segments)
+
         val sessionEntity = SessionEntity(
             id = sessionId,
             userId = userId,
@@ -80,6 +83,7 @@ class SessionManager(private val context: Context) {
             maxAltitude = stats.maxAltitude,
             topSpeedMps = stats.topSpeedMps,
             kmMilestonesJson = kmMilestonesJson,
+            segmentsJson = segmentsJson,
             routePath = stats.routePath,
             createdAt = System.currentTimeMillis(),
             breakdown = breakdownEntity
@@ -129,6 +133,111 @@ class SessionManager(private val context: Context) {
         private const val TAG = "SessionManager"
     }
     
+    // ── Time-series aggregation ───────────────────────────────────────────────
+
+    /** CO2 totals grouped by calendar day for the last [days] days. */
+    suspend fun getCo2PerDay(userId: String, days: Int = 30): List<Co2ByPeriod> {
+        val from = offsetDate(-days)
+        return sessionDao.getCo2PerDay(userId, from)
+    }
+
+    /** CO2 totals grouped by week for the last [weeks] weeks. */
+    suspend fun getCo2PerWeek(userId: String, weeks: Int = 12): List<Co2ByPeriod> {
+        val from = offsetDate(-(weeks * 7))
+        return sessionDao.getCo2PerWeek(userId, from)
+    }
+
+    /** CO2 totals grouped by calendar month for the last [months] months. */
+    suspend fun getCo2PerMonth(userId: String, months: Int = 12): List<Co2ByPeriod> {
+        val from = offsetDate(-(months * 30))
+        return sessionDao.getCo2PerMonth(userId, from)
+    }
+
+    /**
+     * Current green-day streak: consecutive calendar days (ending today or
+     * yesterday) on which at least one session conserved CO₂.
+     *
+     * If the user hasn't had an active day today or yesterday the streak resets
+     * to 0 — matching the "use it or lose it" convention most fitness apps use.
+     */
+    suspend fun getCurrentStreak(userId: String): Int {
+        val activeDays = sessionDao.getActiveDays(userId)
+        if (activeDays.isEmpty()) return 0
+
+        val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+        val today = sdf.format(Date())
+        val yesterday = sdf.format(Date(System.currentTimeMillis() - 86_400_000L))
+
+        // Streak must start from today or yesterday
+        val mostRecent = activeDays.first()
+        if (mostRecent != today && mostRecent != yesterday) return 0
+
+        var expected = mostRecent
+        var streak = 0
+        val cal = Calendar.getInstance()
+
+        for (date in activeDays) {
+            if (date == expected) {
+                streak++
+                cal.time = sdf.parse(expected)!!
+                cal.add(Calendar.DAY_OF_YEAR, -1)
+                expected = sdf.format(cal.time)
+            } else {
+                break
+            }
+        }
+        return streak
+    }
+
+    /**
+     * CO₂ savings attributed per activity type over a date range.
+     *
+     * Uses per-activity distance from the [breakdown] JSON together with the
+     * default [CO2Factors] to apportion the session's savings — the same math
+     * the tracker uses when it accumulates CO₂ in real time.
+     *
+     * Only activities with a negative factor (actual savers) appear in the map.
+     * Activities that emit (DRIVING, FLYING, …) are excluded so the caller
+     * can display a pure "what saved the most CO₂" breakdown.
+     */
+    suspend fun getActivityCo2Split(
+        userId: String,
+        fromDate: String = offsetDate(-30),
+        toDate: String = dateFormat.format(Date())
+    ): Map<ActivityType, Double> {
+        val sessions = sessionDao.getSessionsInRange(userId, fromDate, toDate)
+        val totals = mutableMapOf<ActivityType, Double>()
+        for (entity in sessions) {
+            for ((type, breakdown) in entity.breakdown) {
+                val factor = CO2Factors.getFactor(type)
+                val savingsKg = -factor * (breakdown.distance / 1000.0)
+                if (savingsKg > 0.0) {
+                    totals[type] = (totals[type] ?: 0.0) + savingsKg
+                }
+            }
+        }
+        return totals
+    }
+
+    /**
+     * Sessions in a closed date range that have at least one recorded GPS point.
+     * Used by [RouteIntelligenceService] for O-D clustering — sessions without a
+     * route path are filtered out here rather than in the caller.
+     */
+    suspend fun getSessionsWithRoutes(
+        userId: String,
+        fromDate: String,
+        toDate: String
+    ): List<SessionStats> =
+        sessionDao.getSessionsInRange(userId, fromDate, toDate)
+            .filter { it.routePath.isNotEmpty() }
+            .map { it.toSessionStats() }
+
+    private fun offsetDate(days: Int): String =
+        dateFormat.format(Date(System.currentTimeMillis() + days * 86_400_000L))
+
+    // ─────────────────────────────────────────────────────────────────────────
+
     fun getAllSessions(userId: String): Flow<List<SessionStats>> {
         Log.d(TAG, "📊 Fetching all sessions for user: $userId")
         return sessionDao.getAllSessions(userId)
@@ -310,6 +419,15 @@ class SessionManager(private val context: Context) {
             emptyList()
         }
         
+        val segments = try {
+            com.google.gson.Gson().fromJson<List<ActivitySegment>>(
+                segmentsJson,
+                object : TypeToken<List<ActivitySegment>>() {}.type
+            ) ?: emptyList()
+        } catch (_: Exception) {
+            emptyList()
+        }
+
         return SessionStats(
             date = date,
             sessionEndTimeMs = createdAt,
@@ -327,7 +445,7 @@ class SessionManager(private val context: Context) {
             maxAltitude = maxAltitude,
             topSpeedMps = topSpeedMps,
             kmMilestones = kmMilestones,
-            segments = emptyList(), // Can be expanded later
+            segments = segments,
             routePath = routePath,
             breakdown = breakdown
         )

@@ -58,6 +58,7 @@ class TrackerViewModel(application: Application) : AndroidViewModel(application)
                     launch { svc.currentPosition.collect { _currentPosition.value = it } }
                     launch { svc.manualActivityMode.collect { _manualActivityMode.value = it } }
                     launch { svc.leanActivityHint.collect { _leanActivityHint.value = it } }
+                    launch { svc.evConfirmPrompt.collect { _evConfirmPrompt.value = it } }
                 }
             }
         }
@@ -74,6 +75,7 @@ class TrackerViewModel(application: Application) : AndroidViewModel(application)
             _currentActivity.value = ActivityType.IDLE
             _manualActivityMode.value = null
             _leanActivityHint.value = null
+            _evConfirmPrompt.value = false
         }
     }
 
@@ -92,7 +94,10 @@ class TrackerViewModel(application: Application) : AndroidViewModel(application)
 
     private val _leanActivityHint = MutableStateFlow<ActivityType?>(null)
     val leanActivityHint: StateFlow<ActivityType?> = _leanActivityHint.asStateFlow()
-    
+
+    private val _evConfirmPrompt = MutableStateFlow(false)
+    val evConfirmPrompt: StateFlow<Boolean> = _evConfirmPrompt.asStateFlow()
+
     private val _sessionDuration = MutableStateFlow(0L)
     val sessionDuration: StateFlow<Long> = _sessionDuration.asStateFlow()
     
@@ -222,11 +227,12 @@ class TrackerViewModel(application: Application) : AndroidViewModel(application)
         android.util.Log.d(TAG, "💾   - Breakdown size: ${stats.breakdown.size}")
         
         try {
-            // Merge route path and accelerometer samples from TrackingService for persistence
+            // Merge route path, segments, and accelerometer samples from TrackingService for persistence
             val routePath = trackingService?.getRoutePath() ?: emptyList()
             val accelSamples = trackingService?.getAccelerometerSamples() ?: emptyList()
+            val segments = trackingService?.getFinalSegments() ?: emptyList()
             val adjustedStats = adjustStatsForSimplifiedPath(stats, routePath)
-            val statsWithRoute = adjustedStats.copy(routePath = routePath)
+            val statsWithRoute = adjustedStats.copy(routePath = routePath, segments = segments)
             android.util.Log.d(TAG, "💾 Calling sessionManager.saveSession...")
             val sessionId = sessionManager.saveSession(userId, statsWithRoute, sessionStartMs, accelSamples)
             android.util.Log.d(TAG, "✅ ===== SESSION SAVED SUCCESSFULLY =====")
@@ -254,6 +260,7 @@ class TrackerViewModel(application: Application) : AndroidViewModel(application)
             _currentSpeed.value = 0f
             _manualActivityMode.value = null
             _leanActivityHint.value = null
+            _evConfirmPrompt.value = false
             android.util.Log.d(TAG, "💾 ===== stopAndSaveSession COMPLETED =====")
         }
     }
@@ -273,10 +280,16 @@ class TrackerViewModel(application: Application) : AndroidViewModel(application)
         _currentSpeed.value = 0f
         _manualActivityMode.value = null
         _leanActivityHint.value = null
+        _evConfirmPrompt.value = false
     }
     
     fun dismissLeanActivityHint() {
         trackingService?.dismissLeanActivityHint()
+    }
+
+    fun dismissEvConfirmPrompt() {
+        trackingService?.dismissEvConfirmPrompt()
+        _evConfirmPrompt.value = false
     }
 
     /**

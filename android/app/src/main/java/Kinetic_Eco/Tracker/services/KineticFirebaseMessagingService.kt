@@ -18,10 +18,11 @@ import Kinetic_Eco.Tracker.R
  * Handles FCM token refreshes and incoming push notifications.
  *
  * Token storage: saved to Firestore at `users/{uid}/fcmTokens/{token}` with a timestamp so
- * the weekly-digest Cloud Function can fan-out to all registered devices per user.
+ * scheduled Cloud Functions can fan-out to all registered devices per user.
  *
- * Incoming payloads that include a `title` / `body` key in the data map are displayed as a
- * high-priority notification in the "Weekly Digest" channel.
+ * Message routing uses the `type` data key:
+ *   "daily"  → daily_digest_channel  (daily eco impact at ~20:00 EAT)
+ *   anything else → weekly_digest_channel  (Monday weekly summary)
  */
 class KineticFirebaseMessagingService : FirebaseMessagingService() {
 
@@ -35,19 +36,29 @@ class KineticFirebaseMessagingService : FirebaseMessagingService() {
         super.onMessageReceived(message)
 
         val prefs = UserPreferencesManager(applicationContext)
-        if (!prefs.isWeeklyDigestEnabled()) {
-            Log.d(TAG, "Weekly digest disabled by user — suppressing FCM message")
-            return
+        val type = message.data["type"] ?: "weekly"
+
+        if (type == "daily") {
+            if (!prefs.isDailyDigestEnabled()) {
+                Log.d(TAG, "Daily digest disabled by user — suppressing")
+                return
+            }
+            val title = message.data["title"] ?: "🌿 Today's Eco Impact"
+            val body  = message.data["body"]  ?: "Check your activity for today."
+            showNotification(title, body, DAILY_DIGEST_CHANNEL_ID, DAILY_DIGEST_NOTIFICATION_ID)
+        } else {
+            if (!prefs.isWeeklyDigestEnabled()) {
+                Log.d(TAG, "Weekly digest disabled by user — suppressing")
+                return
+            }
+            val title = message.data["title"]
+                ?: message.notification?.title
+                ?: "Kinetic Eco"
+            val body = message.data["body"]
+                ?: message.notification?.body
+                ?: "Your weekly activity summary is ready."
+            showNotification(title, body, WEEKLY_DIGEST_CHANNEL_ID, WEEKLY_DIGEST_NOTIFICATION_ID)
         }
-
-        val title = message.data["title"]
-            ?: message.notification?.title
-            ?: "Kinetic Eco"
-        val body = message.data["body"]
-            ?: message.notification?.body
-            ?: "Your weekly activity summary is ready."
-
-        showDigestNotification(title, body)
     }
 
     private fun saveTokenToFirestore(token: String) {
@@ -68,8 +79,12 @@ class KineticFirebaseMessagingService : FirebaseMessagingService() {
             .addOnFailureListener { e -> Log.e(TAG, "Failed to save FCM token", e) }
     }
 
-    private fun showDigestNotification(title: String, body: String) {
-        val channelId = "weekly_digest_channel"
+    private fun showNotification(
+        title: String,
+        body: String,
+        channelId: String,
+        notificationId: Int
+    ) {
         val nm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             getSystemService(NotificationManager::class.java)
         } else {
@@ -78,23 +93,23 @@ class KineticFirebaseMessagingService : FirebaseMessagingService() {
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val channel = NotificationChannel(
-                channelId,
-                "Weekly Digest",
-                NotificationManager.IMPORTANCE_DEFAULT
-            ).apply {
-                description = "Your weekly activity summary from Kinetic Eco"
-                enableVibration(false)
+            val (channelName, channelDesc) = when (channelId) {
+                DAILY_DIGEST_CHANNEL_ID -> "Daily Digest" to "Your daily eco impact from Kinetic Eco"
+                else                    -> "Weekly Digest" to "Your weekly activity summary from Kinetic Eco"
             }
+            val channel = NotificationChannel(channelId, channelName, NotificationManager.IMPORTANCE_DEFAULT)
+                .apply {
+                    description = channelDesc
+                    enableVibration(false)
+                }
             nm.createNotificationChannel(channel)
         }
 
-        val launchIntent = Intent(applicationContext, MainActivity::class.java).also {
-            it.addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
-        }
+        val launchIntent = Intent(applicationContext, MainActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP)
         val openIntent = PendingIntent.getActivity(
             applicationContext,
-            0,
+            notificationId,
             launchIntent,
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
         )
@@ -109,11 +124,14 @@ class KineticFirebaseMessagingService : FirebaseMessagingService() {
             .setAutoCancel(true)
             .build()
 
-        nm.notify(WEEKLY_DIGEST_NOTIFICATION_ID, notification)
+        nm.notify(notificationId, notification)
     }
 
     companion object {
         private const val TAG = "KineticFCMService"
+        private const val WEEKLY_DIGEST_CHANNEL_ID   = "weekly_digest_channel"
+        private const val DAILY_DIGEST_CHANNEL_ID    = "daily_digest_channel"
         private const val WEEKLY_DIGEST_NOTIFICATION_ID = 5001
+        private const val DAILY_DIGEST_NOTIFICATION_ID  = 5002
     }
 }

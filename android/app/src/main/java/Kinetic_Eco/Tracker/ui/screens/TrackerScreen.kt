@@ -4,6 +4,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.*
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.Orientation
@@ -17,10 +18,12 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.DirectionsBike
 import androidx.compose.material.icons.automirrored.filled.DirectionsRun
 import androidx.compose.material.icons.automirrored.filled.DirectionsWalk
 import androidx.compose.material.icons.automirrored.filled.TrendingDown
 import androidx.compose.material.icons.automirrored.filled.TrendingUp
+import androidx.compose.material.icons.outlined.TwoWheeler
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -31,10 +34,12 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
@@ -101,6 +106,7 @@ fun TrackerScreen(
     val currentActivity by viewModel.currentActivity.collectAsStateWithLifecycle()
     val manualActivityMode by viewModel.manualActivityMode.collectAsStateWithLifecycle()
     val leanActivityHint by viewModel.leanActivityHint.collectAsStateWithLifecycle()
+    val showEvConfirmPrompt by viewModel.evConfirmPrompt.collectAsStateWithLifecycle()
     val sessionDuration by viewModel.sessionDuration.collectAsStateWithLifecycle()
     val sessionDistance by viewModel.sessionDistance.collectAsStateWithLifecycle()
     val sessionSteps by viewModel.sessionSteps.collectAsStateWithLifecycle()
@@ -318,8 +324,8 @@ fun TrackerScreen(
         } // end inner Column
         } // end Box(weight = 1f)
 
-        // Activity grid panel — drag handle collapses/expands; swipe up to reveal, swipe down to hide
-        ActivityGridPanel(
+        // Activity strip — always visible at the bottom, scroll horizontally for all modes
+        TrackerActivityStrip(
             manualActivityMode = manualActivityMode,
             onActivitySelected = { viewModel.setManualActivityMode(it) },
             onAutoSelected = { viewModel.setManualActivityMode(null) }
@@ -402,6 +408,24 @@ fun TrackerScreen(
             }
         )
     }
+
+    if (showEvConfirmPrompt && !isSavingSession) {
+        AlertDialog(
+            onDismissRequest = { viewModel.dismissEvConfirmPrompt() },
+            title = { Text("Electric vehicle?") },
+            text = { Text("We detected driving. Are you in an EV? Switching to EV mode gives you more accurate CO₂ tracking.") },
+            confirmButton = {
+                Button(onClick = {
+                    viewModel.dismissEvConfirmPrompt()
+                    viewModel.setManualActivityMode(ActivityType.ELECTRIC_VEHICLE)
+                }) { Text("Switch to EV") }
+            },
+            dismissButton = {
+                TextButton(onClick = { viewModel.dismissEvConfirmPrompt() }) { Text("Keep Driving") }
+            },
+            containerColor = MaterialTheme.colorScheme.surface
+        )
+    }
 }
 
 @Composable
@@ -423,6 +447,167 @@ fun TrackerScreenWithFAB(
         autoStartOnWalkEnabled = autoStartOnWalkEnabled,
         onSessionSaved = onSessionSaved
     )
+}
+
+// ── Activity strip (always visible) ──────────────────────────────────────────
+
+private data class TrackerActivityItem(
+    val type: ActivityType?,
+    val label: String,
+    val icon: ImageVector,
+    val color: Color
+)
+
+private val trackerActivityOptions = listOf(
+    TrackerActivityItem(null,                          "Auto",  Icons.Default.AutoAwesome,                  Color(0xFF2196F3)),
+    TrackerActivityItem(ActivityType.WALKING,          "Walk",  Icons.AutoMirrored.Filled.DirectionsWalk,   Color(0xFF4CAF50)),
+    TrackerActivityItem(ActivityType.RUNNING,          "Run",   Icons.AutoMirrored.Filled.DirectionsRun,    Color(0xFF10B981)),
+    TrackerActivityItem(ActivityType.CYCLING,          "Cycle", Icons.AutoMirrored.Filled.DirectionsBike,   Color(0xFF00BCD4)),
+    TrackerActivityItem(ActivityType.MOTORCYCLE,       "Moto",  Icons.Outlined.TwoWheeler,                  Color(0xFFFF9800)),
+    TrackerActivityItem(ActivityType.TRAIN,            "Train", Icons.Default.Train,                        Color(0xFF009688)),
+    TrackerActivityItem(ActivityType.DRIVING,          "Drive", Icons.Default.DirectionsCar,                Color(0xFFFFC107)),
+    TrackerActivityItem(ActivityType.ELECTRIC_VEHICLE, "EV",   Icons.Default.ElectricCar,                  Color(0xFF673AB7)),
+    TrackerActivityItem(ActivityType.FLYING,           "Fly",  Icons.Default.Flight,                        Color(0xFF1565C0)),
+)
+
+@Composable
+private fun TrackerActivityStrip(
+    manualActivityMode: ActivityType?,
+    onActivitySelected: (ActivityType) -> Unit,
+    onAutoSelected: () -> Unit
+) {
+    val colorScheme = MaterialTheme.colorScheme
+    var expanded by rememberSaveable { mutableStateOf(false) }
+
+    val draggableState = rememberDraggableState { delta ->
+        if (delta < 0f && !expanded) expanded = true
+        else if (delta > 0f && expanded) expanded = false
+    }
+
+    val firstRow = trackerActivityOptions.take(3)
+    val restRows  = trackerActivityOptions.drop(3).chunked(3)
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(colorScheme.surface.copy(alpha = 0.88f))
+    ) {
+        // Drag handle — tap or swipe to expand / collapse
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(28.dp)
+                .draggable(orientation = Orientation.Vertical, state = draggableState)
+                .clickable { expanded = !expanded },
+            contentAlignment = Alignment.Center
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(width = 32.dp, height = 4.dp)
+                    .background(
+                        colorScheme.onSurfaceVariant.copy(alpha = 0.35f),
+                        RoundedCornerShape(2.dp)
+                    )
+            )
+            Icon(
+                imageVector = if (expanded) Icons.Default.KeyboardArrowDown
+                              else Icons.Default.KeyboardArrowUp,
+                contentDescription = if (expanded) "Collapse" else "Expand activities",
+                tint = colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                    .align(Alignment.CenterEnd)
+                    .padding(end = 12.dp)
+                    .size(18.dp)
+            )
+        }
+
+        // Always-visible first row
+        Column(modifier = Modifier.padding(horizontal = 10.dp)) {
+            ActivityTileRow(
+                rowItems = firstRow,
+                manualActivityMode = manualActivityMode,
+                onActivitySelected = onActivitySelected,
+                onAutoSelected = onAutoSelected
+            )
+
+            // Remaining rows slide in on expand
+            AnimatedVisibility(
+                visible = expanded,
+                enter = expandVertically(expandFrom = Alignment.Top),
+                exit  = shrinkVertically(shrinkTowards = Alignment.Top)
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Spacer(Modifier.height(8.dp))
+                    restRows.forEach { rowItems ->
+                        ActivityTileRow(
+                            rowItems = rowItems,
+                            manualActivityMode = manualActivityMode,
+                            onActivitySelected = onActivitySelected,
+                            onAutoSelected = onAutoSelected
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+        }
+    }
+}
+
+@Composable
+private fun ActivityTileRow(
+    rowItems: List<TrackerActivityItem>,
+    manualActivityMode: ActivityType?,
+    onActivitySelected: (ActivityType) -> Unit,
+    onAutoSelected: () -> Unit
+) {
+    val colorScheme = MaterialTheme.colorScheme
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
+    ) {
+        rowItems.forEach { item ->
+            val isSelected = item.type == manualActivityMode
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(
+                        if (isSelected) item.color.copy(alpha = 0.28f)
+                        else colorScheme.surfaceVariant.copy(alpha = 0.55f)
+                    )
+                    .clickable {
+                        if (item.type == null) onAutoSelected()
+                        else onActivitySelected(item.type)
+                    }
+                    .padding(vertical = 10.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(44.dp)
+                        .clip(CircleShape)
+                        .background(item.color.copy(alpha = if (isSelected) 0.38f else 0.18f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector = item.icon,
+                        contentDescription = item.label,
+                        tint = if (isSelected) Color.White else item.color,
+                        modifier = Modifier.size(24.dp)
+                    )
+                }
+                Text(
+                    text = item.label,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontSize = 11.sp,
+                    color = if (isSelected) Color.White else colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1
+                )
+            }
+        }
+    }
 }
 
 // ── Activity grid panel ───────────────────────────────────────────────────────
@@ -893,6 +1078,14 @@ fun StopTrackingDialog(
                 modifier = Modifier.padding(24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
+                Image(
+                    painter = painterResource(id = R.drawable.ic_app_logo),
+                    contentDescription = null,
+                    modifier = Modifier
+                        .size(56.dp)
+                        .clip(MaterialTheme.shapes.large)
+                )
+                Spacer(Modifier.height(16.dp))
                 Text(
                     text = stringResource(R.string.stop_tracking_title),
                     style = MaterialTheme.typography.headlineSmall,
@@ -1025,18 +1218,18 @@ fun SessionSummaryDialog(
                     .padding(24.dp),
                 horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                // Success icon
+                // App logo
                 Box(
                     modifier = Modifier
                         .size(64.dp)
                         .background(colorScheme.surfaceVariant.copy(alpha = 0.55f), CircleShape),
                     contentAlignment = Alignment.Center
                 ) {
-                    Icon(
-                        painter = painterResource(R.drawable.ic_session_summary),
+                    Image(
+                        painter = painterResource(R.drawable.ic_app_logo),
                         contentDescription = stringResource(R.string.session_summary),
-                        tint = colorScheme.onSurfaceVariant,
-                        modifier = Modifier.size(32.dp)
+                        modifier = Modifier.size(48.dp),
+                        contentScale = ContentScale.Fit
                     )
                 }
                 
@@ -1134,7 +1327,7 @@ fun SessionSummaryDialog(
                             if (stats.totalSteps > 0) {
                                 SummaryStatCardCompact(
                                     label = stringResource(R.string.total_steps),
-                                    value = String.format("%,d", stats.totalSteps),
+                                    value = String.format(java.util.Locale.getDefault(), "%,d", stats.totalSteps),
                                     icon = Icons.AutoMirrored.Filled.DirectionsWalk,
                                     color = colorScheme.onSurfaceVariant,
                                     modifier = Modifier.weight(1f)
@@ -1204,48 +1397,6 @@ fun SessionSummaryDialog(
                         }
                     }
                     
-                    // Distance breakdown (time per km or mile)
-                    if (stats.kmMilestones.isNotEmpty()) {
-                        val distUnit = if (unitSystem.usesMetricDistance()) "km" else "mi"
-                        Text(
-                            text = if (unitSystem.usesMetricDistance()) stringResource(R.string.km_updates) else stringResource(R.string.mile_updates),
-                            style = MaterialTheme.typography.labelMedium,
-                            color = colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = 8.dp, bottom = 4.dp)
-                        )
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .background(colorScheme.surfaceVariant, RoundedCornerShape(8.dp))
-                                .padding(12.dp),
-                            verticalArrangement = Arrangement.spacedBy(4.dp)
-                        ) {
-                            stats.kmMilestones.forEach { milestone ->
-                                val timeStr = formatTime(milestone.secondsForKm)
-                                Row(
-                                    modifier = Modifier.fillMaxWidth(),
-                                    horizontalArrangement = Arrangement.SpaceBetween,
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    SingleLineValueText(
-                                        text = "${milestone.km} $distUnit",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.weight(1f).padding(end = 8.dp),
-                                        textAlign = TextAlign.Start
-                                    )
-                                    SingleLineValueText(
-                                        text = timeStr,
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        color = colorScheme.onSurface,
-                                        fontWeight = FontWeight.Medium,
-                                        modifier = Modifier.weight(1f),
-                                        textAlign = TextAlign.End
-                                    )
-                                }
-                            }
-                        }
-                    }
                 }
                 
                 Spacer(modifier = Modifier.height(24.dp))

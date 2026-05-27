@@ -5,19 +5,23 @@ import android.content.pm.PackageManager
 import android.os.Build
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.fadeIn
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.DirectionsRun
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Notifications
-import androidx.compose.material.icons.filled.PhotoLibrary
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -55,16 +59,6 @@ fun OnboardingPermissionsScreen(onContinue: () -> Unit) {
     fun isGranted(perm: String) =
         ContextCompat.checkSelfPermission(context, perm) == PackageManager.PERMISSION_GRANTED
 
-    // Photos uses split permissions: READ_MEDIA_IMAGES on API 33+,
-    // READ_EXTERNAL_STORAGE on older builds. Resolved once so launcher and
-    // status check stay in sync.
-    val photosPermission = remember {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
-            Manifest.permission.READ_MEDIA_IMAGES
-        else
-            Manifest.permission.READ_EXTERNAL_STORAGE
-    }
-
     var locationGranted by remember {
         mutableStateOf(
             isGranted(Manifest.permission.ACCESS_FINE_LOCATION) ||
@@ -94,9 +88,6 @@ fun OnboardingPermissionsScreen(onContinue: () -> Unit) {
             else true
         )
     }
-    var cameraGranted by remember { mutableStateOf(isGranted(Manifest.permission.CAMERA)) }
-    var photosGranted by remember { mutableStateOf(isGranted(photosPermission)) }
-
     val locationLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { results ->
@@ -112,12 +103,6 @@ fun OnboardingPermissionsScreen(onContinue: () -> Unit) {
     val notifLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { notifGranted = it }
-    val cameraLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { cameraGranted = it }
-    val photosLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestPermission()
-    ) { photosGranted = it }
 
     val scroll = rememberScrollState()
 
@@ -131,7 +116,7 @@ fun OnboardingPermissionsScreen(onContinue: () -> Unit) {
         Spacer(Modifier.height(36.dp))
 
         Text(
-            text = "A few permissions needed",
+            text = "Let's set Kinetic up properly",
             style = MaterialTheme.typography.headlineMedium,
             fontWeight = FontWeight.Bold,
             color = MaterialTheme.colorScheme.onBackground
@@ -140,9 +125,8 @@ fun OnboardingPermissionsScreen(onContinue: () -> Unit) {
         Spacer(Modifier.height(8.dp))
 
         Text(
-            text = "Here's everything Kinetic Eco Tracker may ask for. " +
-                "Required ones power the core tracker — recommended and " +
-                "optional ones unlock extras and can be skipped.",
+            text = "These three permissions are what make the tracker work. " +
+                "Tap each to grant — you can always change them later in settings.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
@@ -214,27 +198,6 @@ fun OnboardingPermissionsScreen(onContinue: () -> Unit) {
                 onGrant = { notifLauncher.launch(Manifest.permission.POST_NOTIFICATIONS) }
             )
         }
-
-        // ── Optional ───────────────────────────────────────────────────────
-        Spacer(Modifier.height(10.dp))
-        PermissionCard(
-            tier = PermissionTier.Optional,
-            icon = Icons.Default.CameraAlt,
-            title = "Camera",
-            description = "Used only when you take a profile photo from inside the app.",
-            granted = cameraGranted,
-            onGrant = { cameraLauncher.launch(Manifest.permission.CAMERA) }
-        )
-
-        Spacer(Modifier.height(10.dp))
-        PermissionCard(
-            tier = PermissionTier.Optional,
-            icon = Icons.Default.PhotoLibrary,
-            title = "Photos & media",
-            description = "Used only when you pick a profile photo from your gallery.",
-            granted = photosGranted,
-            onGrant = { photosLauncher.launch(photosPermission) }
-        )
 
         Spacer(Modifier.height(28.dp))
 
@@ -322,14 +285,25 @@ private fun PermissionCard(
                     )
                 }
             }
-            if (granted) {
-                Icon(
-                    imageVector = Icons.Default.CheckCircle,
-                    contentDescription = "Granted",
-                    tint = colorScheme.primary,
-                    modifier = Modifier.size(26.dp)
-                )
-            } else {
+            AnimatedVisibility(
+                visible      = granted,
+                enter        = scaleIn(tween(300)) + fadeIn(tween(300))
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(32.dp)
+                        .background(colorScheme.primaryContainer, CircleShape),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Icon(
+                        imageVector        = Icons.Default.CheckCircle,
+                        contentDescription = "Granted",
+                        tint               = colorScheme.primary,
+                        modifier           = Modifier.size(22.dp)
+                    )
+                }
+            }
+            if (!granted) {
                 OutlinedButton(
                     onClick = onGrant,
                     enabled = enabled

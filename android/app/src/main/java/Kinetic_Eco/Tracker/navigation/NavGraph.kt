@@ -1,16 +1,38 @@
 package Kinetic_Eco.Tracker.navigation
 
 import androidx.compose.animation.AnimatedVisibilityScope
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.background
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
@@ -25,6 +47,7 @@ import Kinetic_Eco.Tracker.data.UnitSystem
 import Kinetic_Eco.Tracker.data.VehicleProfile
 import Kinetic_Eco.Tracker.data.PrimaryFuelType
 import Kinetic_Eco.Tracker.services.StepMonitor
+import Kinetic_Eco.Tracker.ui.onboarding.OnboardingCelebrationScreen
 import Kinetic_Eco.Tracker.ui.onboarding.OnboardingDescriptionScreen
 import Kinetic_Eco.Tracker.ui.onboarding.OnboardingPermissionsScreen
 import Kinetic_Eco.Tracker.ui.onboarding.OnboardingProfileScreen
@@ -65,6 +88,8 @@ sealed class Screen(val route: String) {
     object OnboardingDescription : Screen("onboarding_description")
     object OnboardingPermissions : Screen("onboarding_permissions")
     object OnboardingProfile : Screen("onboarding_profile")
+    /** Post-onboarding celebration moment — shown once, auto-advances to MainTabs after 1.5 s. */
+    object OnboardingCelebration : Screen("onboarding_celebration")
     /** Primary app destination: horizontal swipe between tracker / analytics / profile / settings. */
     object MainTabs : Screen("main_tabs")
     /** Tab ids for bottom bar (not separate NavHost routes). */
@@ -229,9 +254,8 @@ fun AppNavGraph(
                     onVehicleProfileSave(vehicle)
                     userPrefsManager.setWeeklyCo2GoalKg(weeklyGoalKg)
                     userPrefsManager.setOnboardingDone()
-                    // popUpTo(0) clears the entire back stack regardless of how many
-                    // onboarding copies were pushed (e.g. double-navigation on first sign-in).
-                    navController.navigate(Screen.MainTabs.route) {
+                    // Go via the celebration moment; it auto-advances to MainTabs.
+                    navController.navigate(Screen.OnboardingCelebration.route) {
                         popUpTo(0) { inclusive = true }
                         launchSingleTop = true
                     }
@@ -240,6 +264,18 @@ fun AppNavGraph(
                     userPrefsManager.setOnboardingDone()
                     navController.navigate(Screen.MainTabs.route) {
                         popUpTo(0) { inclusive = true }
+                        launchSingleTop = true
+                    }
+                }
+            )
+        }
+
+        // ── One-time celebration after completing onboarding ─────────────────
+        fadeComposable(Screen.OnboardingCelebration.route) {
+            OnboardingCelebrationScreen(
+                onFinished = {
+                    navController.navigate(Screen.MainTabs.route) {
+                        popUpTo(Screen.OnboardingCelebration.route) { inclusive = true }
                         launchSingleTop = true
                     }
                 }

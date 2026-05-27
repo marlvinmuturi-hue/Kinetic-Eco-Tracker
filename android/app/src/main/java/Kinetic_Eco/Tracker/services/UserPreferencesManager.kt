@@ -171,6 +171,9 @@ class UserPreferencesManager(context: Context) {
 
         /** Display name cache — avoids email-prefix flicker on cold launch while Firestore loads. */
         private const val KEY_CACHED_DISPLAY_NAME = "cached_display_name"
+
+        /** Set after the user manually dismisses the "start your first trip" dashboard hint. */
+        private const val KEY_FIRST_TRIP_PROMPT_DISMISSED = "kinetic_first_trip_prompt_dismissed"
     }
     
     /**
@@ -598,6 +601,13 @@ class UserPreferencesManager(context: Context) {
 
     fun setHeroEquivalencyHintSeen() {
         prefs.edit().putBoolean(KEY_HERO_EQUIVALENCY_HINT_SEEN, true).apply()
+    }
+
+    fun hasFirstTripPromptBeenDismissed(): Boolean =
+        prefs.getBoolean(KEY_FIRST_TRIP_PROMPT_DISMISSED, false)
+
+    fun setFirstTripPromptDismissed() {
+        prefs.edit().putBoolean(KEY_FIRST_TRIP_PROMPT_DISMISSED, true).apply()
     }
 
     /**

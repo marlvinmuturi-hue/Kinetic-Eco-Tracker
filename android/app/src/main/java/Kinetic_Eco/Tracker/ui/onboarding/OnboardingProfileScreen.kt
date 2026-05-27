@@ -34,7 +34,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import coil.compose.AsyncImage
 import java.io.File
-import Kinetic_Eco.Tracker.data.*
+import Kinetic_Eco.Tracker.data.VehicleProfile
 import Kinetic_Eco.Tracker.services.Gender
 import Kinetic_Eco.Tracker.services.UserPhysicalProfile
 import Kinetic_Eco.Tracker.ui.components.BirthDatePicker
@@ -68,7 +68,6 @@ fun OnboardingProfileScreen(
     onSkip: () -> Unit
 ) {
     var physicalExpanded by remember { mutableStateOf(true) }
-    var vehicleExpanded by remember { mutableStateOf(false) }
 
     // Personal weekly CO₂-saved goal. Kept in kg, half-kg granularity. The
     // default (5 kg) is also what's used as the visual reference for the
@@ -81,17 +80,6 @@ fun OnboardingProfileScreen(
     var height by remember { mutableStateOf(if (initialPhysical.height == 170.0) "" else initialPhysical.height.toString()) }
     var birthDateMs by remember { mutableStateOf(initialPhysical.birthDateMs) }
     var gender by remember { mutableStateOf(initialPhysical.gender) }
-
-    // Vehicle fields. The top-level `primaryFuel` chip drives which sub-fields
-    // are interactive — combustion shows CC band + body type, electric shows
-    // EV class + motor band. Train/aircraft remain orthogonal.
-    var primaryFuel  by remember { mutableStateOf(initialVehicle.primaryFuelType) }
-    var ccBand       by remember { mutableStateOf(initialVehicle.drivingCcBand) }
-    var bodyType     by remember { mutableStateOf(initialVehicle.bodyType) }
-    var evClass      by remember { mutableStateOf(initialVehicle.electricVehicleClass) }
-    var evMotor      by remember { mutableStateOf(initialVehicle.electricMotorPower) }
-    var trainType    by remember { mutableStateOf(initialVehicle.trainPropulsion) }
-    var aircraftType by remember { mutableStateOf(initialVehicle.aircraftCategory) }
 
     val scroll = rememberScrollState()
 
@@ -172,146 +160,6 @@ fun OnboardingProfileScreen(
             }
         }
 
-        // ── Vehicle profile ──────────────────────────────────────────────────
-        ProfileSection(
-            title = "Vehicle profile",
-            expanded = vehicleExpanded,
-            onToggle = { vehicleExpanded = !vehicleExpanded }
-        ) {
-            // ── Primary fuel type ────────────────────────────────────────
-            // Top-level pick that gates the combustion-only and electric-only
-            // sections below; matches the new flow in Settings → Vehicle.
-            Text("Fuel type", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                PrimaryFuelType.entries.forEach { f ->
-                    FilterChip(
-                        selected = primaryFuel == f,
-                        onClick = { primaryFuel = f },
-                        label = {
-                            Text(
-                                when (f) {
-                                    PrimaryFuelType.PETROL -> "Petrol"
-                                    PrimaryFuelType.DIESEL -> "Diesel"
-                                    PrimaryFuelType.ELECTRIC -> "Electric"
-                                }
-                            )
-                        }
-                    )
-                }
-            }
-
-            // ── Combustion (Petrol/Diesel) sub-fields ────────────────────
-            if (primaryFuel == PrimaryFuelType.PETROL || primaryFuel == PrimaryFuelType.DIESEL) {
-                Text("Engine size", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    DrivingEngineCcBand.entries.forEach { band ->
-                        val label = when (band) {
-                            DrivingEngineCcBand.UP_TO_1000   -> "Up to 1 000 cc"
-                            DrivingEngineCcBand.CC_1001_1400 -> "1 001 – 1 400 cc"
-                            DrivingEngineCcBand.CC_1401_1800 -> "1 401 – 1 800 cc"
-                            DrivingEngineCcBand.CC_1801_2500 -> "1 801 – 2 500 cc"
-                            DrivingEngineCcBand.OVER_2500    -> "Over 2 500 cc"
-                        }
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            RadioButton(selected = ccBand == band, onClick = { ccBand = band })
-                            Text(label, style = MaterialTheme.typography.bodyMedium)
-                        }
-                    }
-                }
-
-                Text("Body type", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    VehicleBodyType.entries.forEach { bt ->
-                        val label = when (bt) {
-                            VehicleBodyType.HATCHBACK     -> "Hatchback"
-                            VehicleBodyType.SEDAN         -> "Sedan"
-                            VehicleBodyType.SUV_CROSSOVER -> "SUV / Crossover"
-                            VehicleBodyType.PICKUP        -> "Pickup truck"
-                            VehicleBodyType.MINIVAN_MPV   -> "Minivan / MPV"
-                        }
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            RadioButton(selected = bodyType == bt, onClick = { bodyType = bt })
-                            Text(label, style = MaterialTheme.typography.bodyMedium)
-                        }
-                    }
-                }
-            }
-
-            // ── Electric sub-fields ──────────────────────────────────────
-            if (primaryFuel == PrimaryFuelType.ELECTRIC) {
-                Text("Vehicle type", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    ElectricVehicleClass.entries.forEach { ev ->
-                        FilterChip(
-                            selected = evClass == ev,
-                            onClick = { evClass = ev },
-                            label = {
-                                Text(
-                                    when (ev) {
-                                        ElectricVehicleClass.TWO_WHEELER   -> "2-wheeler"
-                                        ElectricVehicleClass.THREE_WHEELER -> "3-wheeler"
-                                        ElectricVehicleClass.CAR           -> "Car"
-                                    }
-                                )
-                            }
-                        )
-                    }
-                }
-
-                Text("Motor rating", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                    ElectricMotorPowerBand.entries.forEach { band ->
-                        val label = when (band) {
-                            ElectricMotorPowerBand.UP_TO_3_KW   -> "≤ 3 kW (e-bike, micro scooter)"
-                            ElectricMotorPowerBand.KW_3_TO_10   -> "3 – 10 kW (scooter, light 3-wheeler)"
-                            ElectricMotorPowerBand.KW_10_TO_60  -> "10 – 60 kW (city EV, larger 3-wheeler)"
-                            ElectricMotorPowerBand.KW_60_TO_150 -> "60 – 150 kW (mid-range EV)"
-                            ElectricMotorPowerBand.OVER_150_KW  -> "> 150 kW (performance / luxury EV)"
-                        }
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            RadioButton(selected = evMotor == band, onClick = { evMotor = band })
-                            Text(label, style = MaterialTheme.typography.bodyMedium)
-                        }
-                    }
-                }
-            }
-
-            // Train type
-            Text("Train type", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                TrainPropulsion.entries.forEach { t ->
-                    FilterChip(
-                        selected = trainType == t,
-                        onClick = { trainType = t },
-                        label = {
-                            Text(
-                                when (t) {
-                                    TrainPropulsion.ELECTRIC        -> "Electric"
-                                    TrainPropulsion.DIESEL_ELECTRIC -> "Diesel-electric"
-                                }
-                            )
-                        }
-                    )
-                }
-            }
-
-            // Aircraft
-            Text("Aircraft type", style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                AircraftCategory.entries.forEach { ac ->
-                    val label = when (ac) {
-                        AircraftCategory.REGIONAL_TURBOPROP  -> "Regional turboprop"
-                        AircraftCategory.NARROW_BODY_JET     -> "Narrow-body jet"
-                        AircraftCategory.WIDE_BODY_LONG_HAUL -> "Wide-body / long-haul"
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        RadioButton(selected = aircraftType == ac, onClick = { aircraftType = ac })
-                        Text(label, style = MaterialTheme.typography.bodyMedium)
-                    }
-                }
-            }
-        }
-
         Spacer(Modifier.height(8.dp))
 
         // ── Weekly CO₂-saved goal ─────────────────────────────────────────
@@ -361,6 +209,17 @@ fun OnboardingProfileScreen(
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSecondaryContainer.copy(alpha = 0.75f)
                 )
+
+                Spacer(Modifier.height(10.dp))
+
+                // Equivalency: 1 km average petrol ≈ 0.21 kg CO₂
+                val drivingKmEquivalent = (weeklyGoalKg / 0.21f).toInt()
+                Text(
+                    text = "That's the equivalent of not driving $drivingKmEquivalent km this week.",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    fontWeight = androidx.compose.ui.text.font.FontWeight.Medium
+                )
             }
         }
 
@@ -373,38 +232,19 @@ fun OnboardingProfileScreen(
         Button(
             onClick = {
                 val physical = UserPhysicalProfile(
-                    weight = weight.toDoubleOrNull() ?: 70.0,
-                    height = height.toDoubleOrNull() ?: 170.0,
+                    weight      = weight.toDoubleOrNull() ?: 70.0,
+                    height      = height.toDoubleOrNull() ?: 170.0,
                     birthDateMs = birthDateMs,
-                    gender = gender
+                    gender      = gender
                 )
-                // Mirror the top-level fuel pick into the legacy iceFuel slot
-                // so combustion math has a sensible value even when the user
-                // chose Electric. The unselected branch keeps its initial
-                // value from `initialVehicle` for round-tripping.
-                val derivedIceFuel = when (primaryFuel) {
-                    PrimaryFuelType.PETROL   -> IceFuel.PETROL
-                    PrimaryFuelType.DIESEL   -> IceFuel.DIESEL
-                    PrimaryFuelType.ELECTRIC -> initialVehicle.iceFuel
-                }
-                val vehicle = VehicleProfile(
-                    primaryFuelType      = primaryFuel,
-                    iceFuel              = derivedIceFuel,
-                    drivingCcBand        = ccBand,
-                    bodyType             = bodyType,
-                    electricVehicleClass = evClass,
-                    electricMotorPower   = evMotor,
-                    trainPropulsion      = trainType,
-                    aircraftCategory     = aircraftType
-                )
-                onSave(physical, vehicle, weeklyGoalKg)
+                onSave(physical, initialVehicle, weeklyGoalKg)
             },
             modifier = Modifier
                 .fillMaxWidth()
                 .height(52.dp),
             shape = MaterialTheme.shapes.large
         ) {
-            Text("Save & get started", style = MaterialTheme.typography.labelLarge)
+            Text("I'm ready", style = MaterialTheme.typography.labelLarge)
         }
 
         OutlinedButton(

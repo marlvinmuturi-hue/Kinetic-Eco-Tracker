@@ -8,6 +8,7 @@ import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.layout.offset
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -246,6 +247,12 @@ fun DashboardScreen(
     val aiAnalysis = (aiState as? Kinetic_Eco.Tracker.viewmodel.AIAnalysisState.Success)
         ?.analysis
 
+    // First-run prompt: read once so recomposition doesn't flicker after dismiss.
+    var firstTripPromptDismissed by remember {
+        mutableStateOf(userPrefsManager.hasFirstTripPromptBeenDismissed())
+    }
+    val showFirstTripPrompt = allSessions.isEmpty() && !firstTripPromptDismissed
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -328,6 +335,18 @@ fun DashboardScreen(
                         tint = colorScheme.onBackground
                     )
                 }
+            }
+        }
+
+        // ── First-run prompt ─────────────────────────────────────────────────
+        if (showFirstTripPrompt) {
+            item {
+                FirstTripPromptCard(
+                    onDismiss = {
+                        userPrefsManager.setFirstTripPromptDismissed()
+                        firstTripPromptDismissed = true
+                    }
+                )
             }
         }
 
@@ -1406,6 +1425,86 @@ private fun activityIconAndTint(
         ActivityType.IDLE             -> Icons.Default.PauseCircle
     }
     return icon to colorScheme.onSurfaceVariant
+}
+
+/**
+ * Shown on the very first dashboard load when the user has no sessions.
+ * Points to the floating play button (FAB) so new users know exactly how to begin.
+ * Dismissed permanently via [onDismiss]; also disappears automatically once a
+ * session exists (the [showFirstTripPrompt] state in the parent handles that).
+ */
+@Composable
+private fun FirstTripPromptCard(onDismiss: () -> Unit) {
+    val colorScheme = MaterialTheme.colorScheme
+
+    val infiniteTransition = rememberInfiniteTransition(label = "arrow_pulse")
+    val arrowOffset by infiniteTransition.animateFloat(
+        initialValue  = 0f,
+        targetValue   = 8f,
+        animationSpec = infiniteRepeatable(
+            animation  = androidx.compose.animation.core.tween(800, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "arrow_offset"
+    )
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors   = CardDefaults.cardColors(containerColor = colorScheme.primaryContainer),
+        shape    = MaterialTheme.shapes.large
+    ) {
+        Column(
+            modifier            = Modifier
+                .fillMaxWidth()
+                .padding(20.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            Row(
+                modifier            = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment   = Alignment.Top
+            ) {
+                Text(
+                    text       = "Start your first trip",
+                    style      = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color      = colorScheme.onPrimaryContainer,
+                    modifier   = Modifier.weight(1f)
+                )
+                IconButton(
+                    onClick  = onDismiss,
+                    modifier = Modifier.size(32.dp)
+                ) {
+                    Icon(
+                        imageVector        = Icons.Default.Close,
+                        contentDescription = "Dismiss",
+                        tint               = colorScheme.onPrimaryContainer.copy(alpha = 0.6f),
+                        modifier           = Modifier.size(18.dp)
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(6.dp))
+
+            Text(
+                text  = "Tap the play button below to begin tracking. Your first session will appear here.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = colorScheme.onPrimaryContainer.copy(alpha = 0.85f)
+            )
+
+            Spacer(Modifier.height(16.dp))
+
+            // Bouncing down-arrow pointing toward the FAB
+            Icon(
+                imageVector        = Icons.Default.KeyboardArrowDown,
+                contentDescription = null,
+                tint               = colorScheme.primary,
+                modifier           = Modifier
+                    .size(36.dp)
+                    .offset(y = arrowOffset.dp)
+            )
+        }
+    }
 }
 
 private fun formatDistance(meters: Double, unitSystem: UnitSystem): String {

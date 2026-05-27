@@ -18,8 +18,8 @@
     <string name="default_web_client_id">gen-lang-client-0114974661</string>
 
     <!-- Terms & privacy (first launch) -->
-    <string name="terms_title">Terms &amp; privacy</string>
-    <string name="terms_intro">Please review and accept our User Agreement, Terms of Use, and Privacy Policy before continuing.</string>
+    <string name="terms_title">Terms &amp; Privacy Policy</string>
+    <string name="terms_intro">Effective 27 May 2026. Please review and accept our Terms &amp; Conditions and Privacy Policy before continuing.</string>
     <string name="terms_summary_bullet_header">Summary</string>
     <string name="terms_summary_bullets">The full legal text is in the PDF. By continuing, you confirm you have access to it and agree to be bound by it.</string>
     <string name="terms_read_full_pdf">Read full document (PDF)</string>

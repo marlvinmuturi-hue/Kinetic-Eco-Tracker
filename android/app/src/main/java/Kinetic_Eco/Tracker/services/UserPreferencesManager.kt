@@ -123,7 +123,7 @@ class UserPreferencesManager(context: Context) {
         private const val METERS_PER_MILE = 1609.344
 
         /** Must match the document in assets/legal/user_terms_and_conditions.pdf when you update it. */
-        const val CURRENT_TERMS_DOCUMENT_VERSION = "1"
+        const val CURRENT_TERMS_DOCUMENT_VERSION = "2"
 
         // Weekly digest notification opt-in (default: true)
         private const val KEY_WEEKLY_DIGEST_ENABLED = "weekly_digest_enabled"

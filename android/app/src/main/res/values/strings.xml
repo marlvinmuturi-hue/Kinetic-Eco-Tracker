@@ -7,6 +7,8 @@
          rotate both IDs in the AdMob console to prevent ad fraud. -->
     <string name="admob_application_id" translatable="false">ca-app-pub-1244317007978137~2708452877</string>
     <string name="admob_banner_unit_id" translatable="false">ca-app-pub-1244317007978137/5717030642</string>
+    <!-- TODO: replace with your real interstitial ad unit ID from the AdMob console -->
+    <string name="admob_interstitial_unit_id" translatable="false">ca-app-pub-1244317007978137/REPLACE_WITH_INTERSTITIAL_UNIT_ID</string>
     <string name="nav_dashboard">Dashboard</string>
     <string name="nav_tracker">Tracker</string>
     <string name="nav_analytics">Analysis</string>

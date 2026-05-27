@@ -48,6 +48,7 @@ import Kinetic_Eco.Tracker.R
 import androidx.compose.ui.window.Dialog
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import Kinetic_Eco.Tracker.data.*
+import Kinetic_Eco.Tracker.ui.components.InterstitialAdManager
 import Kinetic_Eco.Tracker.ui.components.SingleLineMetricValueText
 import Kinetic_Eco.Tracker.ui.components.SingleLineValueText
 import Kinetic_Eco.Tracker.ui.components.DynamicTrackerBackground
@@ -94,6 +95,12 @@ fun TrackerScreen(
     }
     
     val isTracking by viewModel.isTracking.collectAsStateWithLifecycle()
+
+    // Reset the interstitial per-session gate whenever the user starts a new tracking session.
+    LaunchedEffect(isTracking) {
+        if (isTracking) InterstitialAdManager.resetSession()
+    }
+
     val currentSpeed by viewModel.currentSpeed.collectAsStateWithLifecycle()
     
     // Animate speed for near-instant response (user prefers responsiveness over smoothness)
@@ -370,6 +377,8 @@ fun TrackerScreen(
                         onSuccess = {
                             android.util.Log.d("TrackerScreen", "✅ stopAndSaveSession completed successfully")
                             onSessionSaved()
+                            // Pre-load the next interstitial while the user reads their summary.
+                            InterstitialAdManager.preload(context)
                             showStopDialog = false
                             showSessionSummary = true
                         },
@@ -405,6 +414,8 @@ fun TrackerScreen(
                 showSessionSummary = false
                 savedSessionStats = null
                 saveError = null
+                // Show the pre-loaded interstitial (guards: 1 per session, 3-min cooldown).
+                (context as? android.app.Activity)?.let { InterstitialAdManager.showIfReady(it) }
             }
         )
     }

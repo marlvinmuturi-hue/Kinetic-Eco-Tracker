@@ -45,11 +45,21 @@ import com.google.android.gms.ads.AdView
 import com.google.android.gms.ads.LoadAdError
 import com.google.android.gms.ads.MobileAds
 import Kinetic_Eco.Tracker.R
+import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
 import kotlin.math.min
 
 private const val TAG = "AdMobBanner"
+
+/** Max banner ad impressions per app session (process lifetime). */
+private const val MAX_BANNER_IMPRESSIONS = 3
+
+/**
+ * Counts how many banner ad impressions have fired in this app session.
+ * Resets automatically on process restart (i.e., when the user fully closes the app).
+ */
+private val sessionBannerImpressions = AtomicInteger(0)
 
 /** Google sample banner — reliably returns test ads (debuggable builds only). */
 private const val TEST_BANNER_UNIT_ID = "ca-app-pub-3940256099942544/6300978111"
@@ -116,6 +126,9 @@ fun AdMobBanner(
         Spacer(Modifier.height(0.dp))
     } else if (!sdkReady) {
         Spacer(Modifier.height(0.dp))
+    } else if (sessionBannerImpressions.get() >= MAX_BANNER_IMPRESSIONS) {
+        // Session impression cap reached — no more banner loads this session.
+        Spacer(Modifier.height(0.dp))
     } else {
         val isDebuggable = (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
         val adUnitId = remember(isDebuggable) {
@@ -154,6 +167,11 @@ fun AdMobBanner(
                             adListener = object : AdListener() {
                                 override fun onAdLoaded() {
                                     Log.d(TAG, "onAdLoaded unit=$adUnitId")
+                                }
+
+                                override fun onAdImpression() {
+                                    val count = sessionBannerImpressions.incrementAndGet()
+                                    Log.d(TAG, "onAdImpression count=$count/$MAX_BANNER_IMPRESSIONS unit=$adUnitId")
                                 }
 
                                 override fun onAdFailedToLoad(error: LoadAdError) {

@@ -43,8 +43,19 @@ service cloud.firestore {
     // bypasses these rules.
     match /leaderboard/{userId} {
       allow read: if request.auth != null;
-      allow create, update, delete: if request.auth != null &&
-        request.auth.uid == userId;
+      allow delete: if request.auth != null && request.auth.uid == userId;
+      allow create, update: if request.auth != null &&
+        request.auth.uid == userId &&
+        // Validate numeric ranges to prevent fabricated scores
+        request.resource.data.co2Saved is number &&
+        request.resource.data.co2Saved >= -500 &&
+        request.resource.data.co2Saved <= 500 &&
+        request.resource.data.totalDistanceKm is number &&
+        request.resource.data.totalDistanceKm >= 0 &&
+        request.resource.data.totalDistanceKm <= 5000 &&
+        request.resource.data.totalSessions is number &&
+        request.resource.data.totalSessions >= 0 &&
+        request.resource.data.totalSessions <= 10000;
 
       // Reactions: each user controls only their own reaction sub-document.
       match /reactions/{reactorUserId} {

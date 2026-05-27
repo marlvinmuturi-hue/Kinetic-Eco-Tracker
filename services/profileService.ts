@@ -73,9 +73,8 @@ const persistProfiles = (profiles: ProfileRegistry) => {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(profiles));
 };
 
-// SECURITY NOTE: Password hashing removed - passwords should NEVER be stored client-side
-// Use Firebase Authentication for all password management
-// This function is kept for backward compatibility with legacy profiles only
+// btoa() is NOT a hash — it is reversible Base64 encoding. Removed from active use.
+// Legacy profiles that have a stored passwordHash should be migrated to Firebase Auth.
 const hashPasswordLegacy = (password: string) => btoa(password);
 
 export const getActiveUserEmail = (): string | null => {
@@ -119,14 +118,10 @@ export const authenticateOrCreateProfile = (email: string, password: string): { 
     return { profile: existing };
   }
 
-  // For new profiles, do NOT store passwords locally
-  // Authentication should happen via Firebase Auth
+  // Firebase-managed profiles must authenticate via Firebase Auth exclusively.
+  // Granting local access here would bypass all authentication.
   if (existing) {
-    existing.lastLogin = new Date().toISOString();
-    profiles[normalizedEmail] = existing;
-    persistProfiles(profiles);
-    setActiveUserEmail(normalizedEmail);
-    return { profile: existing };
+    return { profile: null, error: 'This account uses Firebase Authentication. Please sign in via the main login flow.' };
   }
 
   // Create new profile without password - Firebase Auth handles authentication

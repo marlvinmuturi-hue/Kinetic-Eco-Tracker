@@ -2,7 +2,9 @@
 <resources>
     <string name="app_name">Kinetic Eco Tracker</string>
 
-    <!-- AdMob: App ID (~) is app-level; ad unit ID (/) is per placement. -->
+    <!-- AdMob: App ID (~) is app-level; ad unit ID (/) is per placement.
+         WARNING: These IDs are compiled into the APK. If this repo goes public,
+         rotate both IDs in the AdMob console to prevent ad fraud. -->
     <string name="admob_application_id" translatable="false">ca-app-pub-1244317007978137~2708452877</string>
     <string name="admob_banner_unit_id" translatable="false">ca-app-pub-1244317007978137/5717030642</string>
     <string name="nav_dashboard">Dashboard</string>

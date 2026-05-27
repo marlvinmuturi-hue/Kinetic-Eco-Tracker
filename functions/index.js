@@ -1086,11 +1086,76 @@ exports.weeklyEmailReport = functions.pubsub
   });
 
 /**
+ * Generate a single-session eco insight via Gemini (server-side, key never exposed to browser).
+ */
+exports.generateSessionInsight = functions.https.onRequest(async (req, res) => {
+  res.set('Access-Control-Allow-Origin', '*');
+  res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
+  res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+
+  if (req.method === 'OPTIONS') { res.status(204).send(''); return; }
+  if (req.method !== 'POST') { res.status(405).json({ error: 'Method not allowed' }); return; }
+
+  // Authenticate
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    res.status(401).json({ error: 'Unauthorized' }); return;
+  }
+  try {
+    await admin.auth().verifyIdToken(authHeader.split('Bearer ')[1]);
+  } catch {
+    res.status(401).json({ error: 'Unauthorized: invalid token' }); return;
+  }
+
+  // Global throttle (shared with analyzeActivity)
+  const retryAfterSec = throttleAnalysis();
+  if (retryAfterSec > 0) {
+    res.set('Retry-After', String(retryAfterSec));
+    res.status(429).json({ error: `Too many requests. Retry in ${retryAfterSec}s.` }); return;
+  }
+
+  const { totalDuration, totalDistance, caloriesBurned, co2Emissions, breakdown } = req.body || {};
+
+  const prompt = `
+Analyze the following movement data from a user's tracking session:
+
+Total Duration: ${Math.round(Number(totalDuration) || 0)} seconds
+Total Distance: ${((Number(totalDistance) || 0) / 1000).toFixed(2)} km
+Calories Burned: ${Math.round(Number(caloriesBurned) || 0)} kcal
+CO2 Emissions: ${(Number(co2Emissions) || 0).toFixed(2)} kg
+
+Breakdown:
+- Walking: ${((breakdown?.WALKING?.distance || 0) / 1000).toFixed(2)} km, ${Math.round(breakdown?.WALKING?.time || 0)} sec
+- Driving: ${((breakdown?.DRIVING?.distance || 0) / 1000).toFixed(2)} km, ${Math.round(breakdown?.DRIVING?.time || 0)} sec
+- Flying: ${((breakdown?.FLYING?.distance || 0) / 1000).toFixed(2)} km, ${Math.round(breakdown?.FLYING?.time || 0)} sec
+
+Provide a short, engaging, and personalized summary (approx 100 words).
+Focus on the environmental impact and health benefits.
+If they walked a lot, praise them for low emissions and high calorie burn.
+If they drove or flew a lot, suggest carbon offsetting or mention the environmental cost gently.
+Use Markdown for formatting.
+`.trim();
+
+  try {
+    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+    const result = await model.generateContent({
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      systemInstruction: "You are an eco-conscious fitness coach named 'EcoStep'.",
+    });
+    const insight = result.response.text();
+    res.status(200).json({ insight });
+  } catch (error) {
+    console.error('generateSessionInsight: Gemini error', error);
+    res.status(500).json({ error: 'AI service error' });
+  }
+});
+
+/**
  * Health check endpoint
  */
 exports.healthCheck = functions.https.onRequest((req, res) => {
-  res.json({ 
-    status: 'ok', 
+  res.json({
+    status: 'ok',
     timestamp: Date.now(),
     version: '1.5.0',
     message: 'Kinetic Eco API is running'

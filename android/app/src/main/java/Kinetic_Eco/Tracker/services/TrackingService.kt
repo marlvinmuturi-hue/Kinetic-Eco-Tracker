@@ -96,6 +96,12 @@ class TrackingService : LifecycleService() {
     private var lastBearingDeg: Float? = null
     /** Count of consecutive heading flips (>45 °) — high counts indicate GPS drift, not real movement. */
     private var headingJitterCount = 0
+    /** Raw GPS speed of the previous fix — used to detect a frozen/locked speed value. */
+    private var lastRawGpsSpeed = Float.NaN
+    /** How many consecutive fixes have returned the exact same raw GPS speed. */
+    private var consecutiveIdenticalGpsSpeeds = 0
+    /** Timestamp (ms) when sensors first confirmed STILL; 0 if not currently still. */
+    private var stillConfirmedSinceMs = 0L
 
     private val _evConfirmPrompt = MutableStateFlow(false)
     val evConfirmPrompt: StateFlow<Boolean> = _evConfirmPrompt.asStateFlow()
@@ -391,6 +397,9 @@ class TrackingService : LifecycleService() {
         consecutiveCleanGpsReadings = 0
         lastBearingDeg = null
         headingJitterCount = 0
+        lastRawGpsSpeed = Float.NaN
+        consecutiveIdenticalGpsSpeeds = 0
+        stillConfirmedSinceMs = 0L
         // coldStartVehicleMs is intentionally NOT reset here — it is set in onStartCommand
         // before startTracking() is called, so clearing it here would erase the flag.
         railLookupJob?.cancel()
@@ -705,6 +714,9 @@ class TrackingService : LifecycleService() {
         consecutiveCleanGpsReadings = 0
         lastBearingDeg = null
         headingJitterCount = 0
+        lastRawGpsSpeed = Float.NaN
+        consecutiveIdenticalGpsSpeeds = 0
+        stillConfirmedSinceMs = 0L
         _evConfirmPrompt.value = false
         coldStartVehicleMs = 0L
         lastPosition = null
@@ -1199,7 +1211,19 @@ class TrackingService : LifecycleService() {
      * Hysteresis for motor modes: brief low-speed stretches (traffic, parking) do not drop to walk/run
      * until speed stays below the driving band for [STICKY_RECENT_DRIVING_MS] and then [MOTOR_LOW_SPEED_EXIT_MS].
      */
-    private fun applyStickyMotorActivity(refinedActivity: ActivityType, speed: Float, now: Long): ActivityType {
+    private fun applyStickyMotorActivity(
+        refinedActivity: ActivityType,
+        speed: Float,
+        now: Long,
+        sensorStillOverride: Boolean = false
+    ): ActivityType {
+        if (sensorStillOverride) {
+            // Sensors have confirmed stationary for long enough — flush hysteresis timers
+            // so the activity can drop out of DRIVING immediately.
+            motorLowSpeedSinceMs = 0L
+            lastDrivingBandMs = 0L
+            return refinedActivity
+        }
         val cur = _currentActivity.value
         val isMotor = cur == ActivityType.DRIVING || cur == ActivityType.ELECTRIC_VEHICLE ||
             cur == ActivityType.MOTORCYCLE || cur == ActivityType.TRAIN
@@ -1532,20 +1556,36 @@ class TrackingService : LifecycleService() {
         val distanceBasedSpeed = if (timeDelta > 0.1 && distanceDelta > 0.5) {
             (distanceDelta / timeDelta).toFloat()
         } else 0f
-        
+
+        // Stale-fix detection: if the GPS timestamp is old the chip hasn't produced a
+        // fresh fix, so any cached speed value is meaningless for the current moment.
+        val fixIsStale = lastPosition != null && (now - position.timestamp) > GPS_FIX_STALE_MS
+        // Locked-speed detection: GPS chips sometimes freeze the speed field at a
+        // non-zero value across multiple fixes (common indoors). Reset the counter on
+        // any value change.
+        if (lastPosition != null) {
+            if (position.speed == lastRawGpsSpeed) consecutiveIdenticalGpsSpeeds++
+            else consecutiveIdenticalGpsSpeeds = 0
+        }
+        lastRawGpsSpeed = position.speed
+        val speedIsLocked = consecutiveIdenticalGpsSpeeds >= GPS_IDENTICAL_SPEED_COUNT
+
         // Speed pipeline: raw GPS first, then Kalman fallback, then distance-based fallback
         // On the first fix (no previous position), the GPS speed field may be stale from a
         // prior session — ignore it so the first displayed speed is always 0.
         var speed = if (lastPosition == null) 0f else position.speed.coerceAtLeast(0f)
         val kalmanSpeed = filtered.speed.coerceAtLeast(0f)
         val gpsUnreliable = speed < GPS_SPEED_UNRELIABLE_MAX || position.accuracy > POOR_ACCURACY_METERS
-        if (gpsUnreliable) {
+        if (fixIsStale || speedIsLocked) {
+            // Stale or frozen GPS — treat as zero; do not forward a cached speed value.
+            speed = 0f
+        } else if (gpsUnreliable) {
             if (kalmanSpeed > GPS_SPEED_UNRELIABLE_MAX) {
                 speed = kalmanSpeed
             } else if (distanceBasedSpeed > GPS_SPEED_UNRELIABLE_MAX) {
                 speed = distanceBasedSpeed
-            } else if (smoothedSpeed > SUSPICIOUS_ZERO_HOLD_SPEED) {
-                speed = smoothedSpeed  // Reject suspicious 0: hold last when clearly moving
+            } else if (smoothedSpeed > SUSPICIOUS_ZERO_HOLD_SPEED && sensorService.getSensorHint() != SensorHint.STILL) {
+                speed = smoothedSpeed  // Hold last only when sensors confirm movement
             }
         }
         
@@ -1553,12 +1593,24 @@ class TrackingService : LifecycleService() {
         val sensorHint = sensorService.getSensorHint()
         val hasAccelerometer = sensorService.hasAccelerometer()
 
+        // Track how long sensors have continuously confirmed STILL.
+        if (sensorHint == SensorHint.STILL) {
+            if (stillConfirmedSinceMs == 0L) stillConfirmedSinceMs = now
+        } else {
+            stillConfirmedSinceMs = 0L
+        }
+        // After STILL_MOTOR_OVERRIDE_MS of confirmed stillness, bypass sticky-motor
+        // hysteresis so a stationary phone doesn't stay in DRIVING indefinitely.
+        val sensorStillOverride = stillConfirmedSinceMs > 0L &&
+            (now - stillConfirmedSinceMs) >= STILL_MOTOR_OVERRIDE_MS
+
         // Sensors confirm the user is stationary: GPS speed is noise — silence it.
-        // Only below DRIVING_MIN so genuinely fast-moving vehicles are unaffected.
-        if (_manualActivityMode.value == null &&
-            sensorHint == SensorHint.STILL &&
-            speed < SpeedThresholds.DRIVING_MIN.toFloat()) {
-            speed = 0f
+        // Extended to also cover stale fixes and frozen GPS speed values so that an
+        // indoor chip reporting 18 km/h is zeroed regardless of the DRIVING_MIN gate.
+        if (_manualActivityMode.value == null && sensorHint == SensorHint.STILL) {
+            if (speed < SpeedThresholds.DRIVING_MIN.toFloat() || fixIsStale || speedIsLocked) {
+                speed = 0f
+            }
         }
 
         // GPS static jitter gate: catches the common case where SensorHint hasn't
@@ -1671,7 +1723,7 @@ class TrackingService : LifecycleService() {
                 }
                 else -> enforceActivitySpeedConsistency(refinedActivity, speed, currentAltitude)
             }
-            refinedActivity = applyStickyMotorActivity(refinedActivity, speed, now)
+            refinedActivity = applyStickyMotorActivity(refinedActivity, speed, now, sensorStillOverride)
             refinedActivity = applyPedestrianToMotorPromotionLatency(refinedActivity, now, position.accuracy)
             refinedActivity = applyRailwayTrainDetection(
                 refinedActivity,
@@ -2554,6 +2606,13 @@ class TrackingService : LifecycleService() {
 
         /** After this long without speed in the driving band, [MOTOR_LOW_SPEED_EXIT_MS] countdown applies. */
         private const val STICKY_RECENT_DRIVING_MS = 120_000L
+
+        /** GPS fix is considered stale if it is older than this; frozen speed is zeroed. */
+        private const val GPS_FIX_STALE_MS = 8_000L
+        /** Zero the speed when raw GPS speed is identical for this many consecutive fixes (frozen chip). */
+        private const val GPS_IDENTICAL_SPEED_COUNT = 3
+        /** After sensors confirm STILL for this long, bypass sticky-motor hysteresis. */
+        private const val STILL_MOTOR_OVERRIDE_MS = 10_000L
 
         /**
          * How long high speed must persist before we let a pedestrian activity

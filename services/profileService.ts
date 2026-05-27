@@ -73,9 +73,6 @@ const persistProfiles = (profiles: ProfileRegistry) => {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(profiles));
 };
 
-// btoa() is NOT a hash — it is reversible Base64 encoding. Removed from active use.
-// Legacy profiles that have a stored passwordHash should be migrated to Firebase Auth.
-const hashPasswordLegacy = (password: string) => btoa(password);
 
 export const getActiveUserEmail = (): string | null => {
   if (typeof window === 'undefined') return null;
@@ -105,23 +102,15 @@ export const authenticateOrCreateProfile = (email: string, password: string): { 
   const profiles = readProfiles();
   const existing = profiles[normalizedEmail];
 
-  // For legacy profiles only - check if password hash exists
-  if (existing && existing.passwordHash && existing.passwordHash !== 'SOCIAL_LOGIN_ONLY') {
-    const passwordHash = hashPasswordLegacy(password);
-    if (existing.passwordHash !== passwordHash) {
-      return { profile: null, error: 'Incorrect password.' };
-    }
-    existing.lastLogin = new Date().toISOString();
-    profiles[normalizedEmail] = existing;
-    persistProfiles(profiles);
-    setActiveUserEmail(normalizedEmail);
-    return { profile: existing };
-  }
-
-  // Firebase-managed profiles must authenticate via Firebase Auth exclusively.
-  // Granting local access here would bypass all authentication.
+  // Migrate legacy profiles: clear any stored btoa hash and force Firebase Auth.
+  // btoa is reversible Base64, not a real hash — accepting it as proof of identity is insecure.
   if (existing) {
-    return { profile: null, error: 'This account uses Firebase Authentication. Please sign in via the main login flow.' };
+    if (existing.passwordHash && existing.passwordHash !== 'FIREBASE_AUTH' && existing.passwordHash !== 'SOCIAL_LOGIN_ONLY') {
+      existing.passwordHash = 'FIREBASE_AUTH';
+      profiles[normalizedEmail] = existing;
+      persistProfiles(profiles);
+    }
+    return { profile: null, error: 'Please sign in using Firebase Authentication. If you have forgotten your password, use the reset password option.' };
   }
 
   // Create new profile without password - Firebase Auth handles authentication

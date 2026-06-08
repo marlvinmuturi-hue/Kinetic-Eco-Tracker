@@ -5,9 +5,12 @@ import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
 import com.google.android.gms.auth.api.signin.GoogleSignInAccount
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.messaging.FirebaseMessaging
 import Kinetic_Eco.Tracker.services.FirebaseAuthService
 
 class AuthViewModel(application: Application) : AndroidViewModel(application) {
@@ -41,6 +44,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 onSuccess = { user ->
                     _currentUser.value = user
                     _isLoading.value = false
+                    saveFcmTokenForUser(user.uid)
                 },
                 onFailure = { error ->
                     _errorMessage.value = error.message ?: "Sign in failed"
@@ -59,6 +63,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 onSuccess = { user ->
                     _currentUser.value = user
                     _isLoading.value = false
+                    saveFcmTokenForUser(user.uid)
                 },
                 onFailure = { error ->
                     _errorMessage.value = error.message ?: "Sign up failed"
@@ -78,6 +83,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 onSuccess = { user ->
                     _currentUser.value = user
                     _isLoading.value = false
+                    saveFcmTokenForUser(user.uid)
                 },
                 onFailure = { error ->
                     _errorMessage.value = error.message ?: "Google sign in failed"
@@ -133,6 +139,26 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
     
     fun clearError() {
         _errorMessage.value = null
+    }
+
+    private fun saveFcmTokenForUser(uid: String) {
+        viewModelScope.launch {
+            try {
+                val token = FirebaseMessaging.getInstance().token.await()
+                val data = mapOf(
+                    "token" to token,
+                    "updatedAt" to System.currentTimeMillis(),
+                    "platform" to "android"
+                )
+                FirebaseFirestore.getInstance()
+                    .collection("users").document(uid)
+                    .collection("fcmTokens").document(token)
+                    .set(data)
+                    .await()
+            } catch (e: Exception) {
+                // non-fatal — token will be saved on next refresh
+            }
+        }
     }
 }
 

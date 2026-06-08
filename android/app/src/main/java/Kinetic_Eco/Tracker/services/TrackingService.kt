@@ -1621,12 +1621,12 @@ class TrackingService : LifecycleService() {
             (now - stillConfirmedSinceMs) >= STILL_MOTOR_OVERRIDE_MS
 
         // Sensors confirm the user is stationary: GPS speed is noise — silence it.
-        // Extended to also cover stale fixes and frozen GPS speed values so that an
-        // indoor chip reporting 18 km/h is zeroed regardless of the DRIVING_MIN gate.
+        // Zero unconditionally when STILL: indoor GPS chips commonly report speeds
+        // above DRIVING_MIN (e.g. 20+ km/h) due to multipath, so the DRIVING_MIN
+        // gate was a false escape hatch. Accelerometer stillness is more reliable
+        // than GPS speed indoors.
         if (_manualActivityMode.value == null && sensorHint == SensorHint.STILL) {
-            if (speed < SpeedThresholds.DRIVING_MIN.toFloat() || fixIsStale || speedIsLocked) {
-                speed = 0f
-            }
+            speed = 0f
         }
 
         // GPS static jitter gate: catches the common case where SensorHint hasn't

@@ -377,7 +377,7 @@ fun TrackerScreen(
                         onSuccess = {
                             android.util.Log.d("TrackerScreen", "✅ stopAndSaveSession completed successfully")
                             onSessionSaved()
-                            // Pre-load the next interstitial while the user reads their summary.
+                            // Preload the next interstitial while the user reads their summary.
                             InterstitialAdManager.preload(context)
                             showStopDialog = false
                             showSessionSummary = true
@@ -414,7 +414,7 @@ fun TrackerScreen(
                 showSessionSummary = false
                 savedSessionStats = null
                 saveError = null
-                // Show the pre-loaded interstitial (guards: 1 per session, 3-min cooldown).
+                // Show the preloaded interstitial (guards: 1 per session, 3-min cooldown).
                 (context as? android.app.Activity)?.let { InterstitialAdManager.showIfReady(it) }
             }
         )
@@ -879,35 +879,47 @@ fun SpeedometerCircle(
 ) {
     val colorScheme = MaterialTheme.colorScheme
     val ringColor = colorScheme.outline.copy(alpha = if (isTracking) 0.9f else 0.52f)
-    val infiniteTransition = rememberInfiniteTransition(label = "pulse")
-    val scale by infiniteTransition.animateFloat(
-        initialValue = 1f,
-        targetValue = if (isTracking) 1.05f else 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(1000, easing = FastOutSlowInEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "scale"
-    )
-    
+    val rippleColor = activityTileAccentColor(activity)
+
+    // Radar-style ripple: 3 rings expand outward from the dial edge and fade
+    // out, staggered so they overlap mid-flight while tracking is active.
+    val rippleTransition = rememberInfiniteTransition(label = "ripple")
+    val rippleDurationMs = 2400
+    val rippleCount = 3
+    val rippleProgresses = List(rippleCount) { index ->
+        rippleTransition.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(rippleDurationMs, easing = LinearEasing),
+                repeatMode = RepeatMode.Restart,
+                initialStartOffset = StartOffset(index * (rippleDurationMs / rippleCount))
+            ),
+            label = "rippleProgress$index"
+        )
+    }
+
     Box(
         modifier = Modifier.size(256.dp),
         contentAlignment = Alignment.Center
     ) {
-        // Pulsating ring (when tracking)
+        // Pulsating ripple rings — move away from the dial while fading out (when tracking)
         if (isTracking) {
-            Box(
-                modifier = Modifier
-                    .size(256.dp)
-                    .scale(scale)
-                    .border(
-                        width = 8.dp,
-                        color = ringColor.copy(alpha = 0.28f),
-                        shape = CircleShape
-                    )
-            )
+            rippleProgresses.forEach { progressState ->
+                val progress = progressState.value
+                Box(
+                    modifier = Modifier
+                        .size(256.dp)
+                        .scale(1f + progress * 0.4f)
+                        .border(
+                            width = 8.dp,
+                            color = rippleColor.copy(alpha = (1f - progress) * 0.4f),
+                            shape = CircleShape
+                        )
+                )
+            }
         }
-        
+
         // Main circle (semi-transparent to show video background)
         Box(
             modifier = Modifier
@@ -1233,14 +1245,16 @@ fun SessionSummaryDialog(
                 Box(
                     modifier = Modifier
                         .size(64.dp)
-                        .background(colorScheme.surfaceVariant.copy(alpha = 0.55f), CircleShape),
+                        .background(Green600, CircleShape),
                     contentAlignment = Alignment.Center
                 ) {
                     Image(
                         painter = painterResource(R.drawable.ic_app_logo),
                         contentDescription = stringResource(R.string.session_summary),
-                        modifier = Modifier.size(48.dp),
-                        contentScale = ContentScale.Fit
+                        modifier = Modifier
+                            .size(48.dp)
+                            .clip(CircleShape),
+                        contentScale = ContentScale.Crop
                     )
                 }
                 
@@ -1577,7 +1591,7 @@ fun SummaryStatCardCompact(
                 tint = color,
                 modifier = Modifier.size(16.dp)
             )
-            Column(modifier = Modifier.weight(1f)) {
+            Column(modifier = Modifier.weight(1f)){
                 Text(
                     text = label,
                     style = MaterialTheme.typography.labelSmall,

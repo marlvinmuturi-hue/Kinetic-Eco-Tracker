@@ -9,8 +9,6 @@
     <string name="nav_start_activity">开始</string>
     <string name="nav_pause_activity">暂停</string>
 
-    <string name="default_web_client_id">gen-lang-client-0114974661</string>
-
     <string name="theme">主题</string>
     <string name="theme_light">浅色</string>
     <string name="theme_dark">深色</string>

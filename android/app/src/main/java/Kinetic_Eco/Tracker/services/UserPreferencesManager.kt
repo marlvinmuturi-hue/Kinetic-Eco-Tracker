@@ -69,6 +69,9 @@ class UserPreferencesManager(context: Context) {
         // Auto-start tracking when walking detected
         private const val KEY_AUTO_START_ON_WALK_ENABLED = "auto_start_on_walk_enabled"
 
+        /** True after the user has completed the one-time Auto Detect first-selection setup. */
+        private const val KEY_AUTODETECT_SETUP_DONE = "autodetect_setup_done"
+
         /** One-shot: idle timeout auto-saved; allow movement to restart without toggling "auto-start on walk". */
         private const val KEY_PENDING_RESUME_AFTER_IDLE_AUTO_STOP = "pending_resume_after_idle_auto_stop"
 
@@ -117,7 +120,7 @@ class UserPreferencesManager(context: Context) {
         private const val DEFAULT_AGE = 30
         private const val DEFAULT_GENDER = "MALE"
         private const val DEFAULT_DISTANCE_ALERTS = false
-        private const val DEFAULT_AUTO_START_ON_WALK = false
+        private const val DEFAULT_AUTO_START_ON_WALK = true
         private const val DEFAULT_NOTIFICATION_SOUNDS = true
         
         private const val METERS_PER_MILE = 1609.344
@@ -419,6 +422,9 @@ class UserPreferencesManager(context: Context) {
         return prefs.getBoolean(KEY_AUTO_START_ON_WALK_ENABLED, DEFAULT_AUTO_START_ON_WALK)
     }
 
+    fun isAutodetectSetupDone(): Boolean = prefs.getBoolean(KEY_AUTODETECT_SETUP_DONE, false)
+    fun setAutodetectSetupDone() = prefs.edit().putBoolean(KEY_AUTODETECT_SETUP_DONE, true).apply()
+
     /**
      * Set by tracking idle auto-stop; cleared when a new session starts. While true, [AutoStartMonitorService]
      * and in-app step auto-start may resume tracking when movement is detected.
@@ -675,14 +681,18 @@ class UserPreferencesManager(context: Context) {
     }
 
     /**
-     * Clear all preferences (for logout). Preserves terms acceptance so users are not prompted again.
+     * Clear all preferences (for logout). Preserves terms acceptance and auto-start preference so
+     * users are not prompted again and background features stay enabled after re-login.
      */
     fun clearAll() {
         val terms = prefs.getString(KEY_TERMS_ACCEPTED_VERSION, null)
+        val autoStart = prefs.getBoolean(KEY_AUTO_START_ON_WALK_ENABLED, false)
         prefs.edit().clear().apply()
-        if (terms != null) {
-            prefs.edit().putString(KEY_TERMS_ACCEPTED_VERSION, terms).apply()
-        }
-        android.util.Log.d("UserPrefsManager", "All preferences cleared (terms acceptance preserved)")
+        prefs.edit().apply {
+            if (terms != null) putString(KEY_TERMS_ACCEPTED_VERSION, terms)
+            // Preserve auto-start: clearAll() must not silently disable a feature the user turned on.
+            putBoolean(KEY_AUTO_START_ON_WALK_ENABLED, autoStart)
+        }.apply()
+        android.util.Log.d("UserPrefsManager", "All preferences cleared (terms + auto-start=$autoStart preserved)")
     }
 }

@@ -2,6 +2,7 @@ package Kinetic_Eco.Tracker.services
 
 import android.util.Log
 import com.google.firebase.auth.FirebaseAuth
+import Kinetic_Eco.Tracker.BuildConfig
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.SetOptions
 import Kinetic_Eco.Tracker.data.ActivityType
@@ -402,8 +403,8 @@ class LeaderboardService {
     }
 
     companion object {
-        private const val DAILY_LEADERBOARD_TOP_URL =
-            "https://us-central1-gen-lang-client-0114974661.cloudfunctions.net/dailyLeaderboardTop"
+        private val DAILY_LEADERBOARD_TOP_URL =
+            "${BuildConfig.FUNCTIONS_BASE_URL}/dailyLeaderboardTop"
 
         @Volatile
         private var instance: LeaderboardService? = null

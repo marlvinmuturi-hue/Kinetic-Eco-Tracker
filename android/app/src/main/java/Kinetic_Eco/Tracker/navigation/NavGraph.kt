@@ -125,6 +125,8 @@ fun AppNavGraph(
     onGoPremium: () -> Unit = {},
     weeklyDigestEnabled: Boolean = true,
     onWeeklyDigestChange: (Boolean) -> Unit = {},
+    dailyDigestEnabled: Boolean = true,
+    onDailyDigestChange: (Boolean) -> Unit = {},
     launchGoogleSignIn: () -> Unit,
     onShowActivitySelector: () -> Unit,
     startDestination: String,
@@ -340,6 +342,8 @@ fun AppNavGraph(
                 onGoPremium = onGoPremium,
                 weeklyDigestEnabled = weeklyDigestEnabled,
                 onWeeklyDigestChange = onWeeklyDigestChange,
+                dailyDigestEnabled = dailyDigestEnabled,
+                onDailyDigestChange = onDailyDigestChange,
                 onProfileClick = { navController.navigate(Screen.Profile.route) },
                 onFeedbackClick = { navController.navigate(Screen.Feedback.route) },
                 onBack = { navController.popBackStack() }

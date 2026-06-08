@@ -2,6 +2,7 @@ package Kinetic_Eco.Tracker.ui.screens
 
 import android.content.Context
 import android.graphics.Paint as AndroidPaint
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -30,6 +31,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
@@ -809,32 +811,13 @@ private fun WeeklyRouteMapCard(
                 for (dayIdx in 0..6) {
                     val (abbr, dom) = chipLabelForRollingDayIndex(dayIdx, snapshotNow)
                     val hasTracks = hasGpsByDayIndex[dayIdx]
-                    FilterChip(
-                        selected = selectedDayIndex == dayIdx,
-                        onClick = { selectedDayIndex = dayIdx },
-                        label = {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Text(
-                                    text = abbr,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    fontWeight = FontWeight.SemiBold
-                                )
-                                Text(
-                                    text = dom.toString(),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = colorScheme.onSurfaceVariant
-                                )
-                            }
-                        },
-                        leadingIcon = if (hasTracks) {
-                            {
-                                Icon(
-                                    imageVector = Icons.Default.Place,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(16.dp)
-                                )
-                            }
-                        } else null
+                    val isSelected = selectedDayIndex == dayIdx
+                    WeekDayChip(
+                        abbr = abbr,
+                        dayOfMonth = dom,
+                        selected = isSelected,
+                        hasTracks = hasTracks,
+                        onClick = { selectedDayIndex = dayIdx }
                     )
                 }
             }
@@ -865,8 +848,62 @@ private fun WeeklyRouteMapCard(
             RouteMapMultiSessionView(
                 routePaths = routePaths,
                 modifier = Modifier.fillMaxWidth(),
-                heightDp = 200,
+                heightDp = 160,
                 showElevationProfile = routePaths.size == 1
+            )
+        }
+    }
+}
+
+/**
+ * Compact day-of-week selector chip sized to its own content. [FilterChip] enforces a
+ * fixed minimum height tuned for single-line labels, which clipped the day-of-month
+ * line under the weekday abbreviation — sizing this ourselves guarantees both lines
+ * are fully visible.
+ */
+@Composable
+private fun WeekDayChip(
+    abbr: String,
+    dayOfMonth: Int,
+    selected: Boolean,
+    hasTracks: Boolean,
+    onClick: () -> Unit
+) {
+    val colorScheme = MaterialTheme.colorScheme
+    val containerColor = if (selected) colorScheme.primaryContainer else colorScheme.surface
+    val contentColor = if (selected) colorScheme.onPrimaryContainer else colorScheme.onSurface
+    val borderColor = if (selected) colorScheme.primary else colorScheme.outline
+
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(12.dp),
+        color = containerColor,
+        contentColor = contentColor,
+        border = BorderStroke(1.dp, borderColor)
+    ) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
+        ) {
+            if (hasTracks) {
+                Icon(
+                    imageVector = Icons.Default.Place,
+                    contentDescription = null,
+                    modifier = Modifier
+                        .size(14.dp)
+                        .padding(bottom = 2.dp)
+                )
+            }
+            Text(
+                text = abbr,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = contentColor
+            )
+            Text(
+                text = dayOfMonth.toString(),
+                style = MaterialTheme.typography.labelSmall,
+                color = contentColor
             )
         }
     }
@@ -916,6 +953,7 @@ private fun AIAnalysisInline(
 ) {
     val colorScheme = MaterialTheme.colorScheme
     val analysisState by viewModel.aiAnalysisState.collectAsStateWithLifecycle()
+    val isDark = colorScheme.background.luminance() < 0.5f
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Button(
@@ -924,7 +962,12 @@ private fun AIAnalysisInline(
                 .fillMaxWidth()
                 .height(50.dp),
             enabled = analysisState !is Kinetic_Eco.Tracker.viewmodel.AIAnalysisState.Loading,
-            colors = ButtonDefaults.buttonColors(
+            colors = if (isDark) ButtonDefaults.buttonColors(
+                containerColor = colorScheme.primary,
+                contentColor = colorScheme.onPrimary,
+                disabledContainerColor = colorScheme.primary.copy(alpha = 0.4f),
+                disabledContentColor = colorScheme.onPrimary.copy(alpha = 0.6f)
+            ) else ButtonDefaults.buttonColors(
                 containerColor = colorScheme.surfaceVariant.copy(alpha = 0.95f),
                 contentColor = colorScheme.onSurface,
                 disabledContainerColor = colorScheme.surfaceVariant.copy(alpha = 0.4f),
@@ -972,9 +1015,7 @@ private data class WeeklyReportData(
     val totalDistance: Double,
     val totalDuration: Long,
     val topSpeedMps: Double,
-    val avgSpeedMps: Double,
     val mainActivity: ActivityType?,
-    val totalSteps: Int,
     val totalCalories: Double,
     val co2Saved: Double,
     val co2Emitted: Double,
@@ -985,8 +1026,6 @@ private fun computeWeeklyReportData(sessions: List<SessionStats>): WeeklyReportD
     val totalDistance = sessions.sumOf { it.totalDistance }
     val totalDuration = sessions.sumOf { it.totalDuration }
     val topSpeedMps = sessions.maxOfOrNull { it.topSpeedMps } ?: 0.0
-    val avgSpeedMps = if (totalDuration > 0) totalDistance / totalDuration else 0.0
-    val totalSteps = sessions.sumOf { it.totalSteps }
     val totalCalories = sessions.sumOf { it.caloriesBurned }
     val co2Saved = sessions.sumOf { it.co2Conserved }
     val co2Emitted = sessions.sumOf { it.co2Emissions }
@@ -1005,9 +1044,7 @@ private fun computeWeeklyReportData(sessions: List<SessionStats>): WeeklyReportD
         totalDistance = totalDistance,
         totalDuration = totalDuration,
         topSpeedMps = topSpeedMps,
-        avgSpeedMps = avgSpeedMps,
         mainActivity = mainActivity,
-        totalSteps = totalSteps,
         totalCalories = totalCalories,
         co2Saved = co2Saved,
         co2Emitted = co2Emitted,
@@ -1088,6 +1125,25 @@ private fun WeeklyReportCard(
                 }
 
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    // Hero tile — CO₂ saved this week is the headline metric, largest and first.
+                    WeeklyHeroMetricTile(
+                        label = stringResource(R.string.stat_co2_saved_week),
+                        value = stringResource(R.string.stat_co2_saved_week_value, data.co2Saved.format(2)),
+                        icon = Icons.Default.Eco,
+                        accentColor = Color(0xFF43A047),
+                        modifier = Modifier.fillMaxWidth()
+                    )
+
+                    // CO₂ impact — enlarged to full width, second-most prominent metric.
+                    WeeklyMetricTile(
+                        label = stringResource(R.string.stat_co2_impact),
+                        value = co2ImpactValue,
+                        icon = Icons.Default.Eco,
+                        iconColor = Color(0xFF43A047),
+                        modifier = Modifier.fillMaxWidth(),
+                        large = true
+                    )
+
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -1119,51 +1175,20 @@ private fun WeeklyReportCard(
                             modifier = Modifier.weight(1f)
                         )
                         WeeklyMetricTile(
-                            label = stringResource(R.string.stat_avg_speed),
-                            value = weeklyFormatSpeed(data.avgSpeedMps, isMetric),
-                            icon = Icons.Default.Speed,
-                            iconColor = Color(0xFFFFC107),
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        WeeklyMetricTile(
                             label = stringResource(R.string.stat_main_activity),
                             value = data.mainActivity?.weeklyDisplayName(ctx) ?: "—",
                             icon = Icons.Default.DirectionsBike,
                             iconColor = Color(0xFF00BCD4),
                             modifier = Modifier.weight(1f)
                         )
-                        WeeklyMetricTile(
-                            label = stringResource(R.string.stat_steps),
-                            value = if (data.totalSteps > 0) "%,d".format(data.totalSteps) else "—",
-                            icon = Icons.AutoMirrored.Filled.DirectionsWalk,
-                            iconColor = Color(0xFF009688),
-                            modifier = Modifier.weight(1f)
-                        )
                     }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        WeeklyMetricTile(
-                            label = stringResource(R.string.stat_calories),
-                            value = "%.0f kcal".format(data.totalCalories),
-                            icon = Icons.Default.LocalFireDepartment,
-                            iconColor = Color(0xFFFF5722),
-                            modifier = Modifier.weight(1f)
-                        )
-                        WeeklyMetricTile(
-                            label = stringResource(R.string.stat_co2_impact),
-                            value = co2ImpactValue,
-                            icon = Icons.Default.Eco,
-                            iconColor = Color(0xFF43A047),
-                            modifier = Modifier.weight(1f)
-                        )
-                    }
+                    WeeklyMetricTile(
+                        label = stringResource(R.string.stat_calories),
+                        value = "%.0f kcal".format(data.totalCalories),
+                        icon = Icons.Default.LocalFireDepartment,
+                        iconColor = Color(0xFFFF5722),
+                        modifier = Modifier.fillMaxWidth()
+                    )
                 }
             }
         }
@@ -1176,22 +1201,27 @@ private fun WeeklyMetricTile(
     value: String,
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     modifier: Modifier = Modifier,
-    iconColor: Color = MaterialTheme.colorScheme.onSurfaceVariant
+    iconColor: Color = MaterialTheme.colorScheme.onSurfaceVariant,
+    large: Boolean = false
 ) {
     val colorScheme = MaterialTheme.colorScheme
+    val iconBoxSize = if (large) 30.dp else 22.dp
+    val iconSize = if (large) 17.dp else 13.dp
+    val labelStyle = if (large) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.labelSmall
+    val valueStyle = if (large) MaterialTheme.typography.headlineSmall else MaterialTheme.typography.titleSmall
     Surface(
         modifier = modifier,
         shape = RoundedCornerShape(12.dp),
         color = colorScheme.surface.copy(alpha = 0.6f)
     ) {
         Column(
-            modifier = Modifier.padding(12.dp),
-            verticalArrangement = Arrangement.spacedBy(4.dp)
+            modifier = Modifier.padding(if (large) 16.dp else 12.dp),
+            verticalArrangement = Arrangement.spacedBy(if (large) 6.dp else 4.dp)
         ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Box(
                     modifier = Modifier
-                        .size(22.dp)
+                        .size(iconBoxSize)
                         .clip(CircleShape)
                         .background(iconColor.copy(alpha = 0.15f)),
                     contentAlignment = Alignment.Center
@@ -1200,22 +1230,76 @@ private fun WeeklyMetricTile(
                         imageVector = icon,
                         contentDescription = null,
                         tint = iconColor,
-                        modifier = Modifier.size(13.dp)
+                        modifier = Modifier.size(iconSize)
                     )
                 }
-                Spacer(Modifier.width(6.dp))
+                Spacer(Modifier.width(8.dp))
                 Text(
                     text = label,
-                    style = MaterialTheme.typography.labelSmall,
+                    style = labelStyle,
                     color = colorScheme.onSurfaceVariant
                 )
             }
             Text(
                 text = value,
-                style = MaterialTheme.typography.titleSmall,
+                style = valueStyle,
                 fontWeight = FontWeight.SemiBold,
                 color = colorScheme.onSurface
             )
+        }
+    }
+}
+
+/**
+ * Headline tile for the single most important weekly metric (CO₂ saved). Largest and
+ * most visually distinct tile in the report — full-width with an accent-tinted surface.
+ */
+@Composable
+private fun WeeklyHeroMetricTile(
+    label: String,
+    value: String,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    accentColor: Color,
+    modifier: Modifier = Modifier
+) {
+    val colorScheme = MaterialTheme.colorScheme
+    Surface(
+        modifier = modifier,
+        shape = RoundedCornerShape(16.dp),
+        color = accentColor.copy(alpha = 0.14f)
+    ) {
+        Row(
+            modifier = Modifier.padding(20.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(CircleShape)
+                    .background(accentColor.copy(alpha = 0.2f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = accentColor,
+                    modifier = Modifier.size(26.dp)
+                )
+            }
+            Spacer(Modifier.width(16.dp))
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Text(
+                    text = label,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = colorScheme.onSurfaceVariant
+                )
+                Text(
+                    text = value,
+                    style = MaterialTheme.typography.headlineMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = colorScheme.onSurface
+                )
+            }
         }
     }
 }

@@ -90,7 +90,7 @@ fun SessionDetailScreen(
                     RouteMapView(
                         routePath = displayStats.routePath,
                         modifier = Modifier.fillMaxWidth(),
-                        heightDp = 220
+                        heightDp = 160
                     )
                 }
             }

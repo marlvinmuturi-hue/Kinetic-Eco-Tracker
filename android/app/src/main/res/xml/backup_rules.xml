@@ -6,8 +6,6 @@
     <!-- Include only non-sensitive preferences (unit system, theme, display prefs) -->
     <include domain="sharedpref" path="user_preferences.xml" />
 
-    <!-- Exclude auth tokens, Firebase session state, and WebView storage -->
-    <exclude domain="sharedpref" path="." />
-    <exclude domain="file" path="." />
-    <exclude domain="external" path="." />
+    <!-- Everything else (auth tokens, Firebase session state, WebView storage)
+         is implicitly excluded since only the paths above are included. -->
 </full-backup-content>

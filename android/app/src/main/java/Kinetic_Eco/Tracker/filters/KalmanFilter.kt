@@ -51,25 +51,26 @@ class KalmanFilter {
         )
         
         // First measurement - initialize
-        if (lastPosition == null) {
+        val prev = lastPosition
+        if (prev == null) {
             lastPosition = currentPos
             return currentPos
         }
-        
+
         // Calculate time delta
-        val dt = (currentPos.timestamp - lastPosition!!.timestamp) / 1000.0f
-        
+        val dt = (currentPos.timestamp - prev.timestamp) / 1000.0f
+
         // Sanity check on time delta
         if (dt <= 0 || dt > 60) {
             // Time went backwards or too long gap - reset
             lastPosition = currentPos
             return currentPos
         }
-        
+
         // === PREDICTION STEP ===
         // Predict next position based on current velocity
-        val predictedLat = lastPosition!!.latitude + velocity[0] * dt
-        val predictedLon = lastPosition!!.longitude + velocity[1] * dt
+        val predictedLat = prev.latitude + velocity[0] * dt
+        val predictedLon = prev.longitude + velocity[1] * dt
         
         // Increase uncertainty due to process noise
         positionUncertainty += processNoise * dt
@@ -88,8 +89,8 @@ class KalmanFilter {
         val filteredLon = predictedLon + kalmanGain * (currentPos.longitude - predictedLon)
         
         // Update velocity estimate
-        velocity[0] = ((filteredLat - lastPosition!!.latitude) / dt).toFloat()
-        velocity[1] = ((filteredLon - lastPosition!!.longitude) / dt).toFloat()
+        velocity[0] = ((filteredLat - prev.latitude) / dt).toFloat()
+        velocity[1] = ((filteredLon - prev.longitude) / dt).toFloat()
         
         // Update uncertainty (reduces after measurement)
         positionUncertainty *= (1 - kalmanGain)

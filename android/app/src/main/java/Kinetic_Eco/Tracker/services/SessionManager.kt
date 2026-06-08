@@ -260,8 +260,12 @@ class SessionManager(private val context: Context) {
     suspend fun restoreSessionsFromFirestore(userId: String): Result<Int> {
         return try {
             Log.d(TAG, "📥 Restoring sessions from Firestore for user: $userId")
-            
-            val fetchResult = firestoreService.fetchSessionsFromFirestore(userId)
+
+            // Incremental sync: only pull documents newer than the most recent one we
+            // already have locally, instead of re-downloading the entire history (and
+            // re-checking every doc against Room) on every single app launch.
+            val sinceMs = sessionDao.getLatestSession(userId)?.createdAt
+            val fetchResult = firestoreService.fetchSessionsFromFirestore(userId, sinceMs)
             fetchResult.getOrElse { e ->
                 Log.e(TAG, "Failed to fetch from Firestore", e)
                 return Result.failure(e)

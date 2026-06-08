@@ -7,8 +7,9 @@
          rotate both IDs in the AdMob console to prevent ad fraud. -->
     <string name="admob_application_id" translatable="false">ca-app-pub-1244317007978137~2708452877</string>
     <string name="admob_banner_unit_id" translatable="false">ca-app-pub-1244317007978137/5717030642</string>
-    <!-- TODO: replace with your real interstitial ad unit ID from the AdMob console -->
-    <string name="admob_interstitial_unit_id" translatable="false">ca-app-pub-1244317007978137/REPLACE_WITH_INTERSTITIAL_UNIT_ID</string>
+    <!-- IMPORTANT: Replace with your real interstitial unit ID from AdMob console before release.
+         Using Google's test ID below — real ads will NOT serve until replaced. -->
+    <string name="admob_interstitial_unit_id" translatable="false">ca-app-pub-3940256099942544/1033173712</string>
     <string name="nav_dashboard">Dashboard</string>
     <string name="nav_tracker">Tracker</string>
     <string name="nav_analytics">Analysis</string>
@@ -16,8 +17,6 @@
     <string name="nav_settings">Settings</string>
     <string name="nav_start_activity">Start</string>
     <string name="nav_pause_activity">Pause</string>
-
-    <string name="default_web_client_id">gen-lang-client-0114974661</string>
 
     <!-- Terms & privacy (first launch) -->
     <string name="terms_title">Terms &amp; Privacy Policy</string>
@@ -129,9 +128,11 @@
     <string name="settings_appearance_title">Appearance</string>
     <string name="settings_appearance_subtitle">Theme, language, and units</string>
     <string name="notifications_section_title">Notifications</string>
-    <string name="notifications_section_subtitle">Sounds &amp; weekly digest</string>
+    <string name="notifications_section_subtitle">Sounds, daily &amp; weekly digest</string>
     <string name="notifications_weekly_digest_title">Weekly digest</string>
-    <string name="notifications_weekly_digest_desc">Receive a Monday summary of your activity stats</string>
+    <string name="notifications_weekly_digest_desc">Receive a Monday summary of your activity and CO₂ impact</string>
+    <string name="notifications_daily_digest_title">Daily CO₂ digest</string>
+    <string name="notifications_daily_digest_desc">Receive an evening recap of today\'s eco impact (only sent on active days)</string>
     <string name="settings_ev_activity_selector_prompt">Using an EV, tap to update vehicle type</string>
     <string name="notification_sounds">Notification sounds</string>
     <string name="notification_sounds_desc">Play sound for tracking start/stop and session summary. Respects Do Not Disturb.</string>
@@ -611,6 +612,8 @@
     <string name="stat_co2_impact">CO₂ impact</string>
     <string name="stat_co2_impact_saved">%1$s kg saved</string>
     <string name="stat_co2_impact_net">%1$s kg net</string>
+    <string name="stat_co2_saved_week">CO₂ saved this week</string>
+    <string name="stat_co2_saved_week_value">%1$s kg</string>
 
     <!-- Recent sessions card -->
     <string name="recent_sessions">Recent sessions</string>

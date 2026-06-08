@@ -2,6 +2,7 @@ package Kinetic_Eco.Tracker.ui.utils
 
 import android.content.Context
 import android.content.Intent
+import Kinetic_Eco.Tracker.BuildConfig
 import Kinetic_Eco.Tracker.data.ActivityType
 import Kinetic_Eco.Tracker.data.SessionStats
 import Kinetic_Eco.Tracker.data.UnitSystem
@@ -9,8 +10,8 @@ import java.util.concurrent.TimeUnit
 
 object ShareUtils {
 
-    private const val PLAY_STORE_URL =
-        "https://play.google.com/store/apps/details?id=Kinetic_Eco.Tracker"
+    private val PLAY_STORE_URL =
+        "https://play.google.com/store/apps/details?id=${BuildConfig.APPLICATION_ID}"
 
     fun buildWeeklyShareText(
         weekCo2KgSaved: Double,

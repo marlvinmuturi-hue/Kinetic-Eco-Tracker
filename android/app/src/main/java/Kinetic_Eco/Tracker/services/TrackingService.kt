@@ -102,6 +102,13 @@ class TrackingService : LifecycleService() {
     private var consecutiveIdenticalGpsSpeeds = 0
     /** Timestamp (ms) when sensors first confirmed STILL; 0 if not currently still. */
     private var stillConfirmedSinceMs = 0L
+    /** Timestamp (ms) when sensors first confirmed near-zero motion while GPS reported speed; 0 if not active. */
+    private var idleSensorLockSinceMs = 0L
+    /** Anchor lat/lon for GPS-hover detection — the fix that opened the current "parked" window. */
+    private var hoverAnchorLat: Double? = null
+    private var hoverAnchorLon: Double? = null
+    /** Timestamp (ms) the hover anchor was set. */
+    private var hoverAnchorSinceMs: Long = 0L
 
     private val _evConfirmPrompt = MutableStateFlow(false)
     val evConfirmPrompt: StateFlow<Boolean> = _evConfirmPrompt.asStateFlow()
@@ -400,6 +407,10 @@ class TrackingService : LifecycleService() {
         lastRawGpsSpeed = Float.NaN
         consecutiveIdenticalGpsSpeeds = 0
         stillConfirmedSinceMs = 0L
+        idleSensorLockSinceMs = 0L
+        hoverAnchorLat = null
+        hoverAnchorLon = null
+        hoverAnchorSinceMs = 0L
         // coldStartVehicleMs is intentionally NOT reset here — it is set in onStartCommand
         // before startTracking() is called, so clearing it here would erase the flag.
         railLookupJob?.cancel()
@@ -717,6 +728,10 @@ class TrackingService : LifecycleService() {
         lastRawGpsSpeed = Float.NaN
         consecutiveIdenticalGpsSpeeds = 0
         stillConfirmedSinceMs = 0L
+        idleSensorLockSinceMs = 0L
+        hoverAnchorLat = null
+        hoverAnchorLon = null
+        hoverAnchorSinceMs = 0L
         _evConfirmPrompt.value = false
         coldStartVehicleMs = 0L
         lastPosition = null
@@ -874,12 +889,33 @@ class TrackingService : LifecycleService() {
         // Track steps - count for WALKING and RUNNING; use step-based distance when GPS is weak
         if (data.stepCount > lastStepCount) {
             val stepDelta = data.stepCount - lastStepCount
+            val isFirstStepEvent = lastStepCount == 0
             lastStepCount = data.stepCount
+            // TYPE_STEP_COUNTER reports a cumulative count since last reboot. On the first event
+            // of each session, lastStepCount jumps from 0 to the boot-total (e.g. 52,847). Aligning
+            // stepCountAtLastGps here prevents the sensor-idle gate's stepsNow from seeing a huge
+            // spurious delta and falsely suppressing the idle lock for the rest of the session.
+            if (isFirstStepEvent) stepCountAtLastGps = lastStepCount
             lastStepTimestamp = now
             
             val statsActivity = activityForNonGpsStats()
-            if (statsActivity == ActivityType.WALKING || statsActivity == ActivityType.RUNNING) {
+            val isPedestrian = statsActivity == ActivityType.WALKING || statsActivity == ActivityType.RUNNING
+            val isMotorised = statsActivity == ActivityType.DRIVING ||
+                statsActivity == ActivityType.ELECTRIC_VEHICLE ||
+                statsActivity == ActivityType.MOTORCYCLE ||
+                statsActivity == ActivityType.CYCLING ||
+                statsActivity == ActivityType.TRAIN ||
+                statsActivity == ActivityType.FLYING
+
+            // Credit the hardware pedometer to the session total whenever we're not in a
+            // vehicle — even if classification briefly reads IDLE (e.g. the first second of
+            // a walk, or a momentary pause). Gating this strictly to WALKING/RUNNING dropped
+            // real steps from the total and made step counts read low.
+            if (!isMotorised) {
                 _sessionSteps.value += stepDelta
+            }
+
+            if (isPedestrian) {
                 updateStepsInStats(stepDelta, statsActivity)
                 // Step-based distance fallback when GPS hasn't updated (urban/indoor)
                 val gpsStale = lastUpdateTime > 0 && (now - lastGpsDistanceUpdateMs) > STEP_BASED_GAP_THRESHOLD_MS
@@ -1115,6 +1151,17 @@ class TrackingService : LifecycleService() {
         }
 
         val cur = _currentActivity.value
+
+        // GPS warm-up: the first ~15 s of a session is when chips most often emit a
+        // spurious "jump" fix while acquiring lock (especially indoors/multipath) — a
+        // single bad reading here can otherwise promote straight to DRIVING and then
+        // get stuck via sticky-motor hysteresis. Hold the current activity until the
+        // chip has had time to settle.
+        if (sessionStartTimeMs > 0L && (now - sessionStartTimeMs) < GPS_WARMUP_MS) {
+            pedestrianToMotorRiseSinceMs = 0L
+            return cur
+        }
+
         val curIsPedestrian = cur == ActivityType.IDLE ||
             cur == ActivityType.WALKING ||
             cur == ActivityType.RUNNING ||
@@ -1381,71 +1428,18 @@ class TrackingService : LifecycleService() {
      * in the running-speed band when lean matches. Runs after rail detection so train wins on corridor.
      */
     private fun applyTwoWheelLeanPromotion(refinedActivity: ActivityType, speed: Float, now: Long): ActivityType {
-        if (_manualActivityMode.value != null) return refinedActivity
-        if (refinedActivity == ActivityType.FLYING || refinedActivity == ActivityType.TRAIN) return refinedActivity
-        if (!sensorService.hasGyroscope()) return refinedActivity
-
-        val score = pocketLeanEstimator.corneringScore(now)
-
-        val motorCandidate =
-            refinedActivity == ActivityType.DRIVING || refinedActivity == ActivityType.ELECTRIC_VEHICLE
-        if (motorCandidate && speed >= SpeedThresholds.DRIVING_MIN) {
-            if (score >= PocketTwoWheelLeanEstimator.PROMOTE_CORNER_SCORE_THRESHOLD) {
-                if (leanMotorPromoSinceMs == 0L) leanMotorPromoSinceMs = now
-                if (now - leanMotorPromoSinceMs >= leanPromoHoldMs) {
-                    leanBikePromoSinceMs = 0L
-                    return ActivityType.MOTORCYCLE
-                }
-            } else {
-                leanMotorPromoSinceMs = 0L
-            }
-        } else {
-            leanMotorPromoSinceMs = 0L
-        }
-
-        val bikeCandidate = refinedActivity == ActivityType.RUNNING || refinedActivity == ActivityType.CYCLING
-        if (bikeCandidate &&
-            speed >= SpeedThresholds.CYCLING_MIN &&
-            speed < SpeedThresholds.DRIVING_MIN
-        ) {
-            if (score >= PocketTwoWheelLeanEstimator.PROMOTE_CORNER_SCORE_THRESHOLD) {
-                if (leanBikePromoSinceMs == 0L) leanBikePromoSinceMs = now
-                if (now - leanBikePromoSinceMs >= leanPromoHoldMs) {
-                    leanMotorPromoSinceMs = 0L
-                    return ActivityType.CYCLING
-                }
-            } else {
-                leanBikePromoSinceMs = 0L
-            }
-        } else {
-            leanBikePromoSinceMs = 0L
-        }
-
+        // Two-wheeler auto-promotion disabled by user preference: lean/cornering signatures
+        // no longer promote DRIVING → MOTORCYCLE or RUNNING → CYCLING. Motorised travel stays
+        // classified as DRIVING; manual selection of MOTORCYCLE/CYCLING is unaffected.
+        leanMotorPromoSinceMs = 0L
+        leanBikePromoSinceMs = 0L
         return refinedActivity
     }
 
     private fun evaluateLeanManualHint(speed: Float, now: Long, manual: ActivityType) {
-        if (!sensorService.hasGyroscope()) return
-        if (manual == ActivityType.MOTORCYCLE || manual == ActivityType.CYCLING) {
-            if (_leanActivityHint.value != null) _leanActivityHint.value = null
-            return
-        }
-        if (now - leanHintDismissedAtMs < leanHintCooldownMs) return
-
-        val score = pocketLeanEstimator.corneringScore(now)
-        if (score < PocketTwoWheelLeanEstimator.HINT_CORNER_SCORE_THRESHOLD) return
-
-        val hint = when {
-            (manual == ActivityType.DRIVING || manual == ActivityType.ELECTRIC_VEHICLE) &&
-                speed >= SpeedThresholds.DRIVING_MIN -> ActivityType.MOTORCYCLE
-            (manual == ActivityType.RUNNING || manual == ActivityType.WALKING) &&
-                speed >= SpeedThresholds.CYCLING_MIN &&
-                speed < SpeedThresholds.DRIVING_MIN -> ActivityType.CYCLING
-            else -> null
-        }
-        if (hint != null && hint != manual && _leanActivityHint.value != hint) {
-            _leanActivityHint.value = hint
-        }
+        // Two-wheeler suggestions disabled by user preference — never prompt to switch
+        // to MOTORCYCLE or CYCLING based on lean/cornering signatures.
+        if (_leanActivityHint.value != null) _leanActivityHint.value = null
     }
 
     /** Compute forward bearing in degrees [0, 360) from (fromLat, fromLon) to (toLat, toLon). */
@@ -1481,9 +1475,31 @@ class TrackingService : LifecycleService() {
         
         val now = System.currentTimeMillis()
 
+        // GPS hover detection: real travel covers ground over time. If fixes stay within
+        // HOVER_RADIUS_M of an anchor point for HOVER_CONFIRM_MS, the device is parked —
+        // any further "movement" is chip jitter, not travel. This catches drift the
+        // sensor-STILL gate can miss (e.g. engine vibration keeps accelerometer variance
+        // above the STILL threshold long after the vehicle has actually stopped).
+        val anchorLat = hoverAnchorLat
+        val anchorLon = hoverAnchorLon
+        val isGpsHovering = if (anchorLat == null || anchorLon == null) {
+            hoverAnchorLat = filtered.latitude
+            hoverAnchorLon = filtered.longitude
+            hoverAnchorSinceMs = now
+            false
+        } else if (locationService.calculateDistance(anchorLat, anchorLon, filtered.latitude, filtered.longitude) > HOVER_RADIUS_M) {
+            // Genuine displacement — re-anchor here and start the window over.
+            hoverAnchorLat = filtered.latitude
+            hoverAnchorLon = filtered.longitude
+            hoverAnchorSinceMs = now
+            false
+        } else {
+            (now - hoverAnchorSinceMs) >= HOVER_CONFIRM_MS
+        }
+
         // Update heading consistency and GPS accuracy streak
-        if (lastPosition != null) {
-            val bearing = computeHeadingDeg(filtered.latitude, filtered.longitude, lastPosition!!.latitude, lastPosition!!.longitude)
+        lastPosition?.let { pos ->
+            val bearing = computeHeadingDeg(filtered.latitude, filtered.longitude, pos.latitude, pos.longitude)
             val prev = lastBearingDeg
             lastBearingDeg = bearing
             if (prev != null) {
@@ -1545,14 +1561,14 @@ class TrackingService : LifecycleService() {
         }
         
         // Compute distance delta early for speed fallback
-        val distanceDelta = if (lastPosition != null && timeDelta > 0.01) {
+        val distanceDelta = lastPosition?.takeIf { timeDelta > 0.01 }?.let { pos ->
             locationService.calculateDistance(
-                lastPosition!!.latitude,
-                lastPosition!!.longitude,
+                pos.latitude,
+                pos.longitude,
                 filtered.latitude,
                 filtered.longitude
             )
-        } else 0.0
+        } ?: 0.0
         val distanceBasedSpeed = if (timeDelta > 0.1 && distanceDelta > 0.5) {
             (distanceDelta / timeDelta).toFloat()
         } else 0f
@@ -1625,6 +1641,14 @@ class TrackingService : LifecycleService() {
             currentAcceleration < 0.30f &&   // no walking-step impulse
             currentRotationRate < 0.20f &&   // no real body rotation
             sensorHint != SensorHint.ON_FOOT) {
+            speed = 0f
+        }
+
+        // Sustained GPS hover overrides every other signal — a parked vehicle can keep
+        // accelerometer variance elevated (engine idle, road vibration) long after it has
+        // actually stopped, which is exactly when chip drift would otherwise rack up
+        // phantom distance while the map shows the user circling the same spot.
+        if (isGpsHovering) {
             speed = 0f
         }
 
@@ -1739,6 +1763,37 @@ class TrackingService : LifecycleService() {
             leanBikePromoSinceMs = 0L
             if (_leanActivityHint.value != null) _leanActivityHint.value = null
         }
+
+        // Sensor-GPS agreement gate: if the phone has been near-motionless for
+        // SENSOR_IDLE_LOCK_MS, keep the activity as IDLE regardless of what GPS speed
+        // reports. This prevents GPS drift on a still phone from triggering phantom
+        // WALKING/CYCLING transitions and accumulating false distance.
+        val stepsNow = (lastStepCount - stepCountAtLastGps).coerceAtLeast(0)
+        val sensorsQuiet = _manualActivityMode.value == null &&
+            refinedActivity != ActivityType.FLYING &&
+            speed < SpeedThresholds.DRIVING_MIN.toFloat() &&
+            if (sensorService.hasStepCounter()) {
+                // Time-based: gate fires only when no step has been detected for SENSOR_IDLE_LOCK_MS.
+                // A count-based check (stepsNow == 0) is unreliable because the dead-reckoning path
+                // resets stepCountAtLastGps on every step event, making stepsNow always 0 at GPS
+                // update time even during active walking — which forced IDLE mid-walk and broke route
+                // continuity. lastStepTimestamp is immune to that synchronization problem.
+                (now - lastStepTimestamp) >= SENSOR_IDLE_LOCK_MS
+            } else {
+                // No step counter: fall back to accelerometer-based stillness detection.
+                sensorService.hasAccelerometer() && currentAcceleration < SENSOR_STILL_ACCEL_THRESHOLD
+            }
+        if (sensorsQuiet) {
+            if (idleSensorLockSinceMs == 0L) idleSensorLockSinceMs = now
+        } else {
+            idleSensorLockSinceMs = 0L
+        }
+        val sensorIdleLocked = idleSensorLockSinceMs > 0L &&
+            (now - idleSensorLockSinceMs) >= SENSOR_IDLE_LOCK_MS
+        if (sensorIdleLocked) {
+            refinedActivity = ActivityType.IDLE
+        }
+
         lastRefinedActivity = refinedActivity
 
         val manual = _manualActivityMode.value
@@ -1773,7 +1828,7 @@ class TrackingService : LifecycleService() {
                 }
             }
             
-            val isActuallyMoving = speed > 0.15f || currentAcceleration > 0.2f
+            val isActuallyMoving = !sensorIdleLocked && !isGpsHovering && (speed > 0.15f || currentAcceleration > 0.2f)
             val baseMeet = distanceDelta >= 1.0 || speed >= SpeedThresholds.WALKING_MIN ||
                 (distanceDelta >= 0.5 && speed > 0.15f)
             val meetsDistanceThreshold = if (refinedActivity == ActivityType.WALKING) {
@@ -1905,7 +1960,7 @@ class TrackingService : LifecycleService() {
         val speed = _currentSpeed.value
         if (speed >= SpeedThresholds.DRIVING_MIN) {
             if (speed >= SpeedThresholds.FLYING_MIN) return ActivityType.FLYING
-            return if (lastRefinedActivity == ActivityType.MOTORCYCLE) ActivityType.MOTORCYCLE else ActivityType.DRIVING
+            return ActivityType.DRIVING
         }
         val gpsAgeMs = if (lastUpdateTime > 0L) System.currentTimeMillis() - lastUpdateTime else Long.MAX_VALUE
         if (gpsAgeMs < 15_000L) return lastRefinedActivity
@@ -2613,6 +2668,10 @@ class TrackingService : LifecycleService() {
         private const val GPS_IDENTICAL_SPEED_COUNT = 3
         /** After sensors confirm STILL for this long, bypass sticky-motor hysteresis. */
         private const val STILL_MOTOR_OVERRIDE_MS = 10_000L
+        /** Linear acceleration (m/s²) below which the phone is considered stationary (fallback for no-step-counter devices). */
+        private const val SENSOR_STILL_ACCEL_THRESHOLD = 0.12f
+        /** Step count or accelerometer must confirm no motion for this long before locking activity to IDLE. */
+        private const val SENSOR_IDLE_LOCK_MS = 2_000L
 
         /**
          * How long high speed must persist before we let a pedestrian activity
@@ -2631,6 +2690,13 @@ class TrackingService : LifecycleService() {
         private const val SPEED_BUF_SIZE = 8
         /** Minimum samples in the buffer before the consistency gate activates. */
         private const val SPEED_BUF_MIN_SAMPLES = 6
+
+        /** Radius (m) within which sustained GPS fixes are treated as the same parked spot —
+         *  wider than typical chip noise (≈10–15 m) so genuine slow movement isn't false-flagged. */
+        private const val HOVER_RADIUS_M = 30.0
+        /** How long fixes must stay within HOVER_RADIUS_M before we call it "parked, not moving" —
+         *  long enough that a red light or brief stop doesn't trigger it. */
+        private const val HOVER_CONFIRM_MS = 90_000L
 
         /** Minimum altitude (m) required alongside high speed for FLYING classification. */
         private const val HIGH_ALTITUDE_M = 1000.0
@@ -2651,6 +2717,12 @@ class TrackingService : LifecycleService() {
 
         /** Window after an IN_VEHICLE cold-start during which the promotion latency is halved. */
         private const val COLD_START_VEHICLE_WINDOW_MS = 25_000L
+
+        /** GPS warm-up window at the start of every session: chips most often emit a spurious
+         *  "jump" fix (huge implied speed, e.g. 100 km/h while standing still indoors) during
+         *  this acquisition phase. Block motor-mode promotion entirely until it passes so one
+         *  bad fix can't seed DRIVING and then get stuck via sticky-motor hysteresis. */
+        private const val GPS_WARMUP_MS = 15_000L
 
         /**
          * If the step counter ticked within this window, treat the user as

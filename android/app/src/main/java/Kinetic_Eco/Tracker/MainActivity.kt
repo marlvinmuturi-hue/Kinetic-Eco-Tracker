@@ -89,6 +89,9 @@ class MainActivity : AppCompatActivity() {
     private var autoStartOnWalkEnabled by mutableStateOf(false)
     private var idleStopMinutes by mutableStateOf(10)
     private var weeklyDigestEnabled by mutableStateOf(true)
+    private var dailyDigestEnabled by mutableStateOf(true)
+    /** True while the one-time Auto Detect setup dialog (idle-time picker) is visible. */
+    private var showAutoDetectSetupDialog by mutableStateOf(false)
     private var currentRoute by mutableStateOf<String?>(null)
     /** Which primary tab (0–3) is shown inside [Screen.MainTabs]; survives sub-navigation (e.g. sessions list). */
     private var selectedMainTabIndex by mutableIntStateOf(0)
@@ -185,6 +188,7 @@ class MainActivity : AppCompatActivity() {
         autoStartOnWalkEnabled = try { userPrefsManager.getAutoStartOnWalkEnabled() } catch (e: Exception) { false }
         idleStopMinutes = try { userPrefsManager.getIdleStopMinutes() } catch (e: Exception) { 10 }
         weeklyDigestEnabled = try { userPrefsManager.isWeeklyDigestEnabled() } catch (e: Exception) { true }
+        dailyDigestEnabled = try { userPrefsManager.isDailyDigestEnabled() } catch (e: Exception) { true }
         
         // Auto-start on walk, or re-arm after idle auto-stop (pending flag)
         if (autoStartOnWalkEnabled || userPrefsManager.getPendingResumeAfterIdleAutoStop()) {
@@ -374,6 +378,11 @@ class MainActivity : AppCompatActivity() {
                                 weeklyDigestEnabled = enabled
                                 userPrefsManager.setWeeklyDigestEnabled(enabled)
                             },
+                            dailyDigestEnabled = dailyDigestEnabled,
+                            onDailyDigestChange = { enabled ->
+                                dailyDigestEnabled = enabled
+                                userPrefsManager.setDailyDigestEnabled(enabled)
+                            },
                             autoStartOnWalkEnabled = autoStartOnWalkEnabled,
                             onAutoStartOnWalkChange = { enabled ->
                                 autoStartOnWalkEnabled = enabled
@@ -517,8 +526,37 @@ class MainActivity : AppCompatActivity() {
                             onActivitySelected = { activity ->
                                 trackerViewModel.setManualActivityMode(activity)
                                 showActivitySelector = false
+                                if (activity == null) {
+                                    // Always enable auto-start when Auto Detect is chosen
+                                    if (!autoStartOnWalkEnabled) {
+                                        autoStartOnWalkEnabled = true
+                                        userPrefsManager.setAutoStartOnWalkEnabled(true)
+                                        Kinetic_Eco.Tracker.services.AutoStartMonitorService.start(this@MainActivity)
+                                    }
+                                    // Show the idle-time setup dialog only on the first selection
+                                    if (!userPrefsManager.isAutodetectSetupDone()) {
+                                        showAutoDetectSetupDialog = true
+                                    }
+                                }
                             },
                             onDismiss = { showActivitySelector = false }
+                        )
+                    }
+
+                    // Auto Detect one-time setup: idle-time preference dialog
+                    if (showAutoDetectSetupDialog) {
+                        AutoDetectSetupDialog(
+                            currentIdleMinutes = idleStopMinutes,
+                            onConfirm = { minutes ->
+                                idleStopMinutes = minutes
+                                userPrefsManager.setIdleStopMinutes(minutes)
+                                userPrefsManager.setAutodetectSetupDone()
+                                showAutoDetectSetupDialog = false
+                            },
+                            onDismiss = {
+                                userPrefsManager.setAutodetectSetupDone()
+                                showAutoDetectSetupDialog = false
+                            }
                         )
                     }
                 }

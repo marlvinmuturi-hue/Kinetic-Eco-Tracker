@@ -1,8 +1,7 @@
-import { getFirestore, doc, setDoc, Timestamp } from 'firebase/firestore';
+import { doc, setDoc, Timestamp } from 'firebase/firestore';
 import { getAuth } from 'firebase/auth';
 import { SessionStats } from '../types';
-
-const db = getFirestore();
+import { db } from './firebaseConfig';
 
 /** Use session start time from param, segments, or fallback to now. */
 function getSessionTimestampMs(stats: SessionStats, sessionStartTimeMs?: number): number {

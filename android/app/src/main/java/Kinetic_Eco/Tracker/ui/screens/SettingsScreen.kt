@@ -69,6 +69,8 @@ fun SettingsScreen(
     onGoPremium: () -> Unit = {},
     weeklyDigestEnabled: Boolean = true,
     onWeeklyDigestChange: (Boolean) -> Unit = {},
+    dailyDigestEnabled: Boolean = true,
+    onDailyDigestChange: (Boolean) -> Unit = {},
     onProfileClick: (() -> Unit)? = null,
     onBack: (() -> Unit)? = null,
     /** Vehicle profile primary fuel is electric — surface quick link to tracker activity picker. */
@@ -179,7 +181,9 @@ fun SettingsScreen(
                 notificationSoundsEnabled = notificationSoundsEnabled,
                 onNotificationSoundsChange = onNotificationSoundsChange,
                 weeklyDigestEnabled = weeklyDigestEnabled,
-                onWeeklyDigestChange = onWeeklyDigestChange
+                onWeeklyDigestChange = onWeeklyDigestChange,
+                dailyDigestEnabled = dailyDigestEnabled,
+                onDailyDigestChange = onDailyDigestChange
             )
         }
 
@@ -1563,7 +1567,9 @@ private fun NotificationsSection(
     notificationSoundsEnabled: Boolean,
     onNotificationSoundsChange: (Boolean) -> Unit,
     weeklyDigestEnabled: Boolean,
-    onWeeklyDigestChange: (Boolean) -> Unit
+    onWeeklyDigestChange: (Boolean) -> Unit,
+    dailyDigestEnabled: Boolean,
+    onDailyDigestChange: (Boolean) -> Unit
 ) {
     val colorScheme = MaterialTheme.colorScheme
     var expanded by remember { mutableStateOf(false) }
@@ -1595,6 +1601,13 @@ private fun NotificationsSection(
                     description = stringResource(R.string.notifications_weekly_digest_desc),
                     checked = weeklyDigestEnabled,
                     onCheckedChange = onWeeklyDigestChange
+                )
+                SectionDivider()
+                NotificationToggleRow(
+                    title = stringResource(R.string.notifications_daily_digest_title),
+                    description = stringResource(R.string.notifications_daily_digest_desc),
+                    checked = dailyDigestEnabled,
+                    onCheckedChange = onDailyDigestChange
                 )
             }
         }

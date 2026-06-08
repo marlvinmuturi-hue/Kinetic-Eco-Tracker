@@ -10,6 +10,8 @@ import android.hardware.Sensor
 import android.hardware.SensorEvent
 import android.hardware.SensorEventListener
 import android.hardware.SensorManager
+import android.hardware.TriggerEvent
+import android.hardware.TriggerEventListener
 import android.os.Build
 import android.util.Log
 import androidx.core.app.ActivityCompat
@@ -66,13 +68,28 @@ class AutoStartMonitorService : LifecycleService() {
     private var stepListener: SensorEventListener? = null
     /** Cumulative step counter value at the moment the listener was last (re-)registered. */
     private var stepBaseline: Int = -1
+
+    // ── Significant-motion trigger ───────────────────────────────────────────
+    //
+    // TYPE_SIGNIFICANT_MOTION is a hardware-accelerated one-shot sensor that fires
+    // within 1–3 s of the device transitioning from stationary to any significant
+    // motion (walk, cycle, vehicle start). It requires no permission, drains negligible
+    // battery (handled in hardware), and catches driving starts that the step counter
+    // misses entirely. After each fire it must be re-armed manually.
+    private val significantMotionSensor: Sensor? by lazy {
+        sensorManager.getDefaultSensor(Sensor.TYPE_SIGNIFICANT_MOTION)
+    }
+    private var significantMotionListener: TriggerEventListener? = null
+
     /**
      * Wall-clock time of the last successful auto-start trigger (from either
-     * the step counter or activity transitions). Used as a cooldown so a
-     * continuous walk doesn't repeatedly fire `startForegroundService` while
-     * `TrackingService` is already running.
+     * the step counter, activity transitions, or significant motion). Used as a
+     * cooldown so a continuous walk doesn't repeatedly fire `startForegroundService`
+     * while `TrackingService` is already running.
      */
     private var lastTriggerTimeMs: Long = 0L
+    /** Consecutive times the indoor GPS gate suppressed an auto-start. Resets on success or manual stop. */
+    private var indoorGateSuppressCount: Int = 0
 
     override fun onCreate() {
         super.onCreate()
@@ -81,8 +98,9 @@ class AutoStartMonitorService : LifecycleService() {
 
     override fun onDestroy() {
         // Defensive: the service may be killed without ACTION_STOP if the OS
-        // reclaims memory. Make sure we don't leave a dangling sensor listener.
+        // reclaims memory. Make sure we don't leave dangling sensor listeners.
         unregisterStepListener()
+        disarmSignificantMotionSensor()
         super.onDestroy()
     }
 
@@ -92,11 +110,13 @@ class AutoStartMonitorService : LifecycleService() {
                 startForegroundIfNeeded()
                 activityTransitionManager.registerTransitions()
                 registerStepListener()
-                Log.d(TAG, "Auto-start monitor running in background (transitions + step counter)")
+                armSignificantMotionSensor()
+                Log.d(TAG, "Auto-start monitor running (transitions + step counter + significant motion)")
             }
             ACTION_STOP -> {
                 activityTransitionManager.unregisterTransitions()
                 unregisterStepListener()
+                disarmSignificantMotionSensor()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
                 Log.d(TAG, "Auto-start monitor stopped")
@@ -129,9 +149,10 @@ class AutoStartMonitorService : LifecycleService() {
             } catch (e: Exception) {
                 Log.e(TAG, "restoreIfNeeded: registerTransitions failed", e)
             }
-            // Step listener may have been torn down with the previous process; restart it
-            // so the user gets fast (~15 step) auto-start even after a sticky restart.
+            // Step listener and significant-motion sensor may have been torn down with the
+            // previous process; restart both so all triggers fire after a sticky restart.
             registerStepListener()
+            armSignificantMotionSensor()
         } else {
             try {
                 stopForeground(STOP_FOREGROUND_REMOVE)
@@ -231,6 +252,50 @@ class AutoStartMonitorService : LifecycleService() {
     }
 
     /**
+     * Arm the [Sensor.TYPE_SIGNIFICANT_MOTION] trigger. Idempotent — a no-op if already armed
+     * or if the device has no such sensor. Re-arming after each fire keeps detection continuous.
+     */
+    private fun armSignificantMotionSensor() {
+        val sensor = significantMotionSensor ?: return  // hardware not present — step counter + transitions cover us
+        if (significantMotionListener != null) return   // already armed
+        val listener = object : TriggerEventListener() {
+            override fun onTrigger(event: TriggerEvent) {
+                // One-shot: Android auto-cancels the registration after firing.
+                significantMotionListener = null
+                Log.d(TAG, "Significant motion detected → motion auto-start trigger")
+                handleSignificantMotionTrigger()
+                // Re-arm immediately so the next stationary→motion transition is also caught.
+                armSignificantMotionSensor()
+            }
+        }
+        try {
+            if (sensorManager.requestTriggerSensor(listener, sensor)) {
+                significantMotionListener = listener
+                Log.d(TAG, "Significant motion sensor armed")
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to arm significant motion sensor", e)
+        }
+    }
+
+    private fun disarmSignificantMotionSensor() {
+        val listener = significantMotionListener ?: return
+        val sensor = significantMotionSensor ?: return
+        try { sensorManager.cancelTriggerSensor(listener, sensor) } catch (_: Exception) {}
+        significantMotionListener = null
+    }
+
+    /**
+     * Handles a significant-motion trigger. Guards against disabled auto-start and routes
+     * through the shared [startTrackingFromAutoStart] path (GPS accuracy gate + cooldown).
+     */
+    private fun handleSignificantMotionTrigger() {
+        val prefs = UserPreferencesManager(this)
+        if (!prefs.getAutoStartOnWalkEnabled() && !prefs.getPendingResumeAfterIdleAutoStop()) return
+        startTrackingFromAutoStart(vehicleColdStart = false)
+    }
+
+    /**
      * Step-counter-triggered auto-start. Mirrors [handleActivityTransition]'s
      * pref guard so toggling auto-start off mid-walk doesn't fire a stale
      * trigger that's already in flight.
@@ -250,6 +315,7 @@ class AutoStartMonitorService : LifecycleService() {
             val msSinceManualStop = now - prefs.getManualStopMs()
             if (msSinceManualStop < 30_000L) {
                 Log.d(TAG, "Suppressing auto-start: manual stop ${msSinceManualStop}ms ago")
+                indoorGateSuppressCount = 0
                 return
             }
         }
@@ -285,12 +351,19 @@ class AutoStartMonitorService : LifecycleService() {
                 val ageMs = if (loc != null) System.currentTimeMillis() - loc.time else Long.MAX_VALUE
                 val accuracy = loc?.accuracy ?: 0f
                 if (loc != null && ageMs < GPS_FIX_STALE_MS && accuracy > GPS_INDOOR_ACCURACY_M) {
-                    Log.d(TAG, "Auto-start suppressed: GPS accuracy ${accuracy}m > ${GPS_INDOOR_ACCURACY_M}m — likely indoors")
-                    // Shorten the cooldown so the step-counter can retry sooner
-                    // (e.g. user walks to the door and GPS snaps into shape).
-                    lastTriggerTimeMs = now - TRIGGER_COOLDOWN_MS + GPS_INDOOR_RETRY_COOLDOWN_MS
-                    return@addOnCompleteListener
+                    indoorGateSuppressCount++
+                    if (indoorGateSuppressCount < GPS_INDOOR_MAX_SUPPRESSIONS) {
+                        Log.d(TAG, "Auto-start suppressed ($indoorGateSuppressCount/${GPS_INDOOR_MAX_SUPPRESSIONS}): GPS accuracy ${accuracy}m > ${GPS_INDOOR_ACCURACY_M}m")
+                        // Shorten the cooldown so the step-counter can retry sooner
+                        // (e.g. user walks to the door and GPS snaps into shape).
+                        lastTriggerTimeMs = now - TRIGGER_COOLDOWN_MS + GPS_INDOOR_RETRY_COOLDOWN_MS
+                        return@addOnCompleteListener
+                    }
+                    // After GPS_INDOOR_MAX_SUPPRESSIONS consecutive suppressions the user is
+                    // likely outdoors in a weak-signal area, not truly indoors — launch anyway.
+                    Log.d(TAG, "Auto-start: GPS indoor gate override after $indoorGateSuppressCount suppressions (accuracy=${accuracy}m) — launching anyway")
                 }
+                indoorGateSuppressCount = 0
                 Log.d(TAG, "Auto-start GPS gate passed (accuracy=${accuracy}m age=${ageMs / 1000}s) — launching TrackingService")
                 launchTrackingService(vehicleColdStart = false)
             }
@@ -321,7 +394,7 @@ class AutoStartMonitorService : LifecycleService() {
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 getString(R.string.auto_start_channel_name),
-                NotificationManager.IMPORTANCE_MIN
+                NotificationManager.IMPORTANCE_LOW
             ).apply {
                 description = getString(R.string.auto_start_channel_desc)
                 setShowBadge(false)
@@ -334,7 +407,7 @@ class AutoStartMonitorService : LifecycleService() {
             .setContentTitle(getString(R.string.auto_start_notification_title))
             .setContentText(getString(R.string.auto_start_notification_text))
             .setSmallIcon(R.drawable.ic_notification)
-            .setPriority(NotificationCompat.PRIORITY_MIN)
+            .setPriority(NotificationCompat.PRIORITY_LOW)
             .setOngoing(true)
             .setSilent(true)
             .setContentIntent(
@@ -374,7 +447,10 @@ class AutoStartMonitorService : LifecycleService() {
 
     companion object {
         private const val TAG = "AutoStartMonitor"
-        private const val CHANNEL_ID = "auto_start_monitor"
+        // v2: bumped from auto_start_monitor to force channel recreation with IMPORTANCE_LOW.
+        // Android locks channel importance at first creation, so the old IMPORTANCE_MIN channel
+        // must be abandoned — existing installs will silently adopt the new channel on next launch.
+        private const val CHANNEL_ID = "auto_start_monitor_v2"
         private const val NOTIFICATION_ID = 3001
 
         /**
@@ -390,14 +466,21 @@ class AutoStartMonitorService : LifecycleService() {
          * won't keep poking [TrackingService] during a continuous walk, short
          * enough that an idle-stop → walk-again cycle re-fires promptly.
          */
-        private const val TRIGGER_COOLDOWN_MS = 30_000L
+        private const val TRIGGER_COOLDOWN_MS = 15_000L
 
         /**
          * GPS horizontal accuracy above which auto-start is suppressed.
-         * Values > 50 m are typical of indoor GPS and weak urban-canyon fixes.
-         * Outdoors with a clear sky, accuracy is usually < 20 m.
+         * 100 m covers genuine indoor readings while allowing marginal outdoor
+         * fixes (urban canyon, tree cover) that routinely sit at 60–90 m.
          */
-        private const val GPS_INDOOR_ACCURACY_M = 50f
+        private const val GPS_INDOOR_ACCURACY_M = 100f
+
+        /**
+         * After this many consecutive indoor-gate suppressions, launch anyway.
+         * Prevents permanent blocking when the user is outdoors in a weak-signal
+         * area whose GPS accuracy never clears the [GPS_INDOOR_ACCURACY_M] bar.
+         */
+        private const val GPS_INDOOR_MAX_SUPPRESSIONS = 3
 
         /**
          * A GPS fix older than this is too stale to be a reliable indoor/outdoor

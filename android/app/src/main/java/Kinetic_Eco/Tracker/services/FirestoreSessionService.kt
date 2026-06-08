@@ -190,22 +190,31 @@ class FirestoreSessionService {
      * Fetch all sessions for a user from Firestore (for restore after app update).
      * Structure: users/{userId}/sessions/{docId}
      */
-    suspend fun fetchSessionsFromFirestore(userId: String): Result<List<FirestoreSessionDoc>> {
+    /**
+     * @param sinceMs When non-null, only documents created after this time are fetched
+     * (incremental sync — avoids re-downloading the full history on every launch).
+     * Pass null to fetch the complete collection (e.g. first sync on a fresh install).
+     */
+    suspend fun fetchSessionsFromFirestore(userId: String, sinceMs: Long? = null): Result<List<FirestoreSessionDoc>> {
         return try {
             val user = auth.currentUser
             if (user == null || user.uid != userId) {
                 Log.w(TAG, "⚠️ No authenticated user or userId mismatch, cannot fetch")
                 return Result.failure(Exception("User not authenticated"))
             }
-            
-            Log.d(TAG, "📥 Fetching sessions from Firestore for user: $userId")
-            
-            val snapshot = firestore
+
+            var query: com.google.firebase.firestore.Query = firestore
                 .collection("users")
                 .document(userId)
                 .collection("sessions")
-                .get()
-                .await()
+            if (sinceMs != null) {
+                query = query.whereGreaterThan("createdAt", Timestamp(Date(sinceMs)))
+            }
+
+            Log.d(TAG, "📥 Fetching sessions from Firestore for user: $userId" +
+                if (sinceMs != null) " (since $sinceMs)" else " (full sync)")
+
+            val snapshot = query.get().await()
             
             val docs = snapshot.documents.mapNotNull { doc ->
                 try {

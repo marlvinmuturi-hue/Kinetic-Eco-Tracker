@@ -2,27 +2,27 @@ package Kinetic_Eco.Tracker.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.DirectionsRun
 import androidx.compose.material.icons.automirrored.filled.DirectionsWalk
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.TwoWheeler
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
-import androidx.compose.ui.res.stringResource
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import Kinetic_Eco.Tracker.R
 import Kinetic_Eco.Tracker.data.ActivityType
 import Kinetic_Eco.Tracker.ui.theme.*
-import Kinetic_Eco.Tracker.R
 
 data class ActivityOption(
     val type: ActivityType?,
@@ -32,6 +32,69 @@ data class ActivityOption(
     val colorEnd: androidx.compose.ui.graphics.Color,
     val description: String
 )
+
+/**
+ * One-time setup dialog shown the first time the user selects Auto Detect.
+ * Enables auto-start and lets the user choose their preferred idle-stop duration.
+ */
+@Composable
+fun AutoDetectSetupDialog(
+    currentIdleMinutes: Int,
+    onConfirm: (idleMinutes: Int) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val minuteOptions = listOf(3, 5, 10, 15)
+    var selectedMinutes by remember { mutableIntStateOf(currentIdleMinutes.coerceIn(minuteOptions.first(), minuteOptions.last())) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        icon = {
+            Icon(
+                imageVector = Icons.Default.AutoAwesome,
+                contentDescription = null,
+                tint = Blue500
+            )
+        },
+        title = { Text("Auto Detect Enabled") },
+        text = {
+            Column(verticalArrangement = Arrangement.spacedBy(16.dp)) {
+                Text(
+                    "Tracking will start automatically when you begin walking and stop after you've been still for your chosen time.",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Text(
+                    "Auto-stop after idle for:",
+                    style = MaterialTheme.typography.labelLarge,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    minuteOptions.forEach { minutes ->
+                        FilterChip(
+                            selected = minutes == selectedMinutes,
+                            onClick = { selectedMinutes = minutes },
+                            label = { Text("${minutes}m") },
+                            modifier = Modifier.weight(1f)
+                        )
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(onClick = { onConfirm(selectedMinutes) }) {
+                Text("Confirm")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("Skip")
+            }
+        }
+    )
+}
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable

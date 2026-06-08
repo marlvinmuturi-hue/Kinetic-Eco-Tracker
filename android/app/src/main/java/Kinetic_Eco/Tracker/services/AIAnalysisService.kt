@@ -3,6 +3,7 @@ package Kinetic_Eco.Tracker.services
 import android.util.Log
 import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.tasks.await
+import Kinetic_Eco.Tracker.BuildConfig
 import Kinetic_Eco.Tracker.data.ActivityAnalysis
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -22,7 +23,7 @@ class AIAnalysisService {
         .writeTimeout(30, TimeUnit.SECONDS)
         .build()
     
-    private val functionUrl = "https://us-central1-gen-lang-client-0114974661.cloudfunctions.net/analyzeActivity"
+    private val functionUrl = "${BuildConfig.FUNCTIONS_BASE_URL}/analyzeActivity"
     
     suspend fun analyzeActivity(
         rollingWindowDays: Int,

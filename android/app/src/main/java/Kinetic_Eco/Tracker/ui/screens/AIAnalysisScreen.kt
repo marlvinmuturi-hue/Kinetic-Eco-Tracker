@@ -17,6 +17,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.luminance
 import android.content.Context
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
@@ -44,6 +45,7 @@ import kotlin.math.roundToInt
 @Composable
 fun AIAnalysisScreen(viewModel: AnalyticsViewModel, userId: String) {
     val colorScheme = MaterialTheme.colorScheme
+    val isDark = colorScheme.background.luminance() < 0.5f
     val analysisState by viewModel.aiAnalysisState.collectAsStateWithLifecycle()
     val rollingAnalysisDays by viewModel.rollingAnalysisDays.collectAsStateWithLifecycle()
     val analysisSessionDateKey by viewModel.analysisSessionDateKey.collectAsStateWithLifecycle()
@@ -143,7 +145,12 @@ fun AIAnalysisScreen(viewModel: AnalyticsViewModel, userId: String) {
                     .fillMaxWidth()
                     .height(56.dp),
                 enabled = analysisState !is AIAnalysisState.Loading,
-                colors = ButtonDefaults.buttonColors(
+                colors = if (isDark) ButtonDefaults.buttonColors(
+                    containerColor = colorScheme.primary,
+                    contentColor = colorScheme.onPrimary,
+                    disabledContainerColor = colorScheme.primary.copy(alpha = 0.4f),
+                    disabledContentColor = colorScheme.onPrimary.copy(alpha = 0.6f)
+                ) else ButtonDefaults.buttonColors(
                     containerColor = colorScheme.surfaceVariant.copy(alpha = 0.95f),
                     contentColor = colorScheme.onSurface,
                     disabledContainerColor = colorScheme.surfaceVariant.copy(alpha = 0.4f),
@@ -597,7 +604,7 @@ fun ErrorCard(message: String) {
                     Text(
                         text = message,
                         style = MaterialTheme.typography.bodyMedium,
-                        color = Red200
+                        color = MaterialTheme.colorScheme.onSurface
                     )
                 }
             }

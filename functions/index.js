@@ -1,4 +1,4 @@
-const functions = require('firebase-functions');
+const functions = require('firebase-functions/v1');
 const admin = require('firebase-admin');
 const { GoogleGenerativeAI } = require('@google/generative-ai');
 
@@ -27,6 +27,28 @@ function parseRollingDaysFromTimeframe(timeframe) {
   return legacy[s] || 7;
 }
 
+/**
+ * Simplified CO2 factors (kg per km), mirroring the Android app's baseline
+ * defaults (CO2Factors / VehicleProfile.DEFAULT). Session docs only store
+ * session-level CO2 totals, not a per-activity split, so these are used to
+ * estimate a per-activity breakdown for the AI prompt's narrative context.
+ * Negative = net saving vs. an average petrol car; positive = net emission.
+ */
+const ESTIMATED_CO2_KG_PER_KM = {
+  IDLE: 0,
+  WALKING: -0.21,
+  RUNNING: -0.21,
+  CYCLING: -0.17,
+  MOTORCYCLE: 0.09,
+  TRAIN: -0.17,
+  DRIVING: 0.21,
+  ELECTRIC_VEHICLE: 0.053,
+  FLYING: 0.255
+};
+
+/** Average petrol passenger car baseline (IPCC/EEA reference), kg CO2 per km. */
+const BASELINE_DRIVING_CO2_PER_KM = 0.21;
+
 /** Calendar day yyyy-MM-dd; prefers sessionDateKey field (matches Android). */
 function sessionDateKeyFromDoc(data) {
   if (data.sessionDateKey && typeof data.sessionDateKey === 'string') {
@@ -38,9 +60,13 @@ function sessionDateKeyFromDoc(data) {
   return new Date(ts).toISOString().slice(0, 10);
 }
 
-// Initialize Gemini AI
-// API key will be set via: firebase functions:config:set gemini.key="YOUR_KEY"
-const genAI = new GoogleGenerativeAI(functions.config().gemini?.key || 'YOUR_API_KEY_HERE');
+// Gemini AI — key injected at runtime via Secret Manager (GEMINI_API_KEY secret).
+// Lazy getter so the key is read after secrets are mounted, not at cold-start.
+function getGenAI() {
+  // Strip BOM (U+FEFF) that Windows editors add when saving secrets to files
+  const apiKey = (process.env.GEMINI_API_KEY || '').replace(/^﻿/, '');
+  return new GoogleGenerativeAI(apiKey);
+}
 
 // Global throttle: max Gemini analyses per minute per instance (reduces Billing API / quota pressure)
 const ANALYSES_PER_MINUTE = 8;
@@ -61,7 +87,7 @@ function throttleAnalysis() {
  * Analyze user's activity data using Gemini AI
  * HTTP endpoint with manual authentication
  */
-exports.analyzeActivity = functions.https.onRequest(async (req, res) => {
+exports.analyzeActivity = functions.runWith({ secrets: ['GEMINI_API_KEY'] }).https.onRequest(async (req, res) => {
   // Enable CORS
   res.set('Access-Control-Allow-Origin', '*');
   res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
@@ -181,12 +207,25 @@ exports.analyzeActivity = functions.https.onRequest(async (req, res) => {
     const stats = calculateAggregateStats(sessions);
     console.log('Stats calculated:', JSON.stringify(stats, null, 2));
 
+    // Step 5b: Fetch the equal-length previous period for a CO2 trend comparison
+    // (rolling windows only — a single day has no meaningful "previous period").
+    let previousStats = null;
+    if (timeframe !== '1day') {
+      const windowDays = parseRollingDaysFromTimeframe(timeframe);
+      const currentStartMs = Date.now() - windowDays * 24 * 60 * 60 * 1000;
+      const previousStartMs = currentStartMs - windowDays * 24 * 60 * 60 * 1000;
+      const previousSessions = await fetchUserSessionsInRange(userId, previousStartMs, currentStartMs);
+      if (previousSessions.length > 0) {
+        previousStats = calculateAggregateStats(previousSessions);
+      }
+    }
+
     // Step 6: Build prompt for Gemini (locale: en/fr/de/es/zh)
-    const prompt = buildAnalysisPrompt(stats, timeframe, locale, sessionDateKey);
+    const prompt = buildAnalysisPrompt(stats, timeframe, locale, sessionDateKey, previousStats);
 
     // Step 7: Call Gemini API
     console.log('Calling Gemini API...');
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+    const model = getGenAI().getGenerativeModel({ model: 'gemini-2.5-flash' });
     const result = await model.generateContent(prompt);
     const responseText = result.response.text();
     console.log('Gemini response received:', responseText);
@@ -315,6 +354,28 @@ async function fetchUserSessions(userId, timeframe, sessionDateKey) {
 }
 
 /**
+ * Fetch sessions whose timestamp falls in [startMs, endMs) — used to pull the
+ * prior equal-length window for CO2 trend comparisons.
+ */
+async function fetchUserSessionsInRange(userId, startMs, endMs) {
+  try {
+    const snapshot = await db
+      .collection('users')
+      .doc(userId)
+      .collection('sessions')
+      .where('timestamp', '>=', startMs)
+      .where('timestamp', '<', endMs)
+      .orderBy('timestamp', 'desc')
+      .get();
+
+    return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+  } catch (error) {
+    console.error('Error fetching sessions in range:', error);
+    return [];
+  }
+}
+
+/**
  * Calculate aggregate statistics from sessions
  */
 function calculateAggregateStats(sessions) {
@@ -330,6 +391,8 @@ function calculateAggregateStats(sessions) {
       WALKING: { count: 0, distance: 0, duration: 0 },
       RUNNING: { count: 0, distance: 0, duration: 0 },
       CYCLING: { count: 0, distance: 0, duration: 0 },
+      MOTORCYCLE: { count: 0, distance: 0, duration: 0 },
+      TRAIN: { count: 0, distance: 0, duration: 0 },
       DRIVING: { count: 0, distance: 0, duration: 0 },
       ELECTRIC_VEHICLE: { count: 0, distance: 0, duration: 0 },
       FLYING: { count: 0, distance: 0, duration: 0 }
@@ -367,7 +430,28 @@ function calculateAggregateStats(sessions) {
   stats.avgDistance = stats.totalDistance / stats.totalSessions;
   stats.avgDuration = stats.totalDuration / stats.totalSessions;
 
+  // Estimate per-activity CO2 from aggregated distance using the simplified
+  // factor table — session docs only carry session-level CO2 totals.
+  Object.keys(stats.activityBreakdown).forEach((activity) => {
+    const data = stats.activityBreakdown[activity];
+    const factor = ESTIMATED_CO2_KG_PER_KM[activity] || 0;
+    data.estCo2Kg = (data.distance / 1000) * factor;
+  });
+
   return stats;
+}
+
+/**
+ * Compares current vs. an equal-length previous window and returns a
+ * narrative-ready CO2 trend summary, or null when there's no prior data.
+ */
+function buildCo2Trend(stats, previousStats) {
+  if (!previousStats || previousStats.totalSessions === 0) return null;
+  const netNow = stats.co2Conserved - stats.co2Emissions;
+  const netPrev = previousStats.co2Conserved - previousStats.co2Emissions;
+  const deltaKg = netNow - netPrev;
+  const pctChange = netPrev !== 0 ? (deltaKg / Math.abs(netPrev)) * 100 : null;
+  return { netNow, netPrev, deltaKg, pctChange };
 }
 
 /**
@@ -381,13 +465,19 @@ function getLanguageForLocale(locale) {
 /**
  * Build analysis prompt for Gemini
  */
-function buildAnalysisPrompt(stats, timeframe, locale, sessionDateKey) {
+function buildAnalysisPrompt(stats, timeframe, locale, sessionDateKey, previousStats) {
   const days = parseRollingDaysFromTimeframe(timeframe);
   const language = getLanguageForLocale(locale);
   const periodLabel =
     timeframe === '1day' && sessionDateKey
       ? `Single calendar day (${sessionDateKey}, session start dates as stored in the app)`
       : `Past ${days} days`;
+
+  const totalKm = stats.totalDistance / 1000;
+  const netCo2Kg = stats.co2Conserved - stats.co2Emissions;
+  const baselineEmissionsKg = totalKm * BASELINE_DRIVING_CO2_PER_KM;
+  const baselineDeltaKg = baselineEmissionsKg - netCo2Kg; // positive = better than baseline
+  const trend = buildCo2Trend(stats, previousStats);
 
   return `You are a fitness and health analyst. Analyze this user's activity data and provide insights.
 
@@ -403,19 +493,32 @@ function buildAnalysisPrompt(stats, timeframe, locale, sessionDateKey) {
 - Calories Burned: ${Math.round(stats.totalCalories)} kcal
 - CO2 Emissions: ${stats.co2Emissions.toFixed(2)} kg
 - CO2 Conserved: ${stats.co2Conserved.toFixed(2)} kg
+- Net CO2 Impact: ${netCo2Kg >= 0 ? `${netCo2Kg.toFixed(2)} kg saved overall` : `${Math.abs(netCo2Kg).toFixed(2)} kg net emitted overall`}
 
-**Activity Breakdown**:
+**Activity Breakdown** (CO2 figures are estimates derived from distance using standard per-km factors):
 ${Object.entries(stats.activityBreakdown)
   .filter(([_, data]) => data.count > 0)
-  .map(([activity, data]) => 
-    `- ${activity}: ${data.count} sessions, ${(data.distance / 1000).toFixed(2)} km, ${(data.duration / 60).toFixed(0)} minutes`
-  )
+  .map(([activity, data]) => {
+    const co2Label = data.estCo2Kg !== 0
+      ? `, ~${Math.abs(data.estCo2Kg).toFixed(2)} kg CO2 ${data.estCo2Kg < 0 ? 'saved' : 'emitted'}`
+      : '';
+    return `- ${activity}: ${data.count} sessions, ${(data.distance / 1000).toFixed(2)} km, ${(data.duration / 60).toFixed(0)} minutes${co2Label}`;
+  })
   .join('\n')}
 
 **Average Per Session**:
 - Distance: ${(stats.avgDistance / 1000).toFixed(2)} km
 - Duration: ${(stats.avgDuration / 60).toFixed(0)} minutes
 
+**CO2 Baseline Comparison**:
+- Driving this same ${totalKm.toFixed(2)} km in an average petrol car (${BASELINE_DRIVING_CO2_PER_KM} kg CO2/km) would have emitted ${baselineEmissionsKg.toFixed(2)} kg
+- The user's actual net impact was ${netCo2Kg.toFixed(2)} kg — ${Math.abs(baselineDeltaKg).toFixed(2)} kg ${baselineDeltaKg >= 0 ? 'better than' : 'worse than'} that baseline
+${trend ? `
+**CO2 Trend vs. Previous ${days}-Day Period**:
+- Previous period net CO2: ${trend.netPrev.toFixed(2)} kg
+- Current period net CO2: ${trend.netNow.toFixed(2)} kg
+- Change: ${trend.deltaKg >= 0 ? '+' : ''}${trend.deltaKg.toFixed(2)} kg${trend.pctChange !== null ? ` (${trend.pctChange >= 0 ? '+' : ''}${trend.pctChange.toFixed(0)}%)` : ''} — ${trend.deltaKg >= 0 ? 'an improvement' : 'a decline'} versus the prior period
+` : ''}
 Please provide a comprehensive analysis in the following JSON format:
 
 {
@@ -448,6 +551,7 @@ Guidelines:
 - Keep insights brief but meaningful (1-2 sentences each)
 - If CO2 conserved is significant, celebrate it!
 - If user is mostly sedentary, gently encourage more activity
+- Use the CO2 baseline comparison and trend data (when present) to ground environmentalImpact and insights in concrete numbers — e.g. how their net impact compares to driving the same distance, and whether it improved or declined versus the prior period
 
 Return ONLY the JSON object, no additional text or markdown formatting.`;
 }
@@ -768,36 +872,34 @@ exports.weeklyDigestScheduled = functions.pubsub
 
         let totalDistanceM = 0;
         let totalCalories = 0;
+        let co2SavedKg = 0;
+        let co2EmittedKg = 0;
         let totalSessions = sessionsSnap.size;
         sessionsSnap.docs.forEach((d) => {
-          totalDistanceM += Number(d.data().totalDistance) || 0;
-          totalCalories += Number(d.data().caloriesBurned) || 0;
+          totalDistanceM += Number(d.data().totalDistance)  || 0;
+          totalCalories  += Number(d.data().caloriesBurned) || 0;
+          co2SavedKg     += Number(d.data().co2Conserved)   || 0;
+          co2EmittedKg   += Number(d.data().co2Emissions)   || 0;
         });
 
         const distanceKm = (totalDistanceM / 1000).toFixed(1);
+        const netKg = co2SavedKg - co2EmittedKg;
+        const equiv = pickEquivalency(Math.abs(netKg));
         const title = '📊 Your Kinetic Eco week recap';
-        const body =
+        let body =
           `Last 7 days: ${totalSessions} session${totalSessions !== 1 ? 's' : ''}, ` +
-          `${distanceKm} km, ${Math.round(totalCalories)} kcal burned. Keep it up!`;
+          `${distanceKm} km, ${Math.round(totalCalories)} kcal burned.`;
+        if (netKg > 0) {
+          body += ` You saved ${netKg.toFixed(2)} kg CO₂`;
+          if (equiv) body += ` — like ${equiv}`;
+          body += '. Keep it up!';
+        } else {
+          body += ' Keep it up!';
+        }
 
-        // Send to every registered device token
+        // Send to every registered device token (with retry)
         for (const tokenDoc of tokensSnap.docs) {
-          const token = tokenDoc.id;
-          fanOut.push(
-            admin.messaging().send({
-              token,
-              data: { title, body }
-            }).catch((err) => {
-              console.warn(`FCM send failed for ${userId}/${token}: ${err.message}`);
-              // Stale token cleanup
-              if (
-                err.code === 'messaging/registration-token-not-registered' ||
-                err.code === 'messaging/invalid-registration-token'
-              ) {
-                tokenDoc.ref.delete().catch(() => {});
-              }
-            })
-          );
+          fanOut.push(sendFcmWithRetry(tokenDoc, { data: { title, body } }, userId));
         }
       } catch (e) {
         console.error(`weeklyDigest: error processing user ${userId}`, e);
@@ -808,6 +910,40 @@ exports.weeklyDigestScheduled = functions.pubsub
     console.log(`📬 weeklyDigestScheduled: sent to ${fanOut.length} device(s)`);
     return null;
   });
+
+// ── FCM send with retry ─────────────────────────────────────────────────────
+
+/**
+ * Send an FCM message with up to maxAttempts retries on transient errors.
+ * Stale/invalid tokens are deleted immediately and not retried.
+ */
+async function sendFcmWithRetry(tokenDoc, message, userId, maxAttempts = 3) {
+  const token = tokenDoc.id;
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      // High priority so Android wakes the app to deliver immediately,
+      // bypassing Doze/battery-optimization deferral of normal-priority data messages.
+      await admin.messaging().send({ token, android: { priority: 'high' }, ...message });
+      return;
+    } catch (err) {
+      if (
+        err.code === 'messaging/registration-token-not-registered' ||
+        err.code === 'messaging/invalid-registration-token'
+      ) {
+        console.warn(`Stale FCM token removed for ${userId}/${token}`);
+        tokenDoc.ref.delete().catch(() => {});
+        return;
+      }
+      if (attempt < maxAttempts) {
+        const delayMs = 500 * attempt;
+        console.warn(`FCM send attempt ${attempt} failed for ${userId}/${token}: ${err.message} — retrying in ${delayMs}ms`);
+        await new Promise(r => setTimeout(r, delayMs));
+      } else {
+        console.error(`FCM send failed after ${maxAttempts} attempts for ${userId}/${token}: ${err.message}`);
+      }
+    }
+  }
+}
 
 // ── CO₂ equivalency helper ──────────────────────────────────────────────────
 
@@ -947,10 +1083,10 @@ exports.dailyActivityDigest = functions.pubsub
 
         let distanceM = 0, calories = 0, co2SavedKg = 0, co2EmittedKg = 0;
         sessionsSnap.docs.forEach((d) => {
-          distanceM   += Number(d.data().totalDistance)   || 0;
-          calories    += Number(d.data().caloriesBurned)  || 0;
-          co2SavedKg  += Number(d.data().co2Saved)        || 0;
-          co2EmittedKg+= Number(d.data().co2Emitted)      || 0;
+          distanceM    += Number(d.data().totalDistance)  || 0;
+          calories     += Number(d.data().caloriesBurned) || 0;
+          co2SavedKg   += Number(d.data().co2Conserved)  || 0;
+          co2EmittedKg += Number(d.data().co2Emissions)  || 0;
         });
 
         const netKg = co2SavedKg - co2EmittedKg;
@@ -966,18 +1102,7 @@ exports.dailyActivityDigest = functions.pubsub
         body += `. ${Math.round(calories)} kcal burned. Nice work!`;
 
         for (const tokenDoc of tokensSnap.docs) {
-          fanOut.push(
-            admin.messaging().send({
-              token: tokenDoc.id,
-              data: { type: 'daily', title, body }
-            }).catch((err) => {
-              console.warn(`dailyDigest FCM failed ${userId}/${tokenDoc.id}: ${err.message}`);
-              if (
-                err.code === 'messaging/registration-token-not-registered' ||
-                err.code === 'messaging/invalid-registration-token'
-              ) tokenDoc.ref.delete().catch(() => {});
-            })
-          );
+          fanOut.push(sendFcmWithRetry(tokenDoc, { data: { type: 'daily', title, body } }, userId));
         }
       } catch (e) {
         console.error(`dailyDigest: error for user ${userId}`, e);
@@ -995,22 +1120,23 @@ exports.dailyActivityDigest = functions.pubsub
 // Requires Firebase config:
 //   firebase functions:config:set email.user="your@gmail.com" email.pass="app-password"
 
-exports.weeklyEmailReport = functions.pubsub
+exports.weeklyEmailReport = functions.runWith({ secrets: ['EMAIL_USER', 'EMAIL_PASS'] }).pubsub
   .schedule('0 5 * * 0')
   .timeZone('UTC')
   .onRun(async () => {
     console.log('📧 weeklyEmailReport: starting');
 
-    const emailCfg = functions.config().email || {};
-    if (!emailCfg.user || !emailCfg.pass) {
-      console.warn('weeklyEmailReport: email.user / email.pass not configured — skipping');
+    const emailUser = process.env.EMAIL_USER;
+    const emailPass = process.env.EMAIL_PASS;
+    if (!emailUser || !emailPass) {
+      console.warn('weeklyEmailReport: EMAIL_USER / EMAIL_PASS secrets not configured — skipping');
       return null;
     }
 
     const nodemailer = require('nodemailer');
     const transporter = nodemailer.createTransport({
       service: 'gmail',
-      auth: { user: emailCfg.user, pass: emailCfg.pass }
+      auth: { user: emailUser, pass: emailPass }
     });
 
     const cutoff = Date.now() - 7 * 24 * 60 * 60 * 1000;
@@ -1035,17 +1161,17 @@ exports.weeklyEmailReport = functions.pubsub
           .get();
         if (sessionsSnap.empty) continue; // no activity — skip silently
 
-        let distanceM = 0, durationMs = 0, calories = 0,
+        let distanceM = 0, durationSecs = 0, calories = 0,
             co2SavedKg = 0, co2EmittedKg = 0;
         const activityCounts = {};
 
         sessionsSnap.docs.forEach((d) => {
           const data = d.data();
           distanceM    += Number(data.totalDistance)  || 0;
-          durationMs   += Number(data.duration)       || 0;
+          durationSecs += Number(data.totalDuration)  || 0;
           calories     += Number(data.caloriesBurned) || 0;
-          co2SavedKg   += Number(data.co2Saved)       || 0;
-          co2EmittedKg += Number(data.co2Emitted)     || 0;
+          co2SavedKg   += Number(data.co2Conserved)   || 0;
+          co2EmittedKg += Number(data.co2Emissions)   || 0;
           const act = data.activityType || data.activity || 'Unknown';
           activityCounts[act] = (activityCounts[act] || 0) + 1;
         });
@@ -1057,7 +1183,7 @@ exports.weeklyEmailReport = functions.pubsub
         const stats = {
           sessions:    sessionsSnap.size,
           distanceKm:  (distanceM / 1000).toFixed(1),
-          durationMin: durationMs / 60000,
+          durationMin: durationSecs / 60,
           calories,
           co2SavedKg,
           co2EmittedKg,
@@ -1069,7 +1195,7 @@ exports.weeklyEmailReport = functions.pubsub
         const subjectTag = netKg >= 0 ? `+${netKg.toFixed(2)} kg CO₂ saved` : `${netKg.toFixed(2)} kg net CO₂`;
 
         await transporter.sendMail({
-          from: `"Kinetic Eco" <${emailCfg.user}>`,
+          from: `"Kinetic Eco" <${emailUser}>`,
           to:   userEmail,
           subject: `Your Kinetic Eco week — ${subjectTag}`,
           html
@@ -1088,7 +1214,7 @@ exports.weeklyEmailReport = functions.pubsub
 /**
  * Generate a single-session eco insight via Gemini (server-side, key never exposed to browser).
  */
-exports.generateSessionInsight = functions.https.onRequest(async (req, res) => {
+exports.generateSessionInsight = functions.runWith({ secrets: ['GEMINI_API_KEY'] }).https.onRequest(async (req, res) => {
   res.set('Access-Control-Allow-Origin', '*');
   res.set('Access-Control-Allow-Methods', 'POST, OPTIONS');
   res.set('Access-Control-Allow-Headers', 'Content-Type, Authorization');
@@ -1137,7 +1263,7 @@ Use Markdown for formatting.
 `.trim();
 
   try {
-    const model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+    const model = getGenAI().getGenerativeModel({ model: 'gemini-2.5-flash' });
     const result = await model.generateContent({
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
       systemInstruction: "You are an eco-conscious fitness coach named 'EcoStep'.",
@@ -1157,7 +1283,7 @@ exports.healthCheck = functions.https.onRequest((req, res) => {
   res.json({
     status: 'ok',
     timestamp: Date.now(),
-    version: '1.5.0',
+    version: '1.5.1',
     message: 'Kinetic Eco API is running'
   });
 });

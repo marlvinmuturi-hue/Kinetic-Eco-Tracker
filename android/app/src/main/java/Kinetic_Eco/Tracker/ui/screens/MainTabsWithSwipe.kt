@@ -88,7 +88,10 @@ fun MainTabsWithSwipe(
             .clipToBounds(),
         pageSize = PageSize.Fill,
         pageSpacing = 0.dp,
-        beyondBoundsPageCount = 1
+        // All 3 tabs stay composed across the full range so swiping away and back
+        // never tears down Dashboard / Tracker / Analysis (which would otherwise
+        // re-run their LaunchedEffect data loads and lose scroll/derived state).
+        beyondBoundsPageCount = 2
     ) { page ->
         Box(
             modifier = Modifier

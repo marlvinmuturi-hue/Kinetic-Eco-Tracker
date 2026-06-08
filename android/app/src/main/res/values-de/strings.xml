@@ -9,8 +9,6 @@
     <string name="nav_start_activity">Start</string>
     <string name="nav_pause_activity">Pause</string>
 
-    <string name="default_web_client_id">gen-lang-client-0114974661</string>
-
     <string name="theme">Design</string>
     <string name="theme_light">Hell</string>
     <string name="theme_dark">Dunkel</string>

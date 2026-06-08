@@ -13,6 +13,13 @@ import com.google.firebase.messaging.FirebaseMessagingService
 import com.google.firebase.messaging.RemoteMessage
 import Kinetic_Eco.Tracker.MainActivity
 import Kinetic_Eco.Tracker.R
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
 
 /**
  * Handles FCM token refreshes and incoming push notifications.
@@ -25,6 +32,13 @@ import Kinetic_Eco.Tracker.R
  *   anything else → weekly_digest_channel  (Monday weekly summary)
  */
 class KineticFirebaseMessagingService : FirebaseMessagingService() {
+
+    private val serviceScope = CoroutineScope(Dispatchers.IO + SupervisorJob())
+
+    override fun onDestroy() {
+        super.onDestroy()
+        serviceScope.cancel()
+    }
 
     override fun onNewToken(token: String) {
         super.onNewToken(token)
@@ -71,12 +85,23 @@ class KineticFirebaseMessagingService : FirebaseMessagingService() {
             "updatedAt" to System.currentTimeMillis(),
             "platform" to "android"
         )
-        FirebaseFirestore.getInstance()
-            .collection("users").document(uid)
-            .collection("fcmTokens").document(token)
-            .set(data)
-            .addOnSuccessListener { Log.d(TAG, "FCM token saved to Firestore") }
-            .addOnFailureListener { e -> Log.e(TAG, "Failed to save FCM token", e) }
+        serviceScope.launch {
+            repeat(3) { attempt ->
+                try {
+                    FirebaseFirestore.getInstance()
+                        .collection("users").document(uid)
+                        .collection("fcmTokens").document(token)
+                        .set(data)
+                        .await()
+                    Log.d(TAG, "FCM token saved to Firestore")
+                    return@launch
+                } catch (e: Exception) {
+                    Log.e(TAG, "FCM token save attempt ${attempt + 1} failed", e)
+                    if (attempt < 2) delay(1000L * (attempt + 1))
+                }
+            }
+            Log.e(TAG, "FCM token save failed after 3 attempts — will retry on next token refresh")
+        }
     }
 
     private fun showNotification(

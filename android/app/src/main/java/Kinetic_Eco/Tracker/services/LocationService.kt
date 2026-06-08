@@ -279,14 +279,11 @@ class LocationService(private val context: Context) {
             return ActivityType.IDLE
         }
 
-        // Cycling: sensor classifier wins when speed is in the plausible cycling range.
-        // Gate lowered to RUNNING_MIN (7 km/h) so slow cyclists are detected even below 14 km/h.
-        if (sensorHint == SensorHint.CYCLING_LIKELY &&
-            speed >= SpeedThresholds.RUNNING_MIN.toFloat() && speed < MAX_CYCLING_SPEED) {
-            return ActivityType.CYCLING
-        }
+        // Two-wheeler auto-detection disabled by user preference: motorised travel in the
+        // cycling-speed band resolves to DRIVING instead of CYCLING. Manual selection of
+        // CYCLING/MOTORCYCLE remains available from the activity picker.
 
-        // Above 18 km/h without a cycling hint → driving
+        // Above 18 km/h → driving
         if (speed >= SpeedThresholds.DRIVING_MIN) {
             return ActivityType.DRIVING
         }

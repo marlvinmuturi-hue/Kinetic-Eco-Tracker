@@ -137,7 +137,8 @@ class MainActivity : AppCompatActivity() {
                 authViewModel.signInWithGoogle(it)
             }
         } catch (e: ApiException) {
-            // Handle error
+            android.util.Log.e("MainActivity", "Google sign-in failed: code=${e.statusCode}", e)
+            authViewModel.reportGoogleSignInError("Google sign-in failed (code ${e.statusCode}). Please try again.")
         }
     }
     

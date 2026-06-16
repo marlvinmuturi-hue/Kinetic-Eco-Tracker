@@ -3,6 +3,7 @@ package Kinetic_Eco.Tracker.ui.screens
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -79,6 +80,15 @@ import java.util.Locale
 import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 import kotlin.math.max
+
+private val EMOJI_REACTIONS = listOf(
+    "fire" to "🔥",
+    "clap" to "👏",
+    "thumbs" to "👍",
+    "joy" to "😂",
+    "sweat" to "😅",
+    "cool" to "😎"
+)
 
 /**
  * Tab 1 — Dashboard.
@@ -412,7 +422,10 @@ fun DashboardScreen(
                 entries = leaderboardEntries,
                 currentUserId = userId,
                 optedIn = leaderboardOptIn ?: false,
-                onSettingsClick = onSettingsClick
+                onSettingsClick = onSettingsClick,
+                onReact = { targetUserId, emojiCode ->
+                    profileViewModel.reactToEntry(userId, targetUserId, emojiCode)
+                }
             )
         }
 
@@ -1237,7 +1250,8 @@ private fun LeaderboardOverviewCard(
     entries: List<LeaderboardEntry>,
     currentUserId: String,
     optedIn: Boolean,
-    onSettingsClick: () -> Unit
+    onSettingsClick: () -> Unit,
+    onReact: (targetUserId: String, emojiCode: String) -> Unit
 ) {
     val colorScheme = MaterialTheme.colorScheme
     Card(
@@ -1284,7 +1298,13 @@ private fun LeaderboardOverviewCard(
             }
 
             entries.take(3).forEachIndexed { index, e ->
-                LeaderboardCompactRow(rank = index + 1, entry = e, isMe = e.userId == currentUserId)
+                LeaderboardCompactRow(
+                    rank = index + 1,
+                    entry = e,
+                    isMe = e.userId == currentUserId,
+                    currentUserId = currentUserId,
+                    onReact = { emojiCode -> onReact(e.userId, emojiCode) }
+                )
             }
 
             // If user not in top-3, show their own row
@@ -1300,58 +1320,110 @@ private fun LeaderboardOverviewCard(
 }
 
 @Composable
-private fun LeaderboardCompactRow(rank: Int, entry: LeaderboardEntry, isMe: Boolean) {
+private fun LeaderboardCompactRow(
+    rank: Int,
+    entry: LeaderboardEntry,
+    isMe: Boolean,
+    currentUserId: String = "",
+    onReact: ((emojiCode: String) -> Unit)? = null
+) {
     val colorScheme = MaterialTheme.colorScheme
+    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Text(
+                text = "#$rank",
+                style = MaterialTheme.typography.titleSmall,
+                color = colorScheme.onSurfaceVariant,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.width(36.dp)
+            )
+            if (entry.photoUrl.isNullOrBlank()) {
+                Box(
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(CircleShape)
+                        .background(colorScheme.primaryContainer),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = (entry.displayName?.firstOrNull() ?: 'U').uppercase(),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colorScheme.onPrimaryContainer
+                    )
+                }
+            } else {
+                AsyncImage(
+                    model = entry.photoUrl,
+                    contentDescription = null,
+                    modifier = Modifier
+                        .size(28.dp)
+                        .clip(CircleShape)
+                        .background(colorScheme.surface)
+                )
+            }
+            Spacer(Modifier.width(10.dp))
+            Text(
+                text = (entry.displayName ?: stringResource(R.string.user)) + if (isMe) stringResource(R.string.you_suffix) else "",
+                style = MaterialTheme.typography.bodyMedium,
+                color = colorScheme.onSurface,
+                fontWeight = if (isMe) FontWeight.SemiBold else FontWeight.Normal,
+                modifier = Modifier.weight(1f)
+            )
+            Text(
+                text = "${entry.co2Conserved.format(2)} kg CO₂ ${stringResource(R.string.hero_co2_saved)}",
+                style = MaterialTheme.typography.bodySmall,
+                color = colorScheme.onSurfaceVariant
+            )
+        }
+        if (!isMe && onReact != null) {
+            ReactionStrip(
+                reactions = entry.reactions,
+                currentUserId = currentUserId,
+                onReact = onReact
+            )
+        }
+    }
+}
+
+@Composable
+private fun ReactionStrip(
+    reactions: Map<String, String>,
+    currentUserId: String,
+    onReact: (emojiCode: String) -> Unit
+) {
+    val colorScheme = MaterialTheme.colorScheme
+    val myReaction = reactions[currentUserId]
+    val countByCode = remember(reactions) {
+        EMOJI_REACTIONS.associate { (code, _) -> code to reactions.values.count { it == code } }
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically
+            .padding(top = 4.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        Text(
-            text = "#$rank",
-            style = MaterialTheme.typography.titleSmall,
-            color = colorScheme.onSurfaceVariant,
-            fontWeight = FontWeight.Bold,
-            modifier = Modifier.width(36.dp)
-        )
-        if (entry.photoUrl.isNullOrBlank()) {
+        EMOJI_REACTIONS.forEach { (code, emoji) ->
+            val count = countByCode[code] ?: 0
+            val isSelected = myReaction == code
+            val bg = if (isSelected) colorScheme.primaryContainer else colorScheme.surfaceVariant
             Box(
                 modifier = Modifier
-                    .size(28.dp)
-                    .clip(CircleShape)
-                    .background(colorScheme.primaryContainer),
+                    .background(bg, RoundedCornerShape(10.dp))
+                    .clickable { onReact(code) }
+                    .padding(horizontal = 6.dp, vertical = 3.dp),
                 contentAlignment = Alignment.Center
             ) {
                 Text(
-                    text = (entry.displayName?.firstOrNull() ?: 'U').uppercase(),
+                    text = if (count > 0) "$emoji $count" else emoji,
                     style = MaterialTheme.typography.labelSmall,
-                    color = colorScheme.onPrimaryContainer
+                    fontSize = 11.sp,
+                    color = if (isSelected) colorScheme.onPrimaryContainer else colorScheme.onSurfaceVariant
                 )
             }
-        } else {
-            AsyncImage(
-                model = entry.photoUrl,
-                contentDescription = null,
-                modifier = Modifier
-                    .size(28.dp)
-                    .clip(CircleShape)
-                    .background(colorScheme.surface)
-            )
         }
-        Spacer(Modifier.width(10.dp))
-        Text(
-            text = (entry.displayName ?: stringResource(R.string.user)) + if (isMe) stringResource(R.string.you_suffix) else "",
-            style = MaterialTheme.typography.bodyMedium,
-            color = colorScheme.onSurface,
-            fontWeight = if (isMe) FontWeight.SemiBold else FontWeight.Normal,
-            modifier = Modifier.weight(1f)
-        )
-        Text(
-            text = "${entry.co2Conserved.format(2)} kg CO₂ ${stringResource(R.string.hero_co2_saved)}",
-            style = MaterialTheme.typography.bodySmall,
-            color = colorScheme.onSurfaceVariant
-        )
     }
 }
 
@@ -1752,6 +1824,45 @@ private fun SproutingPlantScene(
         label = "plant_growth"
     )
 
+    // Continuous ambient animations — give the tree a living, breathing feel
+    // without consuming CPU when the composable is not visible.
+    val ambient = rememberInfiniteTransition(label = "tree_ambient")
+
+    // Breeze: all leaves sway together (uniform wind direction) with a gentle
+    // 2.6-second period. Each leaf gets a slightly different scale factor so
+    // they don't move in perfect lock-step.
+    val windSway by ambient.animateFloat(
+        initialValue = -4f,
+        targetValue  =  4f,
+        animationSpec = infiniteRepeatable(
+            animation  = tween(2600, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "wind_sway"
+    )
+
+    // Canopy breath: subtle radius pulse (±4 %) makes the crown feel alive.
+    val canopyBreath by ambient.animateFloat(
+        initialValue = 0.96f,
+        targetValue  = 1.04f,
+        animationSpec = infiniteRepeatable(
+            animation  = tween(3400, easing = FastOutSlowInEasing),
+            repeatMode = RepeatMode.Reverse
+        ),
+        label = "canopy_breath"
+    )
+
+    // Blossom spin: slow petal rotation once the weekly goal is reached.
+    val blossomSpin by ambient.animateFloat(
+        initialValue = 0f,
+        targetValue  = 360f,
+        animationSpec = infiniteRepeatable(
+            animation  = tween(14000, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
+        ),
+        label = "blossom_spin"
+    )
+
     // Realistic palette — independent of app theme so the tree always reads
     // as a tree regardless of dark / light mode.
     val trunkColor    = Color(0xFF5D4037)   // dark bark
@@ -1849,9 +1960,9 @@ private fun SproutingPlantScene(
             LeafSlot(+1f, 0.54f, +42f, 0.54f),  // lower-right
         )
 
-        slots.forEach { s ->
+        slots.forEachIndexed { idx, s ->
             val scale = ((p - s.minP) / 0.17f).coerceIn(0f, 1f)
-            if (scale < 0.02f) return@forEach
+            if (scale < 0.02f) return@forEachIndexed
 
             val leafLen  = w * (0.20f + 0.09f * p) * scale
             val leafW    = leafLen * 0.58f
@@ -1867,12 +1978,15 @@ private fun SproutingPlantScene(
                 cap         = StrokeCap.Round
             )
 
+            // Each leaf gets a slightly different sway scale so they don't
+            // move in perfect lock-step — upper leaves are lighter and flex more.
+            val swayScale = 0.70f + idx * 0.12f
             drawTreeLeaf(
                 anchorX  = anchorX,
                 anchorY  = anchorY,
                 length   = leafLen,
                 width    = leafW,
-                angleDeg = s.angle
+                angleDeg = s.angle + windSway * swayScale
             )
         }
 
@@ -1881,7 +1995,7 @@ private fun SproutingPlantScene(
         if (canopyA > 0f) {
             drawCircle(
                 color  = canopyGreen.copy(alpha = 0.13f * canopyA),
-                radius = w * (0.30f + 0.12f * p),
+                radius = w * (0.30f + 0.12f * p) * canopyBreath,
                 center = Offset(cx, stemTopY + w * 0.06f)
             )
         }
@@ -1892,18 +2006,20 @@ private fun SproutingPlantScene(
                 .let { 0.4f + 0.6f * it }
             val pr = w * 0.095f * bloom
             val blossomPos = Offset(cx, stemTopY - pr * 0.5f)
-            repeat(5) { i ->
-                val a = Math.toRadians(i * 72.0 - 90.0)
-                drawCircle(
-                    color  = petalColor.copy(alpha = 0.90f),
-                    radius = pr,
-                    center = Offset(
-                        cx + (pr * 1.15f * kotlin.math.cos(a)).toFloat(),
-                        blossomPos.y + (pr * 1.15f * kotlin.math.sin(a)).toFloat()
+            rotate(degrees = blossomSpin, pivot = blossomPos) {
+                repeat(5) { i ->
+                    val a = Math.toRadians(i * 72.0 - 90.0)
+                    drawCircle(
+                        color  = petalColor.copy(alpha = 0.90f),
+                        radius = pr,
+                        center = Offset(
+                            cx + (pr * 1.15f * kotlin.math.cos(a)).toFloat(),
+                            blossomPos.y + (pr * 1.15f * kotlin.math.sin(a)).toFloat()
+                        )
                     )
-                )
+                }
+                drawCircle(color = petalCenter, radius = pr * 0.58f, center = blossomPos)
             }
-            drawCircle(color = petalCenter, radius = pr * 0.58f, center = blossomPos)
         }
     }
 }

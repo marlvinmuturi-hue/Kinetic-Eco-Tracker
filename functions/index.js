@@ -874,28 +874,36 @@ exports.weeklyDigestScheduled = functions.pubsub
         let totalCalories = 0;
         let co2SavedKg = 0;
         let co2EmittedKg = 0;
-        let totalSessions = sessionsSnap.size;
+        let distWalking = 0, distRunning = 0, distCycling = 0;
+        const totalSessions = sessionsSnap.size;
         sessionsSnap.docs.forEach((d) => {
           totalDistanceM += Number(d.data().totalDistance)  || 0;
           totalCalories  += Number(d.data().caloriesBurned) || 0;
           co2SavedKg     += Number(d.data().co2Conserved)   || 0;
           co2EmittedKg   += Number(d.data().co2Emissions)   || 0;
+          const bd = d.data().breakdown || {};
+          distWalking += Number(bd.WALKING?.distance) || 0;
+          distRunning += Number(bd.RUNNING?.distance) || 0;
+          distCycling += Number(bd.CYCLING?.distance) || 0;
         });
 
+        const activities = [
+          { label: 'Walking', emoji: '🚶', dist: distWalking },
+          { label: 'Running', emoji: '🏃', dist: distRunning },
+          { label: 'Cycling', emoji: '🚴', dist: distCycling },
+        ].filter(a => a.dist > 0);
+        const main = activities.length > 0
+          ? activities.reduce((a, b) => a.dist >= b.dist ? a : b)
+          : null;
+
         const distanceKm = (totalDistanceM / 1000).toFixed(1);
-        const netKg = co2SavedKg - co2EmittedKg;
-        const equiv = pickEquivalency(Math.abs(netKg));
+        const equiv = pickEquivalency(co2SavedKg);
         const title = '📊 Your Kinetic Eco week recap';
-        let body =
-          `Last 7 days: ${totalSessions} session${totalSessions !== 1 ? 's' : ''}, ` +
-          `${distanceKm} km, ${Math.round(totalCalories)} kcal burned.`;
-        if (netKg > 0) {
-          body += ` You saved ${netKg.toFixed(2)} kg CO₂`;
-          if (equiv) body += ` — like ${equiv}`;
-          body += '. Keep it up!';
-        } else {
-          body += ' Keep it up!';
-        }
+        const lines = [];
+        lines.push(`${totalSessions} session${totalSessions !== 1 ? 's' : ''} • ${distanceKm} km • ${Math.round(totalCalories)} kcal`);
+        if (main) lines.push(`${main.emoji} Top activity: ${main.label} (${(main.dist / 1000).toFixed(1)} km)`);
+        lines.push(`🌱 CO₂ saved: ${co2SavedKg.toFixed(2)} kg${equiv ? ` — like ${equiv}` : ''}`);
+        const body = lines.join('\n');
 
         // Send to every registered device token (with retry)
         for (const tokenDoc of tokensSnap.docs) {
@@ -1082,24 +1090,36 @@ exports.dailyActivityDigest = functions.pubsub
         if (sessionsSnap.empty) continue; // no activity today — skip silently
 
         let distanceM = 0, calories = 0, co2SavedKg = 0, co2EmittedKg = 0;
+        let distWalking = 0, distRunning = 0, distCycling = 0;
         sessionsSnap.docs.forEach((d) => {
           distanceM    += Number(d.data().totalDistance)  || 0;
           calories     += Number(d.data().caloriesBurned) || 0;
           co2SavedKg   += Number(d.data().co2Conserved)  || 0;
           co2EmittedKg += Number(d.data().co2Emissions)  || 0;
+          const bd = d.data().breakdown || {};
+          distWalking += Number(bd.WALKING?.distance) || 0;
+          distRunning += Number(bd.RUNNING?.distance) || 0;
+          distCycling += Number(bd.CYCLING?.distance) || 0;
         });
 
-        const netKg = co2SavedKg - co2EmittedKg;
+        const activities = [
+          { label: 'Walking', emoji: '🚶', dist: distWalking },
+          { label: 'Running', emoji: '🏃', dist: distRunning },
+          { label: 'Cycling', emoji: '🚴', dist: distCycling },
+        ].filter(a => a.dist > 0);
+        const main = activities.length > 0
+          ? activities.reduce((a, b) => a.dist >= b.dist ? a : b)
+          : null;
+
         const distanceKm = (distanceM / 1000).toFixed(1);
-        const equiv = pickEquivalency(Math.abs(netKg));
+        const equiv = pickEquivalency(co2SavedKg);
 
         const title = '🌿 Today\'s Eco Impact';
-        let body = `You covered ${distanceKm} km today`;
-        if (netKg > 0) {
-          body += `, saving ${netKg.toFixed(2)} kg CO₂`;
-          if (equiv) body += ` — like ${equiv}`;
-        }
-        body += `. ${Math.round(calories)} kcal burned. Nice work!`;
+        const lines = [];
+        if (main) lines.push(`${main.emoji} Main activity: ${main.label} (${(main.dist / 1000).toFixed(1)} km)`);
+        lines.push(`📍 ${distanceKm} km total • ${Math.round(calories)} kcal burned`);
+        lines.push(`🌱 CO₂ saved: ${co2SavedKg.toFixed(2)} kg${equiv ? ` — like ${equiv}` : ''}`);
+        const body = lines.join('\n');
 
         for (const tokenDoc of tokensSnap.docs) {
           fanOut.push(sendFcmWithRetry(tokenDoc, { data: { type: 'daily', title, body } }, userId));

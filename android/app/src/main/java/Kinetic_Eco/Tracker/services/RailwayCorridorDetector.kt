@@ -32,13 +32,38 @@ object RailwayCorridorDetector {
     /** Caps work when many parallel ways exist near city hubs. */
     private const val MAX_WAYS_TO_MEASURE = 96
 
+    /** Cached result is reused when the device hasn't moved more than this (meters). */
+    private const val CACHE_RADIUS_M = 80.0
+    /** Cached result expires after this many milliseconds (5 minutes). */
+    private const val CACHE_TTL_MS = 5 * 60 * 1000L
+
+    private data class CacheEntry(
+        val lat: Double,
+        val lon: Double,
+        val result: Double?,
+        val expiryMs: Long
+    )
+
+    @Volatile private var cache: CacheEntry? = null
+
     /**
      * Blocking network + JSON parse. Call from Dispatchers.IO only.
+     * Returns the cached result when the device is within [CACHE_RADIUS_M] of the
+     * last query and the entry hasn't expired — avoids repeated Overpass calls on
+     * a moving train where the corridor doesn't change between ticks.
      *
      * @return minimum distance to any OSM railway way satisfying the query, or **null**
      *   if the request failed, timed out, or no geometry was returned.
      */
     fun fetchMinDistanceToRailMeters(lat: Double, lon: Double): Double? {
+        val now = System.currentTimeMillis()
+        cache?.let { c ->
+            if (now < c.expiryMs) {
+                val dx = projectedX(lat, lon, c.lat, c.lon)
+                val dy = projectedY(lat, lon, c.lat, c.lon)
+                if (hypot(dx, dy) <= CACHE_RADIUS_M) return c.result
+            }
+        }
         if (!lat.isFinite() || !lon.isFinite()) return null
         val q = buildQuery(lat, lon)
         val body = "data=" + URLEncoder.encode(q, Charsets.UTF_8.name())
@@ -64,6 +89,8 @@ object RailwayCorridorDetector {
             null
         } finally {
             conn?.disconnect()
+        }.also { result ->
+            cache = CacheEntry(lat, lon, result, System.currentTimeMillis() + CACHE_TTL_MS)
         }
     }
 

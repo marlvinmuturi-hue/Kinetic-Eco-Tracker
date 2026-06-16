@@ -27,6 +27,7 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
     
     init {
         _currentUser.value = authService.getCurrentUser()
+        authService.getCurrentUser()?.let { saveFcmTokenForUser(it.uid) }
         FirebaseAuth.getInstance().addAuthStateListener { auth ->
             _currentUser.value = auth.currentUser
         }
@@ -136,7 +137,14 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
     }
     
     fun getGoogleSignInClient() = authService.getGoogleSignInClient()
-    
+
+    /** Surfaces a failure from the Google Sign-In activity result (e.g. ApiException
+     *  before [signInWithGoogle] is ever reached) so the UI doesn't appear to hang. */
+    fun reportGoogleSignInError(message: String) {
+        _errorMessage.value = message
+        _isLoading.value = false
+    }
+
     fun clearError() {
         _errorMessage.value = null
     }

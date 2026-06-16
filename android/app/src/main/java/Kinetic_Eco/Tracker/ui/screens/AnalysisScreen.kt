@@ -31,7 +31,6 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.nativeCanvas
@@ -953,7 +952,6 @@ private fun AIAnalysisInline(
 ) {
     val colorScheme = MaterialTheme.colorScheme
     val analysisState by viewModel.aiAnalysisState.collectAsStateWithLifecycle()
-    val isDark = colorScheme.background.luminance() < 0.5f
 
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Button(
@@ -962,16 +960,11 @@ private fun AIAnalysisInline(
                 .fillMaxWidth()
                 .height(50.dp),
             enabled = analysisState !is Kinetic_Eco.Tracker.viewmodel.AIAnalysisState.Loading,
-            colors = if (isDark) ButtonDefaults.buttonColors(
+            colors = ButtonDefaults.buttonColors(
                 containerColor = colorScheme.primary,
                 contentColor = colorScheme.onPrimary,
                 disabledContainerColor = colorScheme.primary.copy(alpha = 0.4f),
                 disabledContentColor = colorScheme.onPrimary.copy(alpha = 0.6f)
-            ) else ButtonDefaults.buttonColors(
-                containerColor = colorScheme.surfaceVariant.copy(alpha = 0.95f),
-                contentColor = colorScheme.onSurface,
-                disabledContainerColor = colorScheme.surfaceVariant.copy(alpha = 0.4f),
-                disabledContentColor = colorScheme.onSurfaceVariant
             ),
             elevation = ButtonDefaults.buttonElevation(defaultElevation = 0.dp),
             shape = RoundedCornerShape(12.dp)

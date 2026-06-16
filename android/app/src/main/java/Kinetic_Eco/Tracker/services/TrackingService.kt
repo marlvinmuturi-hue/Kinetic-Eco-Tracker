@@ -82,6 +82,11 @@ class TrackingService : LifecycleService() {
     private var previousAltitude: Double = 0.0
     private var lastUpdateTime: Long = 0
     private var smoothedSpeed: Float = 0f
+    // Counts consecutive ticks where the new reading was rejected as an outlier vs.
+    // smoothedSpeed. A single spike is fully damped, but if the EMA itself is the
+    // poisoned value (e.g. inflated during an indoor multipath stretch), this lets
+    // it step back toward reality instead of being permanently stuck.
+    private var consecutiveSpeedOutliers = 0
     // Ring buffer of raw GPS speeds (before EMA) used by the consistency gate in
     // applyPedestrianToMotorPromotionLatency to detect indoor GPS bounce.
     private val speedSampleBuf = ArrayDeque<Float>()
@@ -92,6 +97,10 @@ class TrackingService : LifecycleService() {
     private var evConfirmPromptShownThisSession = false
     /** Consecutive GPS fix count with accuracy ≤ GPS_MOTOR_ACCURACY_GATE_M (requires 2 before motor promotion). */
     private var consecutiveCleanGpsReadings = 0
+    /** Rolling accuracy readings used to detect rapid outdoor→indoor degradation. */
+    private val accuracyHistory = ArrayDeque<Float>()
+    /** Non-zero while an outdoor→indoor GPS transition is active; cleared after [INDOOR_TRANSITION_TTL_MS]. */
+    private var indoorTransitionDetectedMs = 0L
     /** Bearing (degrees, 0–360) of the last accepted GPS displacement vector. */
     private var lastBearingDeg: Float? = null
     /** Count of consecutive heading flips (>45 °) — high counts indicate GPS drift, not real movement. */
@@ -218,6 +227,9 @@ class TrackingService : LifecycleService() {
     /** Walking / slow jog: GPS jitter causes large apparent speed changes — cap delta per fix. */
     private val MAX_SPEED_CHANGE_WALKING = 2.5f // ~9 km/h max jump per update
     private val MAX_SPEED_CHANGE_FLYING = 30.0f // Max 30 m/s (108 km/h) for takeoff/landing
+    /** Outliers rejected this many ticks in a row are treated as a poisoned EMA baseline
+     *  (not a one-off spike) and the EMA steps toward the new reading instead of freezing. */
+    private val SPEED_OUTLIER_RECOVERY_TICKS = 2
 
     // Fallback thresholds: use alt sources when GPS speed is unreliable
     private val GPS_SPEED_UNRELIABLE_MAX = 0.5f  // m/s - treat as unreliable below this
@@ -447,6 +459,7 @@ class TrackingService : LifecycleService() {
         lastPosition = null
         previousAltitude = 0.0
         smoothedSpeed = 0f
+        consecutiveSpeedOutliers = 0
         lastStepCount = 0
         lastStepTimestamp = System.currentTimeMillis()
         stepCountAtLastGps = 0
@@ -588,6 +601,7 @@ class TrackingService : LifecycleService() {
         _currentActivity.value = ActivityType.IDLE
         locationService.setFlyingMode(false)
         smoothedSpeed = 0f
+        consecutiveSpeedOutliers = 0
         _currentSpeed.value = 0f
         locationCollectJob?.cancel()
         sensorCollectJob?.cancel()
@@ -723,6 +737,8 @@ class TrackingService : LifecycleService() {
         speedSampleBuf.clear()
         evConfirmPromptShownThisSession = false
         consecutiveCleanGpsReadings = 0
+        accuracyHistory.clear()
+        indoorTransitionDetectedMs = 0L
         lastBearingDeg = null
         headingJitterCount = 0
         lastRawGpsSpeed = Float.NaN
@@ -738,6 +754,7 @@ class TrackingService : LifecycleService() {
         previousAltitude = 0.0
         lastUpdateTime = 0
         smoothedSpeed = 0f
+        consecutiveSpeedOutliers = 0
         _currentSpeed.value = 0f
         activityHistory.clear()
         lastStepCount = 0
@@ -991,8 +1008,9 @@ class TrackingService : LifecycleService() {
         val elapsedSec = ((now - sessionStartTimeMs) / 1000.0).coerceAtLeast(1.0)
         val steps = _sessionSteps.value
         val sessionSpm = (steps / (elapsedSec / 60.0)).toFloat()
+        val stepWindowMs = if (indoorTransitionDetectedMs > 0L) INDOOR_STEP_WINDOW_MS else PEDESTRIAN_RECENT_STEP_WINDOW_MS
         val recentlyStepped = lastStepTimestamp > 0L &&
-            (now - lastStepTimestamp) < PEDESTRIAN_RECENT_STEP_WINDOW_MS
+            (now - lastStepTimestamp) < stepWindowMs
 
         // On-foot if either: a step came in very recently, OR the session has
         // a meaningful cadence baseline. PEDESTRIAN_MIN_STEPS_FOR_CAP is set
@@ -1068,11 +1086,11 @@ class TrackingService : LifecycleService() {
     // Returns outlier-gated raw speed for display (no EMA lag), matching the same outlier window
     // used by smoothSpeedWithOutlierRejection so spikes are suppressed in both paths.
     private fun rejectOutlierForDisplay(newSpeed: Float, activity: ActivityType): Float {
-        // On the very first reading (smoothedSpeed not yet set), only trust the GPS speed if
-        // it is already at a plausible walking pace — anything below walking min is GPS noise
-        // on startup and should not flash on the speedometer.
+        // On the very first reading, only show speed when we have a clean GPS fix — same
+        // guard as smoothSpeedWithOutlierRejection — so the speedometer doesn't flash an
+        // indoor-phantom speed before the EMA has a valid baseline.
         if (smoothedSpeed == 0f) {
-            return if (newSpeed >= SpeedThresholds.WALKING_MIN.toFloat()) newSpeed else 0f
+            return if (newSpeed >= SpeedThresholds.WALKING_MIN.toFloat() && consecutiveCleanGpsReadings >= 1) newSpeed else 0f
         }
         val maxChange = when {
             activity == ActivityType.FLYING -> MAX_SPEED_CHANGE_FLYING
@@ -1084,17 +1102,19 @@ class TrackingService : LifecycleService() {
     }
 
     private fun smoothSpeedWithOutlierRejection(newSpeed: Float, activity: ActivityType): Float {
-        // First reading: only latch into smoothedSpeed when we have a plausible pace.
-        // Latching GPS noise (< walking min) would corrupt the outlier-rejection baseline
-        // for all subsequent ticks and keep the EMA artificially elevated.
+        // First reading: only latch into smoothedSpeed when we have a plausible pace AND
+        // at least one clean GPS fix (accuracy ≤ GPS_MOTOR_ACCURACY_GATE_M). Without the
+        // accuracy guard, a phantom speed from cold GPS or indoor multipath gets latched as
+        // the EMA baseline and takes ~15 ticks to decay back to true walking speed.
         if (smoothedSpeed == 0f) {
-            if (newSpeed >= SpeedThresholds.WALKING_MIN.toFloat()) {
+            if (newSpeed >= SpeedThresholds.WALKING_MIN.toFloat() && consecutiveCleanGpsReadings >= 1) {
                 smoothedSpeed = newSpeed
+                consecutiveSpeedOutliers = 0
                 return newSpeed
             }
             return 0f
         }
-        
+
         val maxChange = when {
             activity == ActivityType.FLYING -> MAX_SPEED_CHANGE_FLYING
             activity == ActivityType.WALKING || activity == ActivityType.IDLE -> MAX_SPEED_CHANGE_WALKING
@@ -1103,19 +1123,31 @@ class TrackingService : LifecycleService() {
         }
 
         // Reject outliers (sudden massive speed changes)
-        val speedChange = Math.abs(newSpeed - smoothedSpeed)
-        if (speedChange > maxChange) {
-            android.util.Log.d("TrackingService", 
-                "Rejecting speed outlier: ${newSpeed * 3.6f} km/h (change: ${speedChange * 3.6f} km/h, max: ${maxChange * 3.6f} km/h)")
+        val speedChange = newSpeed - smoothedSpeed
+        if (Math.abs(speedChange) > maxChange) {
+            consecutiveSpeedOutliers++
+            if (consecutiveSpeedOutliers >= SPEED_OUTLIER_RECOVERY_TICKS) {
+                // The divergence has persisted across multiple ticks — smoothedSpeed
+                // itself is likely the poisoned value (e.g. EMA drifted up during an
+                // indoor multipath stretch). Step toward the new reading by maxChange
+                // instead of rejecting forever, so it converges within a few ticks.
+                smoothedSpeed += maxChange * Math.signum(speedChange)
+                android.util.Log.d("TrackingService",
+                    "Recovering from sustained speed divergence: stepping EMA toward ${newSpeed * 3.6f} km/h -> ${smoothedSpeed * 3.6f} km/h")
+                return smoothedSpeed
+            }
+            android.util.Log.d("TrackingService",
+                "Rejecting speed outlier: ${newSpeed * 3.6f} km/h (change: ${Math.abs(speedChange) * 3.6f} km/h, max: ${maxChange * 3.6f} km/h)")
             return smoothedSpeed // Keep previous speed
         }
-        
-        // Walking: smoother (alpha low) to damp GPS spikes; driving: more responsive; flying: stable mid-band
+        consecutiveSpeedOutliers = 0
+
+        // Walking: smoother (alpha low) to damp GPS spikes; driving: responsive but not laggy on decel; flying: stable mid-band
         val alpha = when (activity) {
             ActivityType.FLYING -> 0.4f
             ActivityType.WALKING, ActivityType.IDLE -> 0.35f
             ActivityType.RUNNING -> 0.55f
-            else -> 0.85f
+            else -> 0.62f
         }
         smoothedSpeed = (alpha * newSpeed) + ((1 - alpha) * smoothedSpeed)
         return smoothedSpeed
@@ -1177,12 +1209,18 @@ class TrackingService : LifecycleService() {
             return refinedActivity
         }
 
+        // While an indoor GPS transition is active, require near-outdoor-quality
+        // accuracy before allowing any motor promotion — indoor multipath can report
+        // phantom speeds that look like driving even with the normal 30 m gate.
+        val effectiveAccuracyGate = if (indoorTransitionDetectedMs > 0L) INDOOR_MOTOR_ACCURACY_GATE_M
+                                    else GPS_MOTOR_ACCURACY_GATE_M
+
         // Real vehicles produce a SMOOTH accelerometer signature within ~3–5 s of
         // starting to drive; promote immediately when GPS also confirms outdoor
         // placement (good accuracy). Requiring both prevents indoor vibration
         // (HVAC, footsteps nearby) from causing a false SMOOTH while GPS drifts.
         if (sensorService.getMotionPattern() == MotionPattern.SMOOTH &&
-            horizontalAccuracyM <= GPS_MOTOR_ACCURACY_GATE_M) {
+            horizontalAccuracyM <= effectiveAccuracyGate) {
             pedestrianToMotorRiseSinceMs = 0L
             return refinedActivity
         }
@@ -1191,9 +1229,9 @@ class TrackingService : LifecycleService() {
         // typically 20–80 m) can produce apparent speeds that look like driving or
         // running. If accuracy is too weak to confirm vehicle-level displacement AND
         // the accelerometer doesn't see a vehicle signature, keep the pedestrian mode.
-        if (horizontalAccuracyM > GPS_MOTOR_ACCURACY_GATE_M) {
+        if (horizontalAccuracyM > effectiveAccuracyGate) {
             pedestrianToMotorRiseSinceMs = 0L
-            android.util.Log.d("TrackingService", "Motor promotion blocked: poor GPS (${horizontalAccuracyM}m) without SMOOTH pattern")
+            android.util.Log.d("TrackingService", "Motor promotion blocked: GPS ${horizontalAccuracyM}m > gate ${effectiveAccuracyGate}m${if (indoorTransitionDetectedMs > 0L) " (indoor)" else ""}")
             return cur
         }
 
@@ -1264,16 +1302,29 @@ class TrackingService : LifecycleService() {
         now: Long,
         sensorStillOverride: Boolean = false
     ): ActivityType {
+        val cur = _currentActivity.value
+        val isMotor = cur == ActivityType.DRIVING || cur == ActivityType.ELECTRIC_VEHICLE ||
+            cur == ActivityType.MOTORCYCLE || cur == ActivityType.TRAIN
+
         if (sensorStillOverride) {
             // Sensors have confirmed stationary for long enough — flush hysteresis timers
             // so the activity can drop out of DRIVING immediately.
             motorLowSpeedSinceMs = 0L
             lastDrivingBandMs = 0L
+            if (isMotor && refinedActivity != cur) {
+                // The vehicle just went IDLE after a confirmed stop (traffic light,
+                // parking). Treat this like a cold-start vehicle context: when motion
+                // resumes, speedSampleBuf would otherwise be full of stale zeros from
+                // the stop (blocking the speed-consistency gate for ~SPEED_BUF_SIZE
+                // ticks) and the full PEDESTRIAN_TO_MOTOR_PROMOTE_MS latency would apply
+                // on top — together causing a long delay before DRIVING is detected
+                // again even once GPS speed clearly shows the vehicle moving.
+                speedSampleBuf.clear()
+                coldStartVehicleMs = now
+                android.util.Log.d("TrackingService", "Vehicle stopped (sensor-confirmed still): speed buffer cleared, cold-start window started for quick re-promotion")
+            }
             return refinedActivity
         }
-        val cur = _currentActivity.value
-        val isMotor = cur == ActivityType.DRIVING || cur == ActivityType.ELECTRIC_VEHICLE ||
-            cur == ActivityType.MOTORCYCLE || cur == ActivityType.TRAIN
         val aboveDriving = speed >= SpeedThresholds.DRIVING_MIN
 
         if (aboveDriving) {
@@ -1512,6 +1563,44 @@ class TrackingService : LifecycleService() {
             consecutiveCleanGpsReadings = (consecutiveCleanGpsReadings + 1).coerceAtMost(10)
         } else {
             consecutiveCleanGpsReadings = 0
+        }
+
+        // Outdoor→indoor transition detection: if accuracy was recently good and has
+        // now degraded significantly, GPS multipath is likely. Clear the speed buffer
+        // so stale outdoor speeds can't drive a DRIVING promotion indoors.
+        accuracyHistory.addLast(position.accuracy)
+        if (accuracyHistory.size > INDOOR_ACCURACY_HISTORY_SIZE) accuracyHistory.removeFirst()
+        if (accuracyHistory.size >= INDOOR_ACCURACY_HISTORY_SIZE) {
+            val recentBest = accuracyHistory.take(accuracyHistory.size - 2).minOrNull() ?: Float.MAX_VALUE
+            if (recentBest <= INDOOR_ACCURACY_GOOD_M && position.accuracy >= INDOOR_ACCURACY_DEGRADED_M
+                && indoorTransitionDetectedMs == 0L) {
+                speedSampleBuf.clear()
+                smoothedSpeed = 0f          // flush EMA so indoor phantom speeds don't persist
+                consecutiveSpeedOutliers = 0
+                consecutiveCleanGpsReadings = 0
+                indoorTransitionDetectedMs = now
+                android.util.Log.d("TrackingService",
+                    "Indoor GPS transition: ${recentBest}m → ${position.accuracy}m, speed EMA + buffer cleared")
+            }
+        }
+
+        // Indoor→outdoor re-emergence: once 3 consecutive clean fixes are seen while the
+        // indoor flag is live, accuracy has recovered — flush the stale EMA immediately
+        // so it doesn't take ~15 s to decay back to the user's actual walking pace.
+        if (indoorTransitionDetectedMs > 0L && accuracyHistory.size >= 3) {
+            val lastThree = accuracyHistory.toList().takeLast(3)
+            if (lastThree.all { it <= INDOOR_ACCURACY_GOOD_M }) {
+                speedSampleBuf.clear()
+                smoothedSpeed = 0f
+                consecutiveSpeedOutliers = 0
+                consecutiveCleanGpsReadings = 0
+                indoorTransitionDetectedMs = 0L
+                android.util.Log.d("TrackingService", "Indoor→outdoor re-emergence: EMA speed flushed")
+            }
+        }
+
+        if (indoorTransitionDetectedMs > 0L && (now - indoorTransitionDetectedMs) >= INDOOR_TRANSITION_TTL_MS) {
+            indoorTransitionDetectedMs = 0L
         }
 
         val timeDelta = if (lastUpdateTime > 0) (now - lastUpdateTime) / 1000.0 else 0.0
@@ -2657,7 +2746,7 @@ class TrackingService : LifecycleService() {
         private const val GPS_PATH_DISTANCE_SCALE = 0.83
 
         /** Sustained below [SpeedThresholds.DRIVING_MIN] before allowing switch to walk/run/idle (ms). */
-        private const val MOTOR_LOW_SPEED_EXIT_MS = 300_000L
+        private const val MOTOR_LOW_SPEED_EXIT_MS = 60_000L
 
         /** After this long without speed in the driving band, [MOTOR_LOW_SPEED_EXIT_MS] countdown applies. */
         private const val STICKY_RECENT_DRIVING_MS = 120_000L
@@ -2732,6 +2821,8 @@ class TrackingService : LifecycleService() {
          * would have allowed any cap to take effect.
          */
         private const val PEDESTRIAN_RECENT_STEP_WINDOW_MS = 5_000L
+        /** Extended step window applied while an indoor GPS transition is active. */
+        private const val INDOOR_STEP_WINDOW_MS = 15_000L
 
         /**
          * Minimum session-step count before the cadence-based pedestrian cap
@@ -2740,6 +2831,17 @@ class TrackingService : LifecycleService() {
          * "long-term cadence" branch.
          */
         private const val PEDESTRIAN_MIN_STEPS_FOR_CAP = 4
+
+        /** GPS accuracy (m) considered "good outdoors" for indoor-transition detection. */
+        private const val INDOOR_ACCURACY_GOOD_M = 15f
+        /** GPS accuracy (m) considered "degraded / likely indoors". */
+        private const val INDOOR_ACCURACY_DEGRADED_M = 40f
+        /** Number of recent accuracy readings kept for degradation detection. */
+        private const val INDOOR_ACCURACY_HISTORY_SIZE = 5
+        /** How long the indoor-transition cautious mode stays active after detection (ms). */
+        private const val INDOOR_TRANSITION_TTL_MS = 30_000L
+        /** Tightened motor-promotion accuracy gate while indoor transition is active (m). */
+        private const val INDOOR_MOTOR_ACCURACY_GATE_M = 15f
     }
 
     private fun activityDisplayName(t: ActivityType): String = when (t) {

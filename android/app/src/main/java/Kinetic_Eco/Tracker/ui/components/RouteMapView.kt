@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
@@ -150,6 +151,10 @@ fun RouteMapMultiSessionView(
             setMultiTouchControls(true)
             minZoomLevel = 3.0
             maxZoomLevel = 19.0
+            // Clip the hardware-accelerated View layer to its measured bounds so
+            // osmdroid tile rendering doesn't bleed over Compose siblings above.
+            clipToOutline = true
+            outlineProvider = android.view.ViewOutlineProvider.BOUNDS
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN) {
                 setHasTransientState(true)
             }
@@ -235,6 +240,9 @@ fun RouteMapMultiSessionView(
             modifier = Modifier
                 .fillMaxWidth()
                 .height(heightDp.dp)
+                // Double-clip: Compose layer clips the layout boundary so the
+                // AndroidView (osmdroid) can't paint outside this Box.
+                .clip(RoundedCornerShape(8.dp))
         ) {
             AndroidView(
                 factory = { mapView },

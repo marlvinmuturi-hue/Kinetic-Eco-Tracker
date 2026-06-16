@@ -21,8 +21,8 @@ android {
         applicationId = "com.kineticecotracker"
         minSdk = 24
         targetSdk = 35
-        versionCode = 3
-        versionName = "V1.5.0"
+        versionCode = 5
+        versionName = "V1.5.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "FUNCTIONS_BASE_URL", "\"https://us-central1-gen-lang-client-0114974661.cloudfunctions.net\"")

@@ -80,7 +80,7 @@ class UserPreferencesManager(context: Context) {
 
         // Auto-stop on idle: minutes of inactivity before stopping (3, 5, or 10)
         private const val KEY_IDLE_STOP_MINUTES = "idle_stop_minutes"
-        private const val DEFAULT_IDLE_STOP_MINUTES = 10
+        private const val DEFAULT_IDLE_STOP_MINUTES = 3
 
         // Notification sounds (milestones, tracking start/stop, session summary)
         private const val KEY_NOTIFICATION_SOUNDS_ENABLED = "notification_sounds_enabled"

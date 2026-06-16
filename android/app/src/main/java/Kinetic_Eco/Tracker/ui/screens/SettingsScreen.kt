@@ -42,6 +42,8 @@ import Kinetic_Eco.Tracker.ui.theme.Red500
 import Kinetic_Eco.Tracker.services.UserPhysicalProfile
 import Kinetic_Eco.Tracker.services.UserPreferencesManager
 import Kinetic_Eco.Tracker.services.Gender
+import Kinetic_Eco.Tracker.services.CalorieEngine
+import Kinetic_Eco.Tracker.services.ageInYearsFromBirthMs
 
 private val LOCALE_OPTIONS = listOf("auto", "en", "fr", "de", "es", "zh")
 
@@ -778,7 +780,55 @@ fun PhysicalProfileSection(
                 }
                 
                 Spacer(modifier = Modifier.height(16.dp))
-                
+
+                // Live calorie correction preview
+                val previewAge = birthDateMs?.let { ageInYearsFromBirthMs(it, System.currentTimeMillis()) }
+                    ?: UserPhysicalProfile.DEFAULT_AGE_FALLBACK
+                val previewProfile = UserPhysicalProfile(
+                    weight = weight.toDoubleOrNull() ?: 70.0,
+                    height = height.toDoubleOrNull() ?: 170.0,
+                    birthDateMs = birthDateMs,
+                    gender = gender
+                )
+                val bmr = CalorieEngine.calculateBMR(previewProfile)
+                val genderLabel = when (gender) {
+                    Gender.FEMALE -> "Female"
+                    Gender.MALE -> "Male"
+                    Gender.OTHER -> "Other"
+                }
+                val ageNote = if (previewAge > 30) ", age $previewAge" else ", age $previewAge"
+                Card(
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(containerColor = colorScheme.primaryContainer.copy(alpha = 0.4f))
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.LocalFireDepartment,
+                            contentDescription = null,
+                            tint = colorScheme.primary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Column {
+                            Text(
+                                text = "Estimated BMR: ${bmr.toInt()} kcal/day",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = colorScheme.onSurface
+                            )
+                            Text(
+                                text = "$genderLabel$ageNote · calorie burn scaled to your profile",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
                 // Save button
                 Button(
                     onClick = {

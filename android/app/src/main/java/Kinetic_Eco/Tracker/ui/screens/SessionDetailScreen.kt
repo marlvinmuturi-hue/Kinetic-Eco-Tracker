@@ -1,18 +1,28 @@
 package Kinetic_Eco.Tracker.ui.screens
 
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.grid.GridCells
+import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
+import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.DirectionsBike
+import androidx.compose.material.icons.automirrored.filled.DirectionsRun
+import androidx.compose.material.icons.automirrored.filled.DirectionsWalk
 import androidx.compose.material.icons.automirrored.filled.TrendingDown
 import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.outlined.TwoWheeler
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.graphics.painter.Painter
@@ -23,6 +33,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import Kinetic_Eco.Tracker.R
+import Kinetic_Eco.Tracker.data.ActivityColors
 import Kinetic_Eco.Tracker.data.ActivitySegment
 import Kinetic_Eco.Tracker.data.ActivityType
 import Kinetic_Eco.Tracker.data.SessionStats
@@ -55,16 +66,17 @@ fun SessionDetailScreen(
     allSessions: List<SessionStats>,
     unitSystem: UnitSystem = UnitSystem.METRIC,
     energyUnit: EnergyUnit = EnergyUnit.KCAL,
+    userId: String = "",
+    onUpdateSegments: (List<ActivitySegment>) -> Unit = {},
     onBack: () -> Unit
 ) {
     val colorScheme = MaterialTheme.colorScheme
     val context = LocalContext.current
     val locales = LocalConfiguration.current.locales
     val locale = if (locales.isEmpty) Locale.getDefault() else (locales.get(0) ?: Locale.getDefault())
-    // If a specific session is provided, show only that session's data
-    // Otherwise, show aggregated data from all sessions
     val displayStats = session ?: aggregateSessions(allSessions)
     val isIndividualSession = session != null
+    var editingSegment by remember { mutableStateOf<ActivitySegment?>(null) }
     
     Column(
         modifier = Modifier
@@ -281,21 +293,40 @@ fun SessionDetailScreen(
                 }
             }
 
-            // Mode timeline — only shown when a session had 2+ distinct activity segments
+            // Mode timeline — shown when a session has 2+ distinct activity segments,
+            // or always for individual sessions so the user can edit/comment any segment.
             val meaningfulSegments = displayStats.segments.filter {
                 it.type != ActivityType.IDLE && (it.distance >= 50.0 || (it.endTime - it.startTime) >= 15_000L)
             }
-            if (meaningfulSegments.map { it.type }.toSet().size >= 2) {
+            if (meaningfulSegments.map { it.effectiveType }.toSet().size >= 2 || (isIndividualSession && meaningfulSegments.isNotEmpty())) {
                 item {
-                    ModeTimelineCard(segments = meaningfulSegments, unitSystem = unitSystem)
+                    ModeTimelineCard(
+                        segments = meaningfulSegments,
+                        unitSystem = unitSystem,
+                        onSegmentClick = if (isIndividualSession) { seg -> editingSegment = seg } else null
+                    )
                 }
             }
+
 
             // Activity breakdown donut chart
             item {
                 ActivityDonutChart(stats = displayStats, unitSystem = unitSystem)
             }
         }
+    }
+
+    // Edit segment sheet — rendered as an overlay outside the scroll list
+    editingSegment?.let { seg ->
+        EditSegmentSheet(
+            segment = seg,
+            onSave = { edited ->
+                val merged = displayStats.segments.map { if (it.startTime == edited.startTime) edited else it }
+                onUpdateSegments(merged)
+                editingSegment = null
+            },
+            onDismiss = { editingSegment = null }
+        )
     }
 }
 
@@ -513,7 +544,11 @@ private fun ActivityType.toTimelineLabel(): Int = when (this) {
 }
 
 @Composable
-fun ModeTimelineCard(segments: List<ActivitySegment>, unitSystem: UnitSystem) {
+fun ModeTimelineCard(
+    segments: List<ActivitySegment>,
+    unitSystem: UnitSystem,
+    onSegmentClick: ((ActivitySegment) -> Unit)? = null
+) {
     val colorScheme = MaterialTheme.colorScheme
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -521,17 +556,35 @@ fun ModeTimelineCard(segments: List<ActivitySegment>, unitSystem: UnitSystem) {
         shape = RoundedCornerShape(12.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Text(
-                text = "Mode timeline",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = colorScheme.onSurface,
-                modifier = Modifier.padding(bottom = 12.dp)
-            )
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "Mode timeline",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = colorScheme.onSurface
+                )
+                if (onSegmentClick != null) {
+                    Text(
+                        text = "Tap to edit",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colorScheme.onSurfaceVariant
+                    )
+                }
+            }
             segments.forEachIndexed { index, segment ->
+                val activityColor = ActivityColors.getColor(segment.effectiveType)
+                val rowModifier = if (onSegmentClick != null)
+                    Modifier.fillMaxWidth().clickable { onSegmentClick(segment) }
+                else
+                    Modifier.fillMaxWidth()
+
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
+                    modifier = rowModifier,
+                    verticalAlignment = Alignment.Top
                 ) {
                     // Connector line + dot
                     Column(
@@ -539,58 +592,202 @@ fun ModeTimelineCard(segments: List<ActivitySegment>, unitSystem: UnitSystem) {
                         modifier = Modifier.width(24.dp)
                     ) {
                         if (index > 0) {
-                            Box(
-                                modifier = Modifier
-                                    .width(2.dp)
-                                    .height(12.dp)
-                                    .background(colorScheme.outlineVariant)
-                            )
+                            Box(Modifier.width(2.dp).height(12.dp).background(colorScheme.outlineVariant))
                         } else {
-                            Spacer(modifier = Modifier.height(12.dp))
+                            Spacer(Modifier.height(12.dp))
                         }
                         Box(
-                            modifier = Modifier
-                                .size(10.dp)
-                                .background(colorScheme.onSurface, shape = RoundedCornerShape(5.dp))
+                            Modifier.size(10.dp).background(activityColor, shape = RoundedCornerShape(5.dp))
                         )
                         if (index < segments.lastIndex) {
-                            Box(
-                                modifier = Modifier
-                                    .width(2.dp)
-                                    .height(12.dp)
-                                    .background(colorScheme.outlineVariant)
-                            )
+                            Box(Modifier.width(2.dp).height(12.dp).background(colorScheme.outlineVariant))
                         } else {
-                            Spacer(modifier = Modifier.height(12.dp))
+                            Spacer(Modifier.height(12.dp))
                         }
                     }
-                    Spacer(modifier = Modifier.width(12.dp))
-                    // Label + distance
-                    Row(
-                        modifier = Modifier.weight(1f),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
+                    Spacer(Modifier.width(12.dp))
+
+                    // Label + optional edit badge + distance + optional comment
+                    Column(
+                        modifier = Modifier.weight(1f).padding(bottom = if (segment.comment.isNotBlank()) 8.dp else 0.dp)
                     ) {
-                        Text(
-                            text = stringResource(segment.type.toTimelineLabel()),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = colorScheme.onSurface,
-                            fontWeight = FontWeight.Medium
-                        )
-                        val durationSec = (segment.endTime - segment.startTime) / 1000L
-                        val distText = if (unitSystem.usesMetricDistance()) {
-                            if (segment.distance >= 1000.0) "${(segment.distance / 1000.0).format(1)} km"
-                            else "${segment.distance.toInt()} m"
-                        } else {
-                            if (segment.distance >= 1609.0) "${(segment.distance / 1609.344).format(1)} mi"
-                            else "${(segment.distance * 3.28084).toInt()} ft"
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    text = stringResource(segment.effectiveType.toTimelineLabel()),
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = colorScheme.onSurface,
+                                    fontWeight = FontWeight.Medium
+                                )
+                                if (segment.userCorrectedType != null) {
+                                    Spacer(Modifier.width(4.dp))
+                                    Icon(
+                                        imageVector = Icons.Default.Edit,
+                                        contentDescription = "Edited",
+                                        tint = activityColor,
+                                        modifier = Modifier.size(12.dp)
+                                    )
+                                }
+                            }
+                            val durationSec = (segment.endTime - segment.startTime) / 1000L
+                            val distText = if (unitSystem.usesMetricDistance()) {
+                                if (segment.distance >= 1000.0) "${(segment.distance / 1000.0).format(1)} km"
+                                else "${segment.distance.toInt()} m"
+                            } else {
+                                if (segment.distance >= 1609.0) "${(segment.distance / 1609.344).format(1)} mi"
+                                else "${(segment.distance * 3.28084).toInt()} ft"
+                            }
+                            Text(
+                                text = "$distText · ${formatTime(durationSec)}",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colorScheme.onSurfaceVariant
+                            )
                         }
-                        Text(
-                            text = "$distText · ${formatTime(durationSec)}",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = colorScheme.onSurfaceVariant
-                        )
+                        if (segment.comment.isNotBlank()) {
+                            Text(
+                                text = segment.comment,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(top = 2.dp)
+                            )
+                        }
                     }
+                }
+            }
+        }
+    }
+}
+
+private fun activityIcon(type: ActivityType): ImageVector = when (type) {
+    ActivityType.WALKING          -> Icons.AutoMirrored.Filled.DirectionsWalk
+    ActivityType.RUNNING          -> Icons.AutoMirrored.Filled.DirectionsRun
+    ActivityType.CYCLING          -> Icons.AutoMirrored.Filled.DirectionsBike
+    ActivityType.DRIVING          -> Icons.Default.DirectionsCar
+    ActivityType.ELECTRIC_VEHICLE -> Icons.Default.ElectricCar
+    ActivityType.TRAIN            -> Icons.Default.Train
+    ActivityType.FLYING           -> Icons.Default.Flight
+    ActivityType.MOTORCYCLE       -> Icons.Outlined.TwoWheeler
+    ActivityType.IDLE             -> Icons.Default.PauseCircle
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun EditSegmentSheet(
+    segment: ActivitySegment,
+    onSave: (ActivitySegment) -> Unit,
+    onDismiss: () -> Unit
+) {
+    val colorScheme = MaterialTheme.colorScheme
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+    var selectedType by remember { mutableStateOf(segment.effectiveType) }
+    var comment by remember { mutableStateOf(segment.comment) }
+    val editableActivities = ActivityType.values().filter { it != ActivityType.IDLE }
+
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        sheetState = sheetState,
+        containerColor = colorScheme.surface
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 16.dp)
+                .padding(bottom = 24.dp)
+                .navigationBarsPadding()
+        ) {
+            Text(
+                text = "Edit segment",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold,
+                color = colorScheme.onSurface
+            )
+            val durationSec = (segment.endTime - segment.startTime) / 1000L
+            Text(
+                text = "${segment.distance.toInt()} m · ${formatTime(durationSec)}",
+                style = MaterialTheme.typography.bodySmall,
+                color = colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(top = 2.dp, bottom = 16.dp)
+            )
+
+            LazyVerticalGrid(
+                columns = GridCells.Fixed(3),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth().heightIn(max = 240.dp)
+            ) {
+                items(editableActivities) { type ->
+                    val selected = type == selectedType
+                    val color = ActivityColors.getColor(type)
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = if (selected) color.copy(alpha = 0.15f) else colorScheme.surfaceVariant,
+                        border = if (selected) BorderStroke(2.dp, color) else null,
+                        modifier = Modifier.clickable { selectedType = type }
+                    ) {
+                        Column(
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            modifier = Modifier.padding(vertical = 10.dp, horizontal = 4.dp)
+                        ) {
+                            Icon(
+                                imageVector = activityIcon(type),
+                                contentDescription = null,
+                                tint = if (selected) color else colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(22.dp)
+                            )
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                text = stringResource(type.toTimelineLabel()),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = if (selected) color else colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(16.dp))
+
+            OutlinedTextField(
+                value = comment,
+                onValueChange = { comment = it },
+                label = { Text("Note") },
+                placeholder = { Text("e.g. Morning commute") },
+                modifier = Modifier.fillMaxWidth(),
+                maxLines = 3,
+                singleLine = false
+            )
+
+            Spacer(Modifier.height(16.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                OutlinedButton(onClick = onDismiss, modifier = Modifier.weight(1f)) {
+                    Text("Cancel")
+                }
+                Button(
+                    onClick = {
+                        onSave(
+                            segment.copy(
+                                userCorrectedType = if (selectedType != segment.type) selectedType else null,
+                                comment = comment.trim()
+                            )
+                        )
+                    },
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = ActivityColors.getColor(selectedType)
+                    )
+                ) {
+                    Text("Save")
                 }
             }
         }

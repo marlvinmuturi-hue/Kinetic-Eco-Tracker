@@ -123,7 +123,9 @@ class FirestoreSessionService {
                         "startTime" to seg.startTime,
                         "endTime" to seg.endTime,
                         "distance" to seg.distance,
-                        "avgSpeed" to seg.avgSpeed
+                        "avgSpeed" to seg.avgSpeed,
+                        "comment" to seg.comment,
+                        "userCorrectedType" to (seg.userCorrectedType?.name ?: "")
                     )
                 }
             )
@@ -358,6 +360,50 @@ class FirestoreSessionService {
         }
     }
     
+    suspend fun patchSessionSegments(
+        sessionId: String,
+        userId: String,
+        mergedSegments: List<Kinetic_Eco.Tracker.data.ActivitySegment>,
+        co2Emissions: Double,
+        co2Conserved: Double,
+        caloriesBurned: Double,
+        routePath: List<Kinetic_Eco.Tracker.data.RoutePoint>
+    ) {
+        try {
+            val ref = firestore.collection("users").document(userId)
+                .collection("sessions").document(sessionId)
+            val updates = hashMapOf<String, Any>(
+                "co2Emissions" to co2Emissions,
+                "co2Conserved" to co2Conserved,
+                "caloriesBurned" to caloriesBurned,
+                "segments" to mergedSegments.map { seg ->
+                    mapOf(
+                        "type" to seg.type.name,
+                        "startTime" to seg.startTime,
+                        "endTime" to seg.endTime,
+                        "distance" to seg.distance,
+                        "avgSpeed" to seg.avgSpeed,
+                        "comment" to seg.comment,
+                        "userCorrectedType" to (seg.userCorrectedType?.name ?: "")
+                    )
+                },
+                "routePath" to routePath.map { pt ->
+                    mutableMapOf<String, Any>(
+                        "latitude" to pt.latitude,
+                        "longitude" to pt.longitude
+                    ).apply {
+                        pt.activity?.let { put("activity", it.name) }
+                        pt.altitudeMeters?.takeIf { it.isFinite() }?.let { put("altitude", it) }
+                    }
+                }
+            )
+            ref.update(updates).await()
+            Log.d(TAG, "✅ Patched segments for session $sessionId")
+        } catch (e: Exception) {
+            Log.e(TAG, "patchSessionSegments failed for $sessionId", e)
+        }
+    }
+
     companion object {
         private const val TAG = "FirestoreSessionSvc"
         

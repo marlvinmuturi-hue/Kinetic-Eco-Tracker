@@ -20,6 +20,7 @@ fun ActivityBreakdown.toEntity(): Kinetic_Eco.Tracker.data.database.ActivityBrea
 }
 
 data class SessionStats(
+    val id: String = "",
     val date: String = "", // ISO date string (yyyy-MM-dd)
     /** Wall-clock end of session (ms). Used for time-of-day charts; 0 if unknown. */
     val sessionEndTimeMs: Long = 0L,

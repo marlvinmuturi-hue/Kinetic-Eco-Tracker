@@ -433,6 +433,7 @@ class SessionManager(private val context: Context) {
         }
 
         return SessionStats(
+            id = id,
             date = date,
             sessionEndTimeMs = createdAt,
             totalDuration = totalDuration,
@@ -453,6 +454,104 @@ class SessionManager(private val context: Context) {
             routePath = routePath,
             breakdown = breakdown
         )
+    }
+
+    suspend fun getSessionById(sessionId: String): SessionStats? =
+        sessionDao.getSessionById(sessionId)?.toSessionStats()
+
+    /**
+     * Apply user-edited [updatedSegments] to an existing session. Uses [effectiveType] for all
+     * CO₂/calorie/breakdown recalculations and rebuilds route-path activity colours proportionally.
+     * Saves to Room immediately; syncs to Firestore in the background.
+     */
+    suspend fun updateSessionSegments(
+        sessionId: String,
+        userId: String,
+        updatedSegments: List<ActivitySegment>
+    ): Result<Unit> = try {
+        val entity = sessionDao.getSessionById(sessionId)
+            ?: return Result.failure(Exception("Session $sessionId not found"))
+
+        val allSegments = try {
+            com.google.gson.Gson().fromJson<List<ActivitySegment>>(
+                entity.segmentsJson,
+                object : TypeToken<List<ActivitySegment>>() {}.type
+            ) ?: emptyList()
+        } catch (_: Exception) { emptyList() }
+
+        // Merge: only the segments the caller edited (matched by startTime); others unchanged.
+        val editedByStart = updatedSegments.associateBy { it.startTime }
+        val mergedSegments = allSegments.map { seg -> editedByStart[seg.startTime] ?: seg }
+
+        val newEmissions = mergedSegments.sumOf { seg ->
+            val f = CO2Factors.getFactor(seg.effectiveType)
+            if (f > 0) f * (seg.distance / 1000.0) else 0.0
+        }
+        val newConserved = mergedSegments.sumOf { seg ->
+            val f = CO2Factors.getFactor(seg.effectiveType)
+            if (f < 0) -f * (seg.distance / 1000.0) else 0.0
+        }
+        val newCalories = mergedSegments.sumOf { seg ->
+            val hours = (seg.endTime - seg.startTime) / 3_600_000.0
+            CalorieFactorsPerHour.getFactor(seg.effectiveType) * hours
+        }
+        val newBreakdown = ActivityType.values().associateWith { type ->
+            val segs = mergedSegments.filter { it.effectiveType == type }
+            ActivityBreakdownEntity(
+                time = segs.sumOf { (it.endTime - it.startTime) / 1000L },
+                distance = segs.sumOf { it.distance },
+                steps = entity.breakdown[type]?.steps ?: 0
+            )
+        }
+        val newRoutePath = rebuildRoutePathActivities(entity.routePath, mergedSegments)
+        val newSegmentsJson = com.google.gson.Gson().toJson(mergedSegments)
+
+        sessionDao.updateSession(
+            entity.copy(
+                co2Emissions = newEmissions,
+                co2Conserved = newConserved,
+                caloriesBurned = newCalories,
+                breakdown = newBreakdown,
+                segmentsJson = newSegmentsJson,
+                routePath = newRoutePath
+            )
+        )
+
+        syncScope.launch {
+            firestoreService.patchSessionSegments(
+                sessionId = sessionId,
+                userId = userId,
+                mergedSegments = mergedSegments,
+                co2Emissions = newEmissions,
+                co2Conserved = newConserved,
+                caloriesBurned = newCalories,
+                routePath = newRoutePath
+            )
+        }
+
+        Result.success(Unit)
+    } catch (e: Exception) {
+        Log.e(TAG, "updateSessionSegments failed", e)
+        Result.failure(e)
+    }
+
+    private fun rebuildRoutePathActivities(
+        routePath: List<RoutePoint>,
+        segments: List<ActivitySegment>
+    ): List<RoutePoint> {
+        if (segments.isEmpty() || routePath.isEmpty()) return routePath
+        val totalMs = segments.sumOf { it.endTime - it.startTime }.toFloat()
+        if (totalMs <= 0f) return routePath
+        var elapsed = 0L
+        val cumFractions = segments.map { seg ->
+            elapsed += (seg.endTime - seg.startTime)
+            elapsed.toFloat() / totalMs
+        }
+        return routePath.mapIndexed { idx, pt ->
+            val fraction = if (routePath.size <= 1) 0f else idx.toFloat() / (routePath.size - 1)
+            val sIdx = cumFractions.indexOfFirst { fraction <= it }.takeIf { it >= 0 } ?: segments.lastIndex
+            pt.copy(activity = segments[sIdx].effectiveType)
+        }
     }
 }
 

@@ -17,6 +17,7 @@ import Kinetic_Eco.Tracker.services.AIAnalysisService
 import Kinetic_Eco.Tracker.services.CohortAnalysisService
 import Kinetic_Eco.Tracker.services.RouteIntelligenceService
 import Kinetic_Eco.Tracker.services.SessionManager
+import Kinetic_Eco.Tracker.data.ActivitySegment
 import Kinetic_Eco.Tracker.services.UserPreferencesManager
 
 class AnalyticsViewModel(application: Application) : AndroidViewModel(application) {
@@ -65,16 +66,25 @@ class AnalyticsViewModel(application: Application) : AndroidViewModel(applicatio
         _shouldExpandSessionSummary.value = false
     }
 
-    // Selected session for detail view
-    var selectedSession: SessionStats? = null
-        private set
-    
+    // Selected session for detail view — StateFlow so SessionDetailScreen reacts to edits.
+    private val _selectedSession = MutableStateFlow<SessionStats?>(null)
+    val selectedSession: StateFlow<SessionStats?> = _selectedSession.asStateFlow()
+
     fun setSelectedSession(session: SessionStats) {
-        selectedSession = session
+        _selectedSession.value = session
     }
-    
+
     fun clearSelectedSession() {
-        selectedSession = null
+        _selectedSession.value = null
+    }
+
+    fun updateSegments(sessionId: String, userId: String, segments: List<ActivitySegment>) {
+        viewModelScope.launch(Dispatchers.IO) {
+            sessionManager.updateSessionSegments(sessionId, userId, segments).onSuccess {
+                val updated = sessionManager.getSessionById(sessionId)
+                if (updated != null) _selectedSession.value = updated
+            }
+        }
     }
     
     fun getAllSessions(userId: String): Flow<List<SessionStats>> {

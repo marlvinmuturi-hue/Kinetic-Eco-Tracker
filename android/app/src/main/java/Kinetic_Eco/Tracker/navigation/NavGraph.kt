@@ -383,12 +383,17 @@ fun AppNavGraph(
         
         fadeComposable(Screen.SessionDetail.route) {
             val allSessions by analyticsViewModel.getAllSessions(currentUser?.uid ?: "").collectAsStateWithLifecycle(initialValue = emptyList())
-            val selectedSession = analyticsViewModel.selectedSession
+            val selectedSession by analyticsViewModel.selectedSession.collectAsStateWithLifecycle()
             SessionDetailScreen(
                 session = selectedSession,
                 allSessions = allSessions,
                 unitSystem = unitSystem,
                 energyUnit = unitSystem.toEnergyUnit(),
+                userId = currentUser?.uid ?: "",
+                onUpdateSegments = { segments ->
+                    val sid = selectedSession?.id ?: return@SessionDetailScreen
+                    analyticsViewModel.updateSegments(sid, currentUser?.uid ?: "", segments)
+                },
                 onBack = {
                     analyticsViewModel.clearSelectedSession()
                     navController.popBackStack()

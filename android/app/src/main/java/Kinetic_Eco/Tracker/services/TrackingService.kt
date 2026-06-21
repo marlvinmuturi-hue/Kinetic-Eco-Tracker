@@ -801,20 +801,24 @@ class TrackingService : LifecycleService() {
 
     /** Returns completed segments plus the still-open current segment (closed to now). */
     fun getFinalSegments(): List<ActivitySegment> {
-        if (segmentStartTimeMs <= 0L) return segmentList.toList()
-        val now = System.currentTimeMillis()
-        val segDurationMs = now - segmentStartTimeMs
-        val segDistance = _sessionDistance.value - segmentStartDistanceM
         val result = segmentList.toMutableList()
-        if (segDurationMs >= 15_000L || segDistance >= 50.0) {
-            result.add(ActivitySegment(
-                type = segmentActivity,
-                startTime = segmentStartTimeMs,
-                endTime = now,
-                distance = segDistance,
-                avgSpeed = if (segDurationMs > 0) segDistance / (segDurationMs / 1000.0) else 0.0
-            ))
+        if (segmentStartTimeMs > 0L) {
+            val now = System.currentTimeMillis()
+            val segDurationMs = now - segmentStartTimeMs
+            val segDistance = _sessionDistance.value - segmentStartDistanceM
+            // Always close the open segment if the session had any meaningful time or distance,
+            // even if below the mid-session filter (we want at least one segment per session).
+            if (segDurationMs >= 5_000L || segDistance >= 10.0 || result.isEmpty()) {
+                result.add(ActivitySegment(
+                    type = segmentActivity,
+                    startTime = segmentStartTimeMs,
+                    endTime = now,
+                    distance = segDistance.coerceAtLeast(0.0),
+                    avgSpeed = if (segDurationMs > 0) segDistance / (segDurationMs / 1000.0) else 0.0
+                ))
+            }
         }
+        android.util.Log.d("TrackingService", "getFinalSegments: ${result.size} segments, segmentStartTimeMs=$segmentStartTimeMs")
         return result
     }
 

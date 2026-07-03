@@ -78,6 +78,12 @@ class TrackingService : LifecycleService() {
     private val leanPromoHoldMs = 3_800L
     private val leanHintCooldownMs = 90_000L
 
+    // Manual-activity mismatch nudge: when sensors disagree with the pinned mode
+    private var manualMismatchSinceMs: Long = 0L
+    /** 0 = never sent, -1 = user dismissed, >0 = epoch when notification was posted. */
+    private var manualMismatchNotifiedAtMs: Long = 0L
+    private var manualMismatchSuggestedActivity: ActivityType? = null
+
     private var lastPosition: GeoPosition? = null
     private var previousAltitude: Double = 0.0
     private var lastUpdateTime: Long = 0
@@ -319,6 +325,15 @@ class TrackingService : LifecycleService() {
             ACTION_STOP_TRACKING -> stopTracking()
             ACTION_STOP_AND_SAVE -> stopAndSaveFromNotification()
             ACTION_DISCARD -> discardFromNotification()
+            ACTION_SWITCH_TO_AUTO_DETECT -> {
+                setManualActivityMode(null)
+                cancelActivityHintNotification()
+            }
+            ACTION_DISMISS_ACTIVITY_HINT -> {
+                cancelActivityHintNotification()
+                // -1 = dismissed; auto-switch timer still runs toward 2-minute mark
+                manualMismatchNotifiedAtMs = -1L
+            }
             null -> { /* system restart; tracking state is false until user starts again */ }
         }
         return Service.START_STICKY
@@ -350,6 +365,12 @@ class TrackingService : LifecycleService() {
         val adjustedStats = adjustStatsForSimplifiedPath(rawStats, routePath)
         val statsWithRoute = adjustedStats.copy(routePath = routePath, segments = segments)
         val app = applicationContext as KineticEcoApplication
+
+        if (rawStats.totalDistance < 200.0) {
+            android.util.Log.d("TrackingService", "Stop&save from notification: session too short (${rawStats.totalDistance}m < 200m), discarding")
+            stopTracking()
+            return
+        }
 
         // Surface the "Session saved" notification while we still have a live
         // service context (NotificationManager outlives the service, but the
@@ -440,6 +461,10 @@ class TrackingService : LifecycleService() {
         leanBikePromoSinceMs = 0L
         _leanActivityHint.value = null
         leanHintDismissedAtMs = 0L
+        manualMismatchSinceMs = 0L
+        manualMismatchNotifiedAtMs = 0L
+        manualMismatchSuggestedActivity = null
+        cancelActivityHintNotification()
         _currentActivity.value = ActivityType.IDLE
         locationService.setFlyingMode(false)
         _isTracking.value = true
@@ -670,17 +695,21 @@ class TrackingService : LifecycleService() {
         }
 
         if (userId != null && userId.isNotEmpty()) {
-            app.applicationScope.launch(Dispatchers.IO) {
-                try {
-                    SessionManager(applicationContext).saveSession(
-                        userId,
-                        statsWithRoute,
-                        startMs,
-                        accelSamples
-                    )
-                    android.util.Log.d("TrackingService", "Auto-stop: session saved successfully")
-                } catch (e: Exception) {
-                    android.util.Log.e("TrackingService", "Auto-stop: failed to save session", e)
+            if (stats.totalDistance < 200.0) {
+                android.util.Log.d("TrackingService", "Auto-stop: session too short (${stats.totalDistance}m < 200m), discarding")
+            } else {
+                app.applicationScope.launch(Dispatchers.IO) {
+                    try {
+                        SessionManager(applicationContext).saveSession(
+                            userId,
+                            statsWithRoute,
+                            startMs,
+                            accelSamples
+                        )
+                        android.util.Log.d("TrackingService", "Auto-stop: session saved successfully")
+                    } catch (e: Exception) {
+                        android.util.Log.e("TrackingService", "Auto-stop: failed to save session", e)
+                    }
                 }
             }
         }
@@ -689,6 +718,10 @@ class TrackingService : LifecycleService() {
     fun setManualActivityMode(activity: ActivityType?) {
         _manualActivityMode.value = activity
         _leanActivityHint.value = null
+        manualMismatchSinceMs = 0L
+        manualMismatchNotifiedAtMs = 0L
+        manualMismatchSuggestedActivity = null
+        cancelActivityHintNotification()
         if (activity == null) {
             leanHintDismissedAtMs = 0L
         }
@@ -786,7 +819,11 @@ class TrackingService : LifecycleService() {
         leanBikePromoSinceMs = 0L
         _leanActivityHint.value = null
         leanHintDismissedAtMs = 0L
-        
+        manualMismatchSinceMs = 0L
+        manualMismatchNotifiedAtMs = 0L
+        manualMismatchSuggestedActivity = null
+        cancelActivityHintNotification()
+
         // Reset activity persistence tracking
         activityStartTime = System.currentTimeMillis()
         activityDurationSeconds = 0
@@ -1492,9 +1529,120 @@ class TrackingService : LifecycleService() {
     }
 
     private fun evaluateLeanManualHint(speed: Float, now: Long, manual: ActivityType) {
-        // Two-wheeler suggestions disabled by user preference — never prompt to switch
-        // to MOTORCYCLE or CYCLING based on lean/cornering signatures.
-        if (_leanActivityHint.value != null) _leanActivityHint.value = null
+        _leanActivityHint.value = null
+
+        // Flying and IDLE are intentional overrides — never second-guess them.
+        if (manual == ActivityType.FLYING || manual == ActivityType.IDLE) return
+
+        val isMotorManual = manual == ActivityType.DRIVING ||
+            manual == ActivityType.ELECTRIC_VEHICLE ||
+            manual == ActivityType.MOTORCYCLE ||
+            manual == ActivityType.TRAIN
+        val isPedestrianManual = manual == ActivityType.WALKING ||
+            manual == ActivityType.RUNNING ||
+            manual == ActivityType.CYCLING
+
+        val isIdleSpeed  = speed < SpeedThresholds.IDLE_SPEED_MAX
+        val isMotorSpeed = speed >= SpeedThresholds.DRIVING_MIN.toFloat()
+
+        // Only flag clear, unambiguous mismatches.
+        val mismatch = when {
+            isIdleSpeed -> false                          // stopped/traffic-light — ignore
+            isPedestrianManual && isMotorSpeed -> true   // pinned Walk/Run/Cycle but driving fast
+            isMotorManual && !isMotorSpeed -> true       // pinned Drive/Train but moving slowly on foot
+            else -> false
+        }
+
+        if (!mismatch) {
+            // Mismatch resolved — clear clock but leave notification up so user can still act.
+            manualMismatchSinceMs = 0L
+            manualMismatchSuggestedActivity = null
+            return
+        }
+
+        val suggested = if (isMotorSpeed) ActivityType.DRIVING else ActivityType.WALKING
+
+        // Start or restart the clock when the suggested activity changes.
+        if (manualMismatchSinceMs == 0L || manualMismatchSuggestedActivity != suggested) {
+            manualMismatchSinceMs = now
+            manualMismatchSuggestedActivity = suggested
+            manualMismatchNotifiedAtMs = 0L
+            cancelActivityHintNotification()
+        }
+
+        val elapsed = now - manualMismatchSinceMs
+
+        // Auto-switch after 2 minutes of unresolved mismatch.
+        if (elapsed >= MANUAL_MISMATCH_AUTO_SWITCH_MS) {
+            android.util.Log.i("TrackingService",
+                "Auto-switching from manual $manual to auto-detect after ${elapsed / 1000}s mismatch")
+            setManualActivityMode(null)
+            return
+        }
+
+        // Send a notification once after 30 s — skip if user already dismissed it this cycle.
+        if (elapsed >= MANUAL_MISMATCH_NOTIFY_AFTER_MS && manualMismatchNotifiedAtMs == 0L) {
+            showActivityHintNotification(manual, suggested)
+            manualMismatchNotifiedAtMs = now
+        }
+    }
+
+    private fun showActivityHintNotification(manual: ActivityType, suggested: ActivityType) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                ACTIVITY_HINT_CHANNEL_ID,
+                "Activity Switch Suggestion",
+                NotificationManager.IMPORTANCE_DEFAULT
+            ).apply {
+                description = "Nudges you to switch when sensors detect a different movement"
+                enableVibration(userPrefsManager.getNotificationSoundsEnabled())
+            }
+            (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+                .createNotificationChannel(channel)
+        }
+
+        val manualName    = activityDisplayName(manual)
+        val suggestedName = activityDisplayName(suggested)
+        val flags = PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
+
+        val switchPi = PendingIntent.getService(
+            this, REQ_SWITCH_TO_AUTO,
+            Intent(this, TrackingService::class.java).apply { action = ACTION_SWITCH_TO_AUTO_DETECT },
+            flags
+        )
+        val dismissPi = PendingIntent.getService(
+            this, REQ_DISMISS_HINT,
+            Intent(this, TrackingService::class.java).apply { action = ACTION_DISMISS_ACTIVITY_HINT },
+            flags
+        )
+        val openAppPi = PendingIntent.getActivity(
+            this, REQ_OPEN_APP,
+            Intent(this, MainActivity::class.java),
+            flags
+        )
+
+        val notification = NotificationCompat.Builder(this, ACTIVITY_HINT_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_notification)
+            .setContentTitle("Activity mismatch detected")
+            .setContentText("Tracking as $manualName but you seem to be $suggestedName.")
+            .setStyle(NotificationCompat.BigTextStyle().bigText(
+                "You pinned tracking to $manualName, but sensors suggest $suggestedName. " +
+                "Switch now, or the app will switch automatically in 2 minutes."
+            ))
+            .setContentIntent(openAppPi)
+            .setAutoCancel(false)
+            .addAction(0, "Switch to Auto-detect", switchPi)
+            .addAction(0, "Keep $manualName", dismissPi)
+            .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+            .build()
+
+        (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+            .notify(ACTIVITY_HINT_NOTIFICATION_ID, notification)
+    }
+
+    private fun cancelActivityHintNotification() {
+        (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
+            .cancel(ACTIVITY_HINT_NOTIFICATION_ID)
     }
 
     /** Compute forward bearing in degrees [0, 360) from (fromLat, fromLon) to (toLat, toLon). */
@@ -2708,6 +2856,7 @@ class TrackingService : LifecycleService() {
 
     companion object {
         const val NOTIFICATION_ID = 101
+        const val ACTIVITY_HINT_NOTIFICATION_ID = 106
         const val SESSION_SUMMARY_NOTIFICATION_ID = 103
         /** ID for the brief "Session discarded" toast-style notification. */
         const val DISCARD_CONFIRMATION_NOTIFICATION_ID = 104
@@ -2719,6 +2868,8 @@ class TrackingService : LifecycleService() {
 
         const val ACTION_START_TRACKING = "ACTION_START_TRACKING"
         const val ACTION_STOP_TRACKING = "ACTION_STOP_TRACKING"
+        const val ACTION_SWITCH_TO_AUTO_DETECT = "ACTION_SWITCH_TO_AUTO_DETECT"
+        private const val ACTION_DISMISS_ACTIVITY_HINT = "ACTION_DISMISS_ACTIVITY_HINT"
         /** Foreground-notification action: save the in-flight session and stop. */
         const val ACTION_STOP_AND_SAVE = "ACTION_STOP_AND_SAVE"
         /** Foreground-notification action: stop tracking and throw the session
@@ -2730,6 +2881,14 @@ class TrackingService : LifecycleService() {
         private const val REQ_OPEN_APP = 0
         private const val REQ_STOP_SAVE = 401
         private const val REQ_DISCARD = 402
+        private const val REQ_SWITCH_TO_AUTO = 403
+        private const val REQ_DISMISS_HINT = 404
+
+        private const val ACTIVITY_HINT_CHANNEL_ID = "activity_hint_channel"
+        /** Sustained mismatch before the first notification is sent. */
+        private const val MANUAL_MISMATCH_NOTIFY_AFTER_MS = 30_000L
+        /** Sustained mismatch before auto-switching to auto-detect. */
+        private const val MANUAL_MISMATCH_AUTO_SWITCH_MS = 120_000L
 
         /** Channel ID for the persistent foreground tracking notification.
          *

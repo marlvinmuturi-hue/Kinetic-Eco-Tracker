@@ -686,7 +686,7 @@ class UserPreferencesManager(context: Context) {
      */
     fun clearAll() {
         val terms = prefs.getString(KEY_TERMS_ACCEPTED_VERSION, null)
-        val autoStart = prefs.getBoolean(KEY_AUTO_START_ON_WALK_ENABLED, false)
+        val autoStart = prefs.getBoolean(KEY_AUTO_START_ON_WALK_ENABLED, DEFAULT_AUTO_START_ON_WALK)
         prefs.edit().clear().apply()
         prefs.edit().apply {
             if (terms != null) putString(KEY_TERMS_ACCEPTED_VERSION, terms)

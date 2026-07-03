@@ -99,6 +99,7 @@ sealed class Screen(val route: String) {
     object Settings : Screen("settings")
     object Feedback : Screen("feedback")
     object SessionsList : Screen("sessions_list")
+    object WeekSessions : Screen("sessions_week")
     object SessionDetail : Screen("session_detail")
 }
 
@@ -256,6 +257,7 @@ fun AppNavGraph(
                     onVehicleProfileSave(vehicle)
                     userPrefsManager.setWeeklyCo2GoalKg(weeklyGoalKg)
                     userPrefsManager.setOnboardingDone()
+                    onAutoStartOnWalkChange(true)
                     // Go via the celebration moment; it auto-advances to MainTabs.
                     navController.navigate(Screen.OnboardingCelebration.route) {
                         popUpTo(0) { inclusive = true }
@@ -264,6 +266,7 @@ fun AppNavGraph(
                 },
                 onSkip = {
                     userPrefsManager.setOnboardingDone()
+                    onAutoStartOnWalkChange(true)
                     navController.navigate(Screen.MainTabs.route) {
                         popUpTo(0) { inclusive = true }
                         launchSingleTop = true
@@ -381,6 +384,21 @@ fun AppNavGraph(
             )
         }
         
+        fadeComposable(Screen.WeekSessions.route) {
+            SessionsListScreen(
+                viewModel = analyticsViewModel,
+                userId = currentUser?.uid ?: "",
+                unitSystem = unitSystem,
+                energyUnit = unitSystem.toEnergyUnit(),
+                filterToCurrentWeek = true,
+                onBack = { navController.popBackStack() },
+                onSessionClick = { session ->
+                    analyticsViewModel.setSelectedSession(session)
+                    navController.navigate(Screen.SessionDetail.route)
+                }
+            )
+        }
+
         fadeComposable(Screen.SessionDetail.route) {
             val allSessions by analyticsViewModel.getAllSessions(currentUser?.uid ?: "").collectAsStateWithLifecycle(initialValue = emptyList())
             val selectedSession by analyticsViewModel.selectedSession.collectAsStateWithLifecycle()

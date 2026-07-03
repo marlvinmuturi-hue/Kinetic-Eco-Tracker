@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.pm.PackageManager
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
@@ -289,7 +290,7 @@ private fun ProfilePhotoPicker(
     var localPreviewUri by remember { mutableStateOf<Uri?>(null) }
 
     val galleryLauncher = rememberLauncherForActivityResult(
-        ActivityResultContracts.GetContent()
+        ActivityResultContracts.PickVisualMedia()
     ) { uri: Uri? ->
         showSourceDialog = false
         if (uri != null) {
@@ -415,7 +416,7 @@ private fun ProfilePhotoPicker(
             dismissButton = {
                 TextButton(onClick = {
                     showSourceDialog = false
-                    galleryLauncher.launch("image/*")
+                    galleryLauncher.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                 }) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,

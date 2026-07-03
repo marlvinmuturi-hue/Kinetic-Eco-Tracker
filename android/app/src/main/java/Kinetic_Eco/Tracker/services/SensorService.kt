@@ -490,7 +490,11 @@ class SensorService(private val context: Context) {
             android.util.Log.d("SensorService", "Step counter registered")
         } ?: android.util.Log.w("SensorService", "Step counter not available!")
         gyroscope?.let {
-            sensorManager.registerListener(listener, it, SensorManager.SENSOR_DELAY_GAME)
+            // SENSOR_DELAY_UI (~16 Hz), not GAME (~50 Hz): the gyro is only consumed as a
+            // windowed *mean* angular rate in SensorActivityClassifier, so a lower rate is
+            // sufficient and saves power. (The accelerometer stays at GAME because
+            // FrequencyAnalyzer needs ≥30 Hz to resolve the 5–15 Hz cycling band.)
+            sensorManager.registerListener(listener, it, SensorManager.SENSOR_DELAY_UI)
             android.util.Log.d("SensorService", "Gyroscope registered")
         }
         barometer?.let { 

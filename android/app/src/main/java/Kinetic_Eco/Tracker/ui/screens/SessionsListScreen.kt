@@ -54,6 +54,7 @@ fun SessionsListScreen(
     userId: String,
     unitSystem: UnitSystem = UnitSystem.METRIC,
     energyUnit: EnergyUnit = EnergyUnit.KCAL,
+    filterToCurrentWeek: Boolean = false,
     onBack: () -> Unit,
     onSessionClick: (SessionStats) -> Unit
 ) {
@@ -61,7 +62,18 @@ fun SessionsListScreen(
     val locales = LocalConfiguration.current.locales
     val locale = if (locales.isEmpty) Locale.getDefault() else (locales.get(0) ?: Locale.getDefault())
     val allSessions by viewModel.getAllSessions(userId).collectAsStateWithLifecycle(initialValue = emptyList())
-    
+
+    val displayedSessions = remember(allSessions, filterToCurrentWeek) {
+        if (!filterToCurrentWeek) return@remember allSessions
+        val cal = Calendar.getInstance()
+        cal.set(Calendar.HOUR_OF_DAY, 0); cal.set(Calendar.MINUTE, 0)
+        cal.set(Calendar.SECOND, 0); cal.set(Calendar.MILLISECOND, 0)
+        val daysFromMonday = (cal.get(Calendar.DAY_OF_WEEK) - Calendar.MONDAY + 7) % 7
+        cal.add(Calendar.DAY_OF_YEAR, -daysFromMonday)
+        val weekStart = cal.timeInMillis
+        allSessions.filter { (it.sessionEndTimeMs.takeIf { t -> t > 0 } ?: 0L) >= weekStart }
+    }
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
@@ -82,23 +94,24 @@ fun SessionsListScreen(
                     )
                 }
                 Text(
-                    text = stringResource(R.string.all_sessions),
+                    text = if (filterToCurrentWeek) stringResource(R.string.this_weeks_sessions)
+                           else stringResource(R.string.all_sessions),
                     style = MaterialTheme.typography.headlineLarge,
                     color = colorScheme.onBackground
                 )
             }
         }
-        
+
         item {
             Text(
-                text = stringResource(R.string.sessions_count, allSessions.size),
+                text = stringResource(R.string.sessions_count, displayedSessions.size),
                 style = MaterialTheme.typography.bodyMedium,
                 color = colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(vertical = 8.dp)
             )
         }
-        
-        items(allSessions) { session ->
+
+        items(displayedSessions) { session ->
             SessionCard(
                 session = session,
                 locale = locale,

@@ -5,7 +5,7 @@ package Kinetic_Eco.Tracker.data.database
  *
  * [period] holds whatever the GROUP BY key is:
  *  - daily   → "yyyy-MM-dd"
- *  - weekly  → "yyyy-WW"  (SQLite %Y-%W, week starts Sunday)
+ *  - weekly  → "yyyy-WW"  (SQLite %Y-%W on date−1day, week starts Monday)
  *  - monthly → "yyyy-MM"
  */
 data class Co2ByPeriod(

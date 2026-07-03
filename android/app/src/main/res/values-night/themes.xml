@@ -11,9 +11,10 @@
         <item name="android:colorBackground">@color/kinetic_dark_background</item>
         <item name="colorSurface">@color/kinetic_dark_surface</item>
         <item name="colorOnSurface">#ededed</item>
-        <item name="android:statusBarColor">@color/kinetic_dark_background</item>
+        <!-- statusBarColor / navigationBarColor removed: deprecated & ignored under
+             edge-to-edge (Android 15). windowBackground provides the cold-start color;
+             bar icon contrast is set at runtime via WindowInsetsController. -->
         <item name="android:windowLightStatusBar">false</item>
-        <item name="android:navigationBarColor">@color/kinetic_dark_background</item>
         <item name="android:windowLightNavigationBar">false</item>
         <item name="android:windowBackground">@color/kinetic_dark_background</item>
         <item name="android:windowDrawsSystemBarBackgrounds">true</item>

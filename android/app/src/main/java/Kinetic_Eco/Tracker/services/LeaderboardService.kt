@@ -66,6 +66,22 @@ class LeaderboardService {
         }
     }
 
+    /**
+     * Returns the raw opt-in flag:
+     *   true  = user explicitly opted in
+     *   false = user explicitly opted out
+     *   null  = field has never been written (new user, no preference set)
+     */
+    suspend fun getOptInStatus(userId: String): Boolean? = withContext(Dispatchers.IO) {
+        try {
+            val doc = firestore.collection("users").document(userId).get().await()
+            doc.data?.get("leaderboardOptIn") as? Boolean
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to get opt-in status", e)
+            null
+        }
+    }
+
     /** Opt in: write leaderboard entry first (so user appears), then set flag. */
     suspend fun optIn(userId: String): Result<Unit> = withContext(Dispatchers.IO) {
         val currentUser = auth.currentUser

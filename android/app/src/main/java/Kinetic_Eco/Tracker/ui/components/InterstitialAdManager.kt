@@ -50,6 +50,8 @@ internal object InterstitialAdManager {
      * loading, or if the session cap has been reached.
      */
     fun preload(context: Context) {
+        // Do not request ads before UMP consent permits it (GDPR/EEA/UK).
+        if (!ConsentManager.canRequestAds.value) return
         if (shownThisSession || loading || pending != null) return
         loading = true
         val isDebuggable = (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0

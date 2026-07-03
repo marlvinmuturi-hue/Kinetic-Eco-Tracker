@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "deploy": "npm run build && firebase deploy",
     "deploy:hosting": "npm run build && firebase deploy --only hosting",
-    "deploy:functions": "firebase deploy --only functions"
+    "deploy:functions": "firebase deploy --only functions",
+    "test:rules": "firebase emulators:exec --only firestore --project kinetic-rules-test \"node --test test/firestore.rules.test.js\""
   },
   "dependencies": {
     "@google/genai": "^1.30.0",
@@ -21,6 +22,7 @@
     "recharts": "^3.5.0"
   },
   "devDependencies": {
+    "@firebase/rules-unit-testing": "^5.0.1",
     "@types/node": "^22.14.0",
     "@vitejs/plugin-react": "^5.0.0",
     "typescript": "~5.8.2",

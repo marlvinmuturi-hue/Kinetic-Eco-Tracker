@@ -233,6 +233,10 @@ class TrackerViewModel(application: Application) : AndroidViewModel(application)
             val segments = trackingService?.getFinalSegments() ?: emptyList()
             val adjustedStats = adjustStatsForSimplifiedPath(stats, routePath)
             val statsWithRoute = adjustedStats.copy(routePath = routePath, segments = segments)
+            if (stats.totalDistance < 200.0) {
+                android.util.Log.d(TAG, "⏭️ Session discarded: ${stats.totalDistance}m < 200m minimum")
+                return
+            }
             android.util.Log.d(TAG, "💾 Calling sessionManager.saveSession...")
             val sessionId = sessionManager.saveSession(userId, statsWithRoute, sessionStartMs, accelSamples)
             android.util.Log.d(TAG, "✅ ===== SESSION SAVED SUCCESSFULLY =====")
@@ -266,6 +270,7 @@ class TrackerViewModel(application: Application) : AndroidViewModel(application)
     }
     
     fun setManualActivityMode(activity: ActivityType?) {
+        _manualActivityMode.value = activity
         trackingService?.setManualActivityMode(activity)
     }
     

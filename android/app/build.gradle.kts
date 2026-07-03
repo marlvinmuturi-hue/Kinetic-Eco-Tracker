@@ -21,8 +21,8 @@ android {
         applicationId = "com.kineticecotracker"
         minSdk = 24
         targetSdk = 35
-        versionCode = 5
-        versionName = "V1.5.1"
+        versionCode = 11
+        versionName = "V1.8.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "FUNCTIONS_BASE_URL", "\"https://us-central1-gen-lang-client-0114974661.cloudfunctions.net\"")
@@ -111,7 +111,9 @@ dependencies {
     implementation("com.google.android.gms:play-services-location:21.2.0")
 
     // AdMob (banner)
-    implementation("com.google.android.gms:play-services-ads:23.6.0")
+    implementation("com.google.android.gms:play-services-ads:25.4.0")
+    // User Messaging Platform (UMP) — GDPR/consent gathering before requesting ads
+    implementation("com.google.android.ump:user-messaging-platform:4.0.0")
     
     // Room Database
     implementation("androidx.room:room-runtime:2.6.1")

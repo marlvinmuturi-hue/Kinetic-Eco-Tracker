@@ -2,7 +2,6 @@ package Kinetic_Eco.Tracker
 
 import android.app.Application
 import android.util.Log
-import com.google.android.gms.ads.MobileAds
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -18,11 +17,10 @@ class KineticEcoApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         installUncaughtExceptionLogger()
-        try {
-            MobileAds.initialize(this) {}
-        } catch (t: Throwable) {
-            Log.e(TAG, "MobileAds.initialize failed — app continues without ads", t)
-        }
+        // NOTE: The Mobile Ads SDK is intentionally NOT initialized here. Ads must
+        // not be requested before the UMP consent flow runs (GDPR/EEA/UK). Consent
+        // is gathered in MainActivity via ConsentManager.gatherConsent(), which
+        // initializes the SDK only once ConsentInformation.canRequestAds() is true.
     }
 
     /**

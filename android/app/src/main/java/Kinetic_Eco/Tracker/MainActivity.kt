@@ -11,6 +11,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.os.LocaleListCompat
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -26,9 +27,9 @@ import androidx.compose.ui.input.nestedscroll.NestedScrollSource
 import androidx.compose.ui.input.nestedscroll.nestedScroll
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.Modifier
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
+import androidx.compose.ui.input.pointer.PointerEventPass
+import androidx.compose.ui.input.pointer.PointerEventType
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.ViewModelProvider
@@ -43,6 +44,7 @@ import Kinetic_Eco.Tracker.navigation.AppNavGraph
 import Kinetic_Eco.Tracker.navigation.Screen
 import Kinetic_Eco.Tracker.ui.components.AdMobBanner
 import Kinetic_Eco.Tracker.ui.components.BottomNavigationBar
+import Kinetic_Eco.Tracker.ui.components.ConsentManager
 import Kinetic_Eco.Tracker.ui.components.DraggableFloatingPlayButton
 import Kinetic_Eco.Tracker.ui.screens.*
 import Kinetic_Eco.Tracker.ui.theme.KineticEcoTheme
@@ -144,7 +146,13 @@ class MainActivity : AppCompatActivity() {
     
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        
+
+        // Android 15 (targetSdk 35) forces edge-to-edge. Opt in explicitly so the
+        // behaviour is consistent on older versions too; system bars become
+        // transparent and inset handling is done in Compose (root Box below applies
+        // WindowInsets.systemBars). Replaces the deprecated window bar-color APIs.
+        enableEdgeToEdge()
+
         // OsmDroid: init config for tile cache (works offline with cached tiles)
         val ctx = applicationContext
         Configuration.getInstance().load(ctx, ctx.getSharedPreferences("osmdroid", Context.MODE_PRIVATE))
@@ -200,6 +208,11 @@ class MainActivity : AppCompatActivity() {
         // Request tracking permissions (non-blocking)
         requestTrackingPermissions()
 
+        // Gather UMP consent (GDPR/EEA/UK) before any ad request. This shows a
+        // consent form only when required and initializes the Mobile Ads SDK once
+        // consent permits — banner and interstitial stay gated on it. Non-blocking.
+        ConsentManager.gatherConsent(this)
+
         // Pick up any extras delivered with the launching intent — most importantly
         // EXTRA_OPEN_ACTIVITY_SELECTOR from the auto-start "What are you doing?"
         // confirm notification. onNewIntent handles the same case when the activity
@@ -235,7 +248,7 @@ class MainActivity : AppCompatActivity() {
                     LaunchedEffect(currentUser) {
                         currentUser?.let { user ->
                             analyticsViewModel.restoreSessionsFromFirestore(user.uid)
-                            profileViewModel.loadLeaderboardOptIn(user.uid)
+                            profileViewModel.autoOptInOnLogin(user.uid)
                             // Only redirect here when the nav stack is still sitting on Login.
                             // onSignInSuccess in LoginScreen handles the same redirect for interactive
                             // sign-in; this LaunchedEffect handles the "already logged in on launch"
@@ -313,29 +326,37 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
 
-                    val autoHideScope = rememberCoroutineScope()
-                    val autoHideJob = remember { mutableStateOf<Job?>(null) }
                     val nestedScrollConnection = remember {
                         object : NestedScrollConnection {
                             override fun onPreScroll(available: Offset, source: NestedScrollSource): Offset {
-                                isNavBarVisible = true
-                                autoHideJob.value?.cancel()
-                                autoHideJob.value = autoHideScope.launch {
-                                    delay(3_000)
-                                    isNavBarVisible = false
-                                }
+                                if (available.y < -4f) isNavBarVisible = false
+                                else if (available.y > 4f) isNavBarVisible = true
                                 return Offset.Zero
                             }
                         }
                     }
-                    LaunchedEffect(Unit) {
-                        autoHideJob.value = autoHideScope.launch {
-                            delay(3_000)
-                            isNavBarVisible = false
-                        }
-                    }
 
-                    Box(modifier = Modifier.fillMaxSize().nestedScroll(nestedScrollConnection)) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            // Edge-to-edge: keep all app content within the safe area (below the
+                            // status bar, above the gesture/nav bar). Consuming systemBars here
+                            // means descendant statusBarsPadding()/navigationBarsPadding() calls
+                            // (banner, session detail) resolve to zero — no double insets. The
+                            // Surface background still fills behind the transparent bars.
+                            .windowInsetsPadding(WindowInsets.systemBars)
+                            .nestedScroll(nestedScrollConnection)
+                            .pointerInput(Unit) {
+                                awaitPointerEventScope {
+                                    while (true) {
+                                        val event = awaitPointerEvent(pass = PointerEventPass.Initial)
+                                        if (event.type == PointerEventType.Press && !isNavBarVisible) {
+                                            isNavBarVisible = true
+                                        }
+                                    }
+                                }
+                            }
+                    ) {
                         Box(modifier = Modifier.fillMaxSize()) {
                         AppNavGraph(
                             navController = navController,

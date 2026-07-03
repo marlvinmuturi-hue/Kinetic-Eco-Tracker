@@ -131,7 +131,8 @@ fun MainTabsWithSwipe(
                     onSessionClick = { session ->
                         analyticsViewModel.setSelectedSession(session)
                         navController.navigate(Screen.SessionDetail.route)
-                    }
+                    },
+                    onViewWeekSessions = { navController.navigate(Screen.WeekSessions.route) }
                 )
                 else -> Unit
             }

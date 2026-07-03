@@ -30,10 +30,11 @@ class LocationService(private val context: Context) {
     
     private var locationRequest = LocationRequest.Builder(
         Priority.PRIORITY_HIGH_ACCURACY,
-        250L // 250ms for near-instant speed updates (like pedometer)
+        1000L // 1 Hz — standard for run/commute tracking; big battery win vs 4 Hz with
+              // no meaningful accuracy loss (fewer fixes also reduce GPS-jitter distance inflation)
     ).apply {
-        setMaxUpdateDelayMillis(500L)
-        setMinUpdateIntervalMillis(250L)
+        setMaxUpdateDelayMillis(2000L)
+        setMinUpdateIntervalMillis(1000L)
         setWaitForAccurateLocation(false)
     }.build()
     
@@ -196,13 +197,13 @@ class LocationService(private val context: Context) {
                 setWaitForAccurateLocation(false)  // Accept what we get
             }.build()
         } else {
-            // Ground mode: 250ms for near-instant speed (like pedometer steps)
+            // Ground mode: 1 Hz — standard tracking cadence (matches the default request above)
             LocationRequest.Builder(
                 Priority.PRIORITY_HIGH_ACCURACY,
-                250L
+                1000L
             ).apply {
-                setMaxUpdateDelayMillis(500L)
-                setMinUpdateIntervalMillis(250L)
+                setMaxUpdateDelayMillis(2000L)
+                setMinUpdateIntervalMillis(1000L)
                 setWaitForAccurateLocation(false)
             }.build()
         }

@@ -43,9 +43,9 @@ interface SessionDao {
     """)
     suspend fun getCo2PerDay(userId: String, fromDate: String): List<Co2ByPeriod>
 
-    /** CO2 saved/emitted summed per ISO week ("yyyy-WW"). */
+    /** CO2 saved/emitted summed per week ("yyyy-WW", week starts Monday). */
     @Query("""
-        SELECT strftime('%Y-%W', date) AS period,
+        SELECT strftime('%Y-%W', date(date, '-1 day')) AS period,
                SUM(co2Conserved) AS co2Conserved,
                SUM(co2Emissions) AS co2Emissions
         FROM sessions

@@ -10,6 +10,12 @@ service cloud.firestore {
       // Sessions: only the owning user may read/write.
       match /sessions/{sessionId} {
         allow read, write: if request.auth != null && request.auth.uid == userId;
+
+        // Any per-session subcollections (e.g. accelerometer sample batches)
+        // are owned by the same user.
+        match /{document=**} {
+          allow read, write: if request.auth != null && request.auth.uid == userId;
+        }
       }
 
       // FCM tokens: device registers its own token; Cloud Functions read all.
@@ -37,25 +43,39 @@ service cloud.firestore {
 
     // ── Leaderboard ───────────────────────────────────────────────────────────
     // Authenticated clients may read the full leaderboard.
-    // Each user may create/update/delete only their own entry (LeaderboardService
-    // computes the per-window aggregates client-side on opt-in and after each
-    // session sync). Cloud Functions also write here via the Admin SDK, which
-    // bypasses these rules.
+    // Each user may create/update/delete only their own entry.
+    //
+    // NOTE: LeaderboardService.writeLeaderboardEntry writes PER-WINDOW SUFFIXED
+    // fields (score1d..score366d/scoreAllTime, co2Conserved<suffix>,
+    // totalDistance<suffix> [metres], totalSessions<suffix>, etc.) plus userId,
+    // displayName, photoUrl, lastUpdated. It does NOT write bare `co2Saved`,
+    // `totalDistanceKm`, or `totalSessions` fields — the previous rule validated
+    // those, so every client write was denied (leaderboard read zero; opt-in
+    // aborted before creating the user doc). We validate ownership + the fields
+    // the client actually writes, with optional "absent-or-valid" sanity bounds
+    // on the headline all-time aggregates so legitimate writes are never blocked.
     match /leaderboard/{userId} {
       allow read: if request.auth != null;
       allow delete: if request.auth != null && request.auth.uid == userId;
       allow create, update: if request.auth != null &&
         request.auth.uid == userId &&
-        // Validate numeric ranges to prevent fabricated scores
-        request.resource.data.co2Saved is number &&
-        request.resource.data.co2Saved >= -500 &&
-        request.resource.data.co2Saved <= 500 &&
-        request.resource.data.totalDistanceKm is number &&
-        request.resource.data.totalDistanceKm >= 0 &&
-        request.resource.data.totalDistanceKm <= 5000 &&
-        request.resource.data.totalSessions is number &&
-        request.resource.data.totalSessions >= 0 &&
-        request.resource.data.totalSessions <= 10000;
+        request.resource.data.userId == userId &&
+        request.resource.data.displayName is string &&
+        request.resource.data.lastUpdated is number &&
+        // co2ConservedAllTime is kg and may be negative (net emissions). Optional.
+        (!('co2ConservedAllTime' in request.resource.data) ||
+          (request.resource.data.co2ConservedAllTime is number &&
+           request.resource.data.co2ConservedAllTime >= -100000 &&
+           request.resource.data.co2ConservedAllTime <= 100000)) &&
+        // totalDistanceAllTime is METRES (not km). Cap at 100,000 km. Optional.
+        (!('totalDistanceAllTime' in request.resource.data) ||
+          (request.resource.data.totalDistanceAllTime is number &&
+           request.resource.data.totalDistanceAllTime >= 0 &&
+           request.resource.data.totalDistanceAllTime <= 100000000)) &&
+        (!('totalSessionsAllTime' in request.resource.data) ||
+          (request.resource.data.totalSessionsAllTime is number &&
+           request.resource.data.totalSessionsAllTime >= 0 &&
+           request.resource.data.totalSessionsAllTime <= 1000000));
 
       // Reactions: each user controls only their own reaction sub-document.
       match /reactions/{reactorUserId} {

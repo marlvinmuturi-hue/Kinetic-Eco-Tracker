@@ -5,11 +5,11 @@
     <!-- AdMob: App ID (~) is app-level; ad unit ID (/) is per placement.
          WARNING: These IDs are compiled into the APK. If this repo goes public,
          rotate both IDs in the AdMob console to prevent ad fraud. -->
-    <string name="admob_application_id" translatable="false">ca-app-pub-1244317007978137~2708452877</string>
-    <string name="admob_banner_unit_id" translatable="false">ca-app-pub-1244317007978137/5717030642</string>
-    <!-- IMPORTANT: Replace with your real interstitial unit ID from AdMob console before release.
-         Using Google's test ID below — real ads will NOT serve until replaced. -->
-    <string name="admob_interstitial_unit_id" translatable="false">ca-app-pub-3940256099942544/1033173712</string>
+    <string name="admob_application_id" translatable="false">ca-app-pub-1244317007978137~1123649010</string>
+    <string name="admob_banner_unit_id" translatable="false">ca-app-pub-1244317007978137/6172262886</string>
+    <!-- Real interstitial unit. Debug builds still use Google's test interstitial
+         (see InterstitialAdManager.TEST_INTERSTITIAL_UNIT_ID); this serves in release. -->
+    <string name="admob_interstitial_unit_id" translatable="false">ca-app-pub-1244317007978137/1954237731</string>
     <string name="nav_dashboard">Dashboard</string>
     <string name="nav_tracker">Tracker</string>
     <string name="nav_analytics">Analysis</string>
@@ -597,6 +597,7 @@
     <string name="analysis_weeks_footprint">This week\'s footprint</string>
     <string name="analysis_equivalent_to">That\'s equivalent to:</string>
     <string name="analysis_source_ademe">Source: ADEME Base Carbone (impactco2.fr)</string>
+    <string name="analysis_source_multi">Sources: ADEME Base Carbone · DEFRA 2023 · Carbon Trust · IPCC AR6</string>
     <string name="analysis_run_ai_button">Run AI analysis</string>
     <string name="analysis_ai_cta_text">Tap the button to get a personalised AI breakdown of your last 7 days.</string>
     <string name="analysis_session_one">1 session</string>
@@ -617,6 +618,8 @@
 
     <!-- Recent sessions card -->
     <string name="recent_sessions">Recent sessions</string>
+    <string name="see_all_this_week">See all this week</string>
+    <string name="this_weeks_sessions">This week\'s sessions</string>
 
     <!-- Hero card CO₂ suffix -->
     <string name="hero_co2_saved">saved</string>

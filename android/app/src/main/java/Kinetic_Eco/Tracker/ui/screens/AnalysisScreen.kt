@@ -79,7 +79,8 @@ fun AnalysisScreen(
     userId: String,
     unitSystem: UnitSystem,
     onSettingsClick: () -> Unit,
-    onSessionClick: ((SessionStats) -> Unit)? = null
+    onSessionClick: ((SessionStats) -> Unit)? = null,
+    onViewWeekSessions: () -> Unit = {}
 ) {
     val colorScheme = MaterialTheme.colorScheme
     val scroll = rememberScrollState()
@@ -95,7 +96,6 @@ fun AnalysisScreen(
     }
     val weekCo2Saved = weekSessions.sumOf { it.co2Conserved }
     val weekCo2Emit  = weekSessions.sumOf { it.co2Emissions }
-    val net = weekCo2Saved - weekCo2Emit
 
     // 7-day daily buckets for chart (today is index 6, oldest is 0)
     val perDay = remember(allSessions) { computeWeeklyCo2Buckets(allSessions) }
@@ -120,8 +120,15 @@ fun AnalysisScreen(
     }
     val weeklyReport = remember(calWeekSessions) { computeWeeklyReportData(calWeekSessions) }
 
+    // "This week's footprint" reflects the calendar week from the week start
+    // (Monday 00:00), not a rolling 7-day window, so figures reset at the start
+    // of each new week instead of carrying over last week's totals.
+    val calWeekCo2Saved = calWeekSessions.sumOf { it.co2Conserved }
+    val calWeekCo2Emit  = calWeekSessions.sumOf { it.co2Emissions }
+    val net = calWeekCo2Saved - calWeekCo2Emit
+
     val recentSessions = remember(allSessions) {
-        allSessions.sortedByDescending { it.sessionEndTimeMs }.take(5)
+        allSessions.sortedByDescending { it.sessionEndTimeMs }.take(2)
     }
 
     Column(
@@ -313,16 +320,25 @@ fun AnalysisScreen(
                                 .fillMaxWidth()
                                 .padding(vertical = 3.dp)
                         ) {
-                            Text(
-                                text = "${eq.icon}  ${eq.description}",
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = colorScheme.onSurface,
-                                modifier = Modifier.padding(12.dp)
-                            )
+                            Column(modifier = Modifier.padding(12.dp)) {
+                                Text(
+                                    text = "${eq.icon}  ${eq.description}",
+                                    style = MaterialTheme.typography.bodyMedium,
+                                    color = colorScheme.onSurface
+                                )
+                                if (eq.funFact != null) {
+                                    Spacer(Modifier.height(4.dp))
+                                    Text(
+                                        text = eq.funFact,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
                         }
                     }
                     Text(
-                        text = stringResource(R.string.analysis_source_ademe),
+                        text = stringResource(R.string.analysis_source_multi),
                         style = MaterialTheme.typography.labelSmall,
                         color = colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = 6.dp)
@@ -336,7 +352,8 @@ fun AnalysisScreen(
             RecentSessionsCard(
                 sessions = recentSessions,
                 unitSystem = unitSystem,
-                onSessionClick = onSessionClick
+                onSessionClick = onSessionClick,
+                onViewWeekSessions = onViewWeekSessions
             )
         }
 
@@ -374,10 +391,27 @@ private fun Co2WeeklyChart(
     val niceMaxSaved = niceChartMax(max(daily.maxOfOrNull { it.savedKg } ?: 0.0, 0.5))
     val niceMaxEmit  = niceChartMax(max(daily.maxOfOrNull { it.emittedKg } ?: 0.0, 0.5))
 
+    // Day letters for each bar: index 0 = 6 days ago, index 6 = today
+    val dayLabels = remember {
+        (0..6).map { i ->
+            val cal = Calendar.getInstance()
+            cal.add(Calendar.DAY_OF_YEAR, -(6 - i))
+            when (cal.get(Calendar.DAY_OF_WEEK)) {
+                Calendar.MONDAY    -> "M"
+                Calendar.TUESDAY   -> "T"
+                Calendar.WEDNESDAY -> "W"
+                Calendar.THURSDAY  -> "T"
+                Calendar.FRIDAY    -> "F"
+                Calendar.SATURDAY  -> "S"
+                else               -> "S" // SUNDAY
+            }
+        }
+    }
+
     Canvas(
         modifier = Modifier
             .fillMaxWidth()
-            .height(150.dp)
+            .height(160.dp)
     ) {
         val yLeftWidth  = 40.dp.toPx()
         val yRightWidth = 40.dp.toPx()
@@ -385,7 +419,7 @@ private fun Co2WeeklyChart(
         val barGroupWidth = barAreaWidth / 7f
         val barWidth = barGroupWidth * 0.32f
         val gap = barGroupWidth * 0.10f
-        val baseY = size.height - 20f
+        val baseY = size.height - 22.dp.toPx()
         val topY = 8f
         val chartHeight = baseY - topY
         val chartRight = size.width - yRightWidth
@@ -475,6 +509,18 @@ private fun Co2WeeklyChart(
                     }
                     nc.drawText(label, chartRight + 4.dp.toPx(), y + emitLabelPaint.textSize * 0.35f, emitLabelPaint)
                 }
+
+            // Day letters below baseline
+            val dayLabelPaint = AndroidPaint().apply {
+                isAntiAlias = true
+                textSize = 9.sp.toPx()
+                textAlign = AndroidPaint.Align.CENTER
+                color = axisColor.copy(alpha = 0.70f).toArgb()
+            }
+            dayLabels.forEachIndexed { index, letter ->
+                val groupCenter = yLeftWidth + barGroupWidth * index + barGroupWidth / 2f
+                nc.drawText(letter, groupCenter, baseY + dayLabelPaint.textSize + 4.dp.toPx(), dayLabelPaint)
+            }
         }
     }
 }
@@ -501,7 +547,8 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawRoundedBar(
 private fun RecentSessionsCard(
     sessions: List<SessionStats>,
     unitSystem: UnitSystem,
-    onSessionClick: ((SessionStats) -> Unit)?
+    onSessionClick: ((SessionStats) -> Unit)?,
+    onViewWeekSessions: () -> Unit = {}
 ) {
     val colorScheme = MaterialTheme.colorScheme
     Card(
@@ -533,6 +580,29 @@ private fun RecentSessionsCard(
                         onClick = { onSessionClick?.invoke(session) }
                     )
                 }
+            }
+            Spacer(Modifier.height(12.dp))
+            HorizontalDivider(color = colorScheme.onSurface.copy(alpha = 0.08f))
+            Spacer(Modifier.height(10.dp))
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable(onClick = onViewWeekSessions),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = stringResource(R.string.see_all_this_week),
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    color = colorScheme.primary
+                )
+                Icon(
+                    imageVector = Icons.Default.ChevronRight,
+                    contentDescription = null,
+                    tint = colorScheme.primary,
+                    modifier = Modifier.size(18.dp)
+                )
             }
         }
     }
@@ -659,12 +729,11 @@ private fun LegendDot(color: Color, label: AnnotatedString) {
     }
 }
 
-// ── Weekly route map (rolling 7 days, day chips) ────────────────────────────
+// ── Weekly route map ─────────────────────────────────────────────────────────
 
 /**
  * Day index 0 = six calendar days ago, 6 = today (device local timezone) — aligned with
- * [computeWeeklyCo2Buckets] bar order. Uses calendar dates so a session ending "yesterday
- * evening" is not mis-bucketed as "today".
+ * [computeWeeklyCo2Buckets] bar order.
  */
 private fun rollingWeekDayIndex(sessionEndTimeMs: Long, now: Long): Int? {
     if (sessionEndTimeMs <= 0) return null
@@ -677,32 +746,6 @@ private fun rollingWeekDayIndex(sessionEndTimeMs: Long, now: Long): Int? {
     return 6 - daysBetweenSessionAndToday
 }
 
-private fun sessionsForRollingDayIndex(
-    weekSessions: List<SessionStats>,
-    dayIndex: Int,
-    now: Long
-): List<SessionStats> =
-    weekSessions.filter { rollingWeekDayIndex(it.sessionEndTimeMs, now) == dayIndex }
-        .sortedBy { it.sessionEndTimeMs }
-
-private fun dateLabelForRollingDayIndex(dayIndex: Int, now: Long): String {
-    val daysAgo = 6 - dayIndex
-    val cal = Calendar.getInstance()
-    cal.timeInMillis = now
-    cal.add(Calendar.DAY_OF_YEAR, -daysAgo)
-    return SimpleDateFormat("EEE d MMM", Locale.getDefault()).format(cal.time)
-}
-
-/** Short weekday + day-of-month label for chip (index 0 = oldest in rolling week). */
-private fun chipLabelForRollingDayIndex(dayIndex: Int, now: Long): Pair<String, Int> {
-    val daysAgo = 6 - dayIndex
-    val cal = Calendar.getInstance()
-    cal.timeInMillis = now
-    cal.add(Calendar.DAY_OF_YEAR, -daysAgo)
-    val short = SimpleDateFormat("EEE", Locale.getDefault()).format(cal.time)
-    return short.replace(".", "") to cal.get(Calendar.DAY_OF_MONTH)
-}
-
 @Composable
 private fun WeeklyRouteMapCard(
     weekSessions: List<SessionStats>,
@@ -710,46 +753,25 @@ private fun WeeklyRouteMapCard(
     onSessionClick: ((SessionStats) -> Unit)?
 ) {
     val colorScheme = MaterialTheme.colorScheme
-    var selectedDayIndex by rememberSaveable { mutableIntStateOf(6) }
 
-    // One clock snapshot per data load so day bucketing and chip labels stay consistent.
-    val snapshotNow = remember(weekSessions) { System.currentTimeMillis() }
-
-    val daySessions = remember(weekSessions, selectedDayIndex, snapshotNow) {
-        sessionsForRollingDayIndex(weekSessions, selectedDayIndex, snapshotNow)
-    }
-    val dateLabel = remember(selectedDayIndex, snapshotNow) {
-        dateLabelForRollingDayIndex(selectedDayIndex, snapshotNow)
+    val routePaths = remember(weekSessions) {
+        weekSessions.filter { it.routePath.size >= 2 }.map { it.routePath }
     }
 
-    val hasGpsByDayIndex = remember(weekSessions, snapshotNow) {
-        BooleanArray(7) { dayIdx ->
-            weekSessions.any { s ->
-                rollingWeekDayIndex(s.sessionEndTimeMs, snapshotNow) == dayIdx &&
-                    s.routePath.size >= 2
-            }
-        }
-    }
+    val totalDistance = weekSessions.sumOf { it.totalDistance }
+    val totalDuration = weekSessions.sumOf { it.totalDuration }
+    val totalCo2Saved = weekSessions.sumOf { it.co2Conserved }
 
-    val routePaths = remember(daySessions) {
-        daySessions.filter { it.routePath.size >= 2 }.map { it.routePath }
-    }
-    val gpsCount = routePaths.size
-
-    val totalDistance = daySessions.sumOf { it.totalDistance }
-    val totalDuration = daySessions.sumOf { it.totalDuration }
-    val totalCo2Saved = daySessions.sumOf { it.co2Conserved }
-
-    val detailSession = remember(daySessions) {
-        daySessions.maxByOrNull { it.sessionEndTimeMs }
+    val detailSession = remember(weekSessions) {
+        weekSessions.maxByOrNull { it.sessionEndTimeMs }
     }
 
     val cardModifier = Modifier
         .fillMaxWidth()
         .let { mod ->
-            if (onSessionClick != null && detailSession != null) {
+            if (onSessionClick != null && detailSession != null)
                 mod.clickable { onSessionClick(detailSession) }
-            } else mod
+            else mod
         }
 
     Card(
@@ -787,39 +809,14 @@ private fun WeeklyRouteMapCard(
                 }
             }
 
-            Spacer(Modifier.height(8.dp))
-            Text(
-                text = dateLabel,
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.SemiBold,
-                color = colorScheme.onSurface
-            )
-            Text(
-                text = stringResource(R.string.analysis_week_map_gps_sessions, gpsCount),
-                style = MaterialTheme.typography.bodySmall,
-                color = colorScheme.onSurfaceVariant
-            )
+            Spacer(Modifier.height(12.dp))
 
-            Spacer(Modifier.height(8.dp))
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                for (dayIdx in 0..6) {
-                    val (abbr, dom) = chipLabelForRollingDayIndex(dayIdx, snapshotNow)
-                    val hasTracks = hasGpsByDayIndex[dayIdx]
-                    val isSelected = selectedDayIndex == dayIdx
-                    WeekDayChip(
-                        abbr = abbr,
-                        dayOfMonth = dom,
-                        selected = isSelected,
-                        hasTracks = hasTracks,
-                        onClick = { selectedDayIndex = dayIdx }
-                    )
-                }
-            }
+            RouteMapMultiSessionView(
+                routePaths = routePaths,
+                modifier = Modifier.fillMaxWidth(),
+                heightDp = 240,
+                showElevationProfile = routePaths.size == 1
+            )
 
             Spacer(Modifier.height(12.dp))
 
@@ -841,69 +838,6 @@ private fun WeeklyRouteMapCard(
                     valueColor = colorScheme.onSurface
                 )
             }
-
-            Spacer(Modifier.height(12.dp))
-
-            RouteMapMultiSessionView(
-                routePaths = routePaths,
-                modifier = Modifier.fillMaxWidth(),
-                heightDp = 160,
-                showElevationProfile = routePaths.size == 1
-            )
-        }
-    }
-}
-
-/**
- * Compact day-of-week selector chip sized to its own content. [FilterChip] enforces a
- * fixed minimum height tuned for single-line labels, which clipped the day-of-month
- * line under the weekday abbreviation — sizing this ourselves guarantees both lines
- * are fully visible.
- */
-@Composable
-private fun WeekDayChip(
-    abbr: String,
-    dayOfMonth: Int,
-    selected: Boolean,
-    hasTracks: Boolean,
-    onClick: () -> Unit
-) {
-    val colorScheme = MaterialTheme.colorScheme
-    val containerColor = if (selected) colorScheme.primaryContainer else colorScheme.surface
-    val contentColor = if (selected) colorScheme.onPrimaryContainer else colorScheme.onSurface
-    val borderColor = if (selected) colorScheme.primary else colorScheme.outline
-
-    Surface(
-        onClick = onClick,
-        shape = RoundedCornerShape(12.dp),
-        color = containerColor,
-        contentColor = contentColor,
-        border = BorderStroke(1.dp, borderColor)
-    ) {
-        Column(
-            horizontalAlignment = Alignment.CenterHorizontally,
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp)
-        ) {
-            if (hasTracks) {
-                Icon(
-                    imageVector = Icons.Default.Place,
-                    contentDescription = null,
-                    modifier = Modifier
-                        .size(14.dp)
-                        .padding(bottom = 2.dp)
-                )
-            }
-            Text(
-                text = abbr,
-                style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.SemiBold,
-                color = contentColor
-            )
-            Text(
-                text = dayOfMonth.toString(),
-                style = MaterialTheme.typography.labelSmall,
-                color = contentColor
-            )
         }
     }
 }
@@ -1110,12 +1044,6 @@ private fun WeeklyReportCard(
 
                 val ctx = LocalContext.current
                 val isMetric = unitSystem.usesMetricDistance()
-                val co2Net = data.co2Saved - data.co2Emitted
-                val co2ImpactValue = if (co2Net >= 0) {
-                    stringResource(R.string.stat_co2_impact_saved, kotlin.math.abs(co2Net).format(2))
-                } else {
-                    stringResource(R.string.stat_co2_impact_net, kotlin.math.abs(co2Net).format(2))
-                }
 
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     // Hero tile — CO₂ saved this week is the headline metric, largest and first.
@@ -1125,16 +1053,6 @@ private fun WeeklyReportCard(
                         icon = Icons.Default.Eco,
                         accentColor = Color(0xFF43A047),
                         modifier = Modifier.fillMaxWidth()
-                    )
-
-                    // CO₂ impact — enlarged to full width, second-most prominent metric.
-                    WeeklyMetricTile(
-                        label = stringResource(R.string.stat_co2_impact),
-                        value = co2ImpactValue,
-                        icon = Icons.Default.Eco,
-                        iconColor = Color(0xFF43A047),
-                        modifier = Modifier.fillMaxWidth(),
-                        large = true
                     )
 
                     Row(

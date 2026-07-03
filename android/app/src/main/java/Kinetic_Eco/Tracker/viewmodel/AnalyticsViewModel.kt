@@ -18,6 +18,8 @@ import Kinetic_Eco.Tracker.services.CohortAnalysisService
 import Kinetic_Eco.Tracker.services.RouteIntelligenceService
 import Kinetic_Eco.Tracker.services.SessionManager
 import Kinetic_Eco.Tracker.data.ActivitySegment
+import Kinetic_Eco.Tracker.data.TravelRecap
+import Kinetic_Eco.Tracker.services.TravelRecapService
 import Kinetic_Eco.Tracker.services.UserPreferencesManager
 
 class AnalyticsViewModel(application: Application) : AndroidViewModel(application) {
@@ -26,6 +28,28 @@ class AnalyticsViewModel(application: Application) : AndroidViewModel(applicatio
     private val userPrefsManager = UserPreferencesManager(application)
     private val routeIntelligenceService = RouteIntelligenceService(sessionManager)
     
+    // Travel recap: geocoded cities/countries + personal bests
+    private val _travelRecap = MutableStateFlow<TravelRecap?>(null)
+    val travelRecap: StateFlow<TravelRecap?> = _travelRecap.asStateFlow()
+
+    private val _travelRecapLoading = MutableStateFlow(false)
+    val travelRecapLoading: StateFlow<Boolean> = _travelRecapLoading.asStateFlow()
+
+    fun loadTravelRecap(userId: String) {
+        if (_travelRecapLoading.value) return
+        viewModelScope.launch(Dispatchers.IO) {
+            _travelRecapLoading.value = true
+            try {
+                val sessions = getAllSessions(userId).first()
+                _travelRecap.value = TravelRecapService(getApplication()).compute(sessions)
+            } catch (e: Exception) {
+                android.util.Log.e("AnalyticsViewModel", "Travel recap failed", e)
+            } finally {
+                _travelRecapLoading.value = false
+            }
+        }
+    }
+
     // CO2 tier + cohort analysis (computed locally from session history)
     private val _cohortProfile = MutableStateFlow<CohortProfile?>(null)
     val cohortProfile: StateFlow<CohortProfile?> = _cohortProfile.asStateFlow()

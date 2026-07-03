@@ -19,12 +19,18 @@ import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleService
+import androidx.lifecycle.lifecycleScope
 import com.google.android.gms.location.LocationServices
 import com.google.android.gms.location.ActivityTransition
 import com.google.android.gms.location.ActivityTransitionResult
 import com.google.android.gms.location.DetectedActivity
 import Kinetic_Eco.Tracker.MainActivity
 import Kinetic_Eco.Tracker.R
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.tasks.await
 
 /**
  * Foreground service that keeps auto-start on walk active in the background.
@@ -81,6 +87,10 @@ class AutoStartMonitorService : LifecycleService() {
     }
     private var significantMotionListener: TriggerEventListener? = null
 
+    /** Coroutine that polls GPS speed every [SPEED_CHECK_INTERVAL_MS] to catch vehicle starts
+     *  that Activity Recognition missed (step counter never fires while driving). */
+    private var speedCheckJob: Job? = null
+
     /**
      * Wall-clock time of the last successful auto-start trigger (from either
      * the step counter, activity transitions, or significant motion). Used as a
@@ -101,6 +111,7 @@ class AutoStartMonitorService : LifecycleService() {
         // reclaims memory. Make sure we don't leave dangling sensor listeners.
         unregisterStepListener()
         disarmSignificantMotionSensor()
+        stopSpeedCheckLoop()
         super.onDestroy()
     }
 
@@ -111,12 +122,14 @@ class AutoStartMonitorService : LifecycleService() {
                 activityTransitionManager.registerTransitions()
                 registerStepListener()
                 armSignificantMotionSensor()
-                Log.d(TAG, "Auto-start monitor running (transitions + step counter + significant motion)")
+                startSpeedCheckLoop()
+                Log.d(TAG, "Auto-start monitor running (transitions + step counter + significant motion + GPS speed poll)")
             }
             ACTION_STOP -> {
                 activityTransitionManager.unregisterTransitions()
                 unregisterStepListener()
                 disarmSignificantMotionSensor()
+                stopSpeedCheckLoop()
                 stopForeground(STOP_FOREGROUND_REMOVE)
                 stopSelf()
                 Log.d(TAG, "Auto-start monitor stopped")
@@ -149,10 +162,11 @@ class AutoStartMonitorService : LifecycleService() {
             } catch (e: Exception) {
                 Log.e(TAG, "restoreIfNeeded: registerTransitions failed", e)
             }
-            // Step listener and significant-motion sensor may have been torn down with the
-            // previous process; restart both so all triggers fire after a sticky restart.
+            // Step listener, significant-motion sensor and speed-check loop may have been
+            // torn down with the previous process; restart all so triggers fire after a sticky restart.
             registerStepListener()
             armSignificantMotionSensor()
+            startSpeedCheckLoop()
         } else {
             try {
                 stopForeground(STOP_FOREGROUND_REMOVE)
@@ -283,6 +297,49 @@ class AutoStartMonitorService : LifecycleService() {
         val sensor = significantMotionSensor ?: return
         try { sensorManager.cancelTriggerSensor(listener, sensor) } catch (_: Exception) {}
         significantMotionListener = null
+    }
+
+    private fun startSpeedCheckLoop() {
+        speedCheckJob?.cancel()
+        speedCheckJob = lifecycleScope.launch {
+            while (isActive) {
+                delay(SPEED_CHECK_INTERVAL_MS)
+                checkGpsSpeedForVehicleStart()
+            }
+        }
+    }
+
+    private fun stopSpeedCheckLoop() {
+        speedCheckJob?.cancel()
+        speedCheckJob = null
+    }
+
+    /** Checks the last known GPS speed. If it clearly indicates driving (>= [VEHICLE_SPEED_THRESHOLD_MS])
+     *  and the fix is fresh, launches TrackingService immediately — catching vehicle starts that the
+     *  step counter (no steps while driving) and Activity Recognition (suppressed on many OEM ROMs) missed. */
+    private suspend fun checkGpsSpeedForVehicleStart() {
+        val prefs = UserPreferencesManager(this@AutoStartMonitorService)
+        if (!prefs.getAutoStartOnWalkEnabled() && !prefs.getPendingResumeAfterIdleAutoStop()) return
+        val fine = ActivityCompat.checkSelfPermission(
+            this@AutoStartMonitorService, Manifest.permission.ACCESS_FINE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+        val coarse = ActivityCompat.checkSelfPermission(
+            this@AutoStartMonitorService, Manifest.permission.ACCESS_COARSE_LOCATION
+        ) == PackageManager.PERMISSION_GRANTED
+        if (!fine && !coarse) return
+        try {
+            val loc = LocationServices.getFusedLocationProviderClient(applicationContext)
+                .lastLocation.await()
+            if (loc != null && loc.hasSpeed()) {
+                val ageMs = System.currentTimeMillis() - loc.time
+                if (ageMs < SPEED_CHECK_STALE_MS && loc.speed >= VEHICLE_SPEED_THRESHOLD_MS) {
+                    Log.d(TAG, "Speed-poll: GPS=${loc.speed * 3.6f}km/h (${ageMs / 1000}s old) → vehicle auto-start")
+                    startTrackingFromAutoStart(vehicleColdStart = true)
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Speed check failed", e)
+        }
     }
 
     /**
@@ -494,6 +551,16 @@ class AutoStartMonitorService : LifecycleService() {
          * promptly once the user actually steps outside and GPS clears.
          */
         private const val GPS_INDOOR_RETRY_COOLDOWN_MS = 8_000L
+
+        /** How often the GPS speed-poll loop checks for undetected vehicle motion. */
+        private const val SPEED_CHECK_INTERVAL_MS = 20_000L
+
+        /** A GPS fix older than this is too stale to derive current vehicle speed from. */
+        private const val SPEED_CHECK_STALE_MS = 30_000L
+
+        /** GPS speed (m/s) above which the device is clearly in a vehicle. 8 m/s = ~29 km/h,
+         *  safely above the fastest running pace (~4 m/s) to avoid false triggers. */
+        private const val VEHICLE_SPEED_THRESHOLD_MS = 8f
 
         const val ACTION_START = "kinetic_eco.ACTION_START_AUTO_MONITOR"
         const val ACTION_STOP = "kinetic_eco.ACTION_STOP_AUTO_MONITOR"

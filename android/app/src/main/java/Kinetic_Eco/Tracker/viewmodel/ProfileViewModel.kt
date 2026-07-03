@@ -122,6 +122,36 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
         }
     }
 
+    /**
+     * Opt the user into the leaderboard on login if they have never set a preference.
+     * If they previously opted out (false), their choice is respected and they stay opted out.
+     */
+    fun autoOptInOnLogin(userId: String) {
+        viewModelScope.launch(Dispatchers.IO) {
+            _leaderboardLoading.value = true
+            when (leaderboardService.getOptInStatus(userId)) {
+                null -> {
+                    // No preference ever set — opt them in automatically
+                    leaderboardService.optIn(userId)
+                        .onSuccess { _leaderboardOptedIn.value = true }
+                        .onFailure { _leaderboardOptedIn.value = false }
+                    loadLeaderboard(userId)
+                }
+                false -> {
+                    // User explicitly opted out — respect their choice
+                    _leaderboardOptedIn.value = false
+                    loadLeaderboard(userId)
+                }
+                true -> {
+                    // Already opted in — just load fresh data
+                    _leaderboardOptedIn.value = true
+                    loadLeaderboard(userId)
+                }
+            }
+            _leaderboardLoading.value = false
+        }
+    }
+
     fun setLeaderboardOptIn(userId: String, enabled: Boolean) {
         viewModelScope.launch(Dispatchers.IO) {
             _errorMessage.value = null

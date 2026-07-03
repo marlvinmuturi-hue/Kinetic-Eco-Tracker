@@ -10,7 +10,6 @@ import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
@@ -104,9 +103,10 @@ fun KineticEcoTheme(
         SideEffect {
             val activity = context.findActivity() ?: return@SideEffect
             val window = activity.window
-            val bg = colorScheme.background.toArgb()
-            window.statusBarColor = bg
-            window.navigationBarColor = bg
+            // Bars are transparent under edge-to-edge (enableEdgeToEdge in MainActivity);
+            // the app background shows through, so we no longer set the deprecated
+            // window.statusBarColor / navigationBarColor. We still drive icon contrast
+            // (light vs dark bar icons) from the current theme.
             WindowCompat.getInsetsController(window, view).apply {
                 isAppearanceLightStatusBars = !darkTheme
                 isAppearanceLightNavigationBars = !darkTheme

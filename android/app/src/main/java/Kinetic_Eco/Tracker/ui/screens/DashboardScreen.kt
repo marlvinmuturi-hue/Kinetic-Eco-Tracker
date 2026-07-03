@@ -66,7 +66,6 @@ import Kinetic_Eco.Tracker.data.SessionStats
 import Kinetic_Eco.Tracker.data.UnitSystem
 import Kinetic_Eco.Tracker.services.LeaderboardPeriod
 import Kinetic_Eco.Tracker.services.UserPreferencesManager
-import Kinetic_Eco.Tracker.ui.components.Co2DistributionPieChart
 import Kinetic_Eco.Tracker.ui.theme.Green500
 import Kinetic_Eco.Tracker.ui.utils.format
 import Kinetic_Eco.Tracker.ui.utils.usesMetricDistance
@@ -80,6 +79,13 @@ import java.util.Locale
 import java.util.concurrent.TimeUnit
 import kotlin.math.abs
 import kotlin.math.max
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.border
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.ui.text.style.TextOverflow
+import Kinetic_Eco.Tracker.data.AchievementBadge
+import Kinetic_Eco.Tracker.data.BadgeTier
+import Kinetic_Eco.Tracker.util.AchievementComputer
 
 private val EMOJI_REACTIONS = listOf(
     "fire" to "🔥",
@@ -151,11 +157,9 @@ fun DashboardScreen(
     // This-week aggregates for the dashboard tiles (distance, steps).
     val weekDistanceM = weekSessions.sumOf { it.totalDistance }
     val weekCo2Saved = weekSessions.sumOf { it.co2Conserved }
-    val weekSteps    = weekSessions.sumOf { it.totalSteps.toLong() }
 
     // Last-week aggregates for week-over-week delta on tiles and hero card.
     val lastWeekCo2Saved = lastWeekSessions.sumOf { it.co2Conserved }
-    val lastWeekDistanceM = lastWeekSessions.sumOf { it.totalDistance }
 
     // Per-day CO2 saved buckets for the mini chart inside the hero card.
     // Index 0 = 6 days ago, index 6 = today (matches the day-label generator).
@@ -226,6 +230,10 @@ fun DashboardScreen(
     // celebration, never pressure.
     val greenStreakDays = remember(allSessions, now) {
         computeGreenStreak(allSessions, now)
+    }
+
+    val achievements = remember(weekSessions, allSessions, greenStreakDays) {
+        AchievementComputer.compute(weekSessions, allSessions, greenStreakDays)
     }
 
     // Profile + leaderboard
@@ -380,31 +388,6 @@ fun DashboardScreen(
             )
         }
 
-        // ── Compact secondary stats: distance + steps ─────────────────────────
-        item {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                CompactStatCard(
-                    title = stringResource(R.string.distance),
-                    value = formatDistance(weekDistanceM, unitSystem),
-                    icon = Icons.Default.Straighten,
-                    accent = colorScheme.onSurfaceVariant,
-                    deltaPct = percentDelta(weekDistanceM, lastWeekDistanceM),
-                    modifier = Modifier.weight(1f)
-                )
-                CompactStatCard(
-                    title = stringResource(R.string.steps),
-                    value = formatStepCount(weekSteps),
-                    icon = Icons.AutoMirrored.Filled.DirectionsWalk,
-                    accent = colorScheme.onSurfaceVariant,
-                    deltaPct = null,
-                    modifier = Modifier.weight(1f)
-                )
-            }
-        }
-
         // ── AI insight teaser card (tappable → Analysis tab) ──────────────────
         // Shows the first personal insight from the cached AI analysis with
         // the score chip beside it. When no analysis is cached, becomes a
@@ -429,12 +412,9 @@ fun DashboardScreen(
             )
         }
 
-        // ── CO₂ distribution pie chart (replaces goal & annual tiles) ────────
-        // Goal setting moved to Vehicle Profile (Settings); annual footprint
-        // moved to the Profile tab. The dashboard now visualises last-7-days
-        // CO₂ savings split per activity.
+        // ── Achievement badges ────────────────────────────────────────────────
         item {
-            Co2DistributionPieChart(allSessions = allSessions)
+            AchievementBadgesCard(achievements = achievements)
         }
 
         item { Spacer(Modifier.height(80.dp)) }
@@ -1257,26 +1237,52 @@ private fun LeaderboardOverviewCard(
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = colorScheme.surfaceVariant),
-        shape = RoundedCornerShape(16.dp)
+        shape = RoundedCornerShape(20.dp)
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
+        // Gradient header strip
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(
+                    Brush.horizontalGradient(
+                        listOf(
+                            colorScheme.primary.copy(alpha = 0.18f),
+                            colorScheme.tertiary.copy(alpha = 0.12f)
+                        )
+                    )
+                )
+                .padding(horizontal = 16.dp, vertical = 12.dp)
+        ) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
                     imageVector = Icons.Default.EmojiEvents,
                     contentDescription = null,
-                    tint = colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(20.dp)
+                    tint = Color(0xFFFFD700),
+                    modifier = Modifier.size(22.dp)
                 )
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    text = stringResource(R.string.dashboard_leaderboard_7d),
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = colorScheme.onSurface
-                )
+                Spacer(Modifier.width(8.dp))
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = stringResource(R.string.dashboard_leaderboard_7d),
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = colorScheme.onSurface
+                    )
+                    if (optedIn && entries.isNotEmpty()) {
+                        val myRank = entries.indexOfFirst { it.userId == currentUserId } + 1
+                        if (myRank > 0) {
+                            Text(
+                                text = "You're ranked #$myRank",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
             }
-            Spacer(Modifier.height(10.dp))
+        }
 
+        Column(modifier = Modifier.padding(horizontal = 12.dp, vertical = 12.dp)) {
             if (!optedIn) {
                 Text(
                     text = stringResource(R.string.dashboard_leaderboard_opt_in),
@@ -1285,35 +1291,41 @@ private fun LeaderboardOverviewCard(
                 )
                 Spacer(Modifier.height(8.dp))
                 TextButton(onClick = onSettingsClick) { Text(stringResource(R.string.open_settings)) }
-                return@Card
-            }
-
-            if (entries.isEmpty()) {
-                Text(
-                    text = stringResource(R.string.loading_leaderboard),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = colorScheme.onSurfaceVariant
-                )
-                return@Card
-            }
-
-            entries.take(3).forEachIndexed { index, e ->
-                LeaderboardCompactRow(
-                    rank = index + 1,
-                    entry = e,
-                    isMe = e.userId == currentUserId,
-                    currentUserId = currentUserId,
-                    onReact = { emojiCode -> onReact(e.userId, emojiCode) }
-                )
-            }
-
-            // If user not in top-3, show their own row
-            val myEntry = entries.firstOrNull { it.userId == currentUserId }
-            if (myEntry != null && entries.indexOf(myEntry) > 2) {
-                Spacer(Modifier.height(4.dp))
-                HorizontalDivider(color = colorScheme.outline.copy(alpha = 0.3f))
-                Spacer(Modifier.height(4.dp))
-                LeaderboardCompactRow(rank = myEntry.rank, entry = myEntry, isMe = true)
+            } else if (entries.isEmpty()) {
+                Box(
+                    modifier = Modifier.fillMaxWidth().padding(vertical = 12.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = stringResource(R.string.loading_leaderboard),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colorScheme.onSurfaceVariant
+                    )
+                }
+            } else {
+                entries.take(8).forEachIndexed { index, e ->
+                    if (index > 0) Spacer(Modifier.height(3.dp))
+                    LeaderboardCompactRow(
+                        rank = index + 1,
+                        entry = e,
+                        isMe = e.userId == currentUserId,
+                        currentUserId = currentUserId,
+                        onReact = if (e.userId != currentUserId) {
+                            { emojiCode -> onReact(e.userId, emojiCode) }
+                        } else null
+                    )
+                }
+                val myIndex = entries.indexOfFirst { it.userId == currentUserId }
+                if (myIndex >= 8) {
+                    val myEntry = entries[myIndex]
+                    Spacer(Modifier.height(4.dp))
+                    HorizontalDivider(
+                        color = colorScheme.outline.copy(alpha = 0.3f),
+                        thickness = 0.5.dp
+                    )
+                    Spacer(Modifier.height(4.dp))
+                    LeaderboardCompactRow(rank = myEntry.rank, entry = myEntry, isMe = true)
+                }
             }
         }
     }
@@ -1328,30 +1340,66 @@ private fun LeaderboardCompactRow(
     onReact: ((emojiCode: String) -> Unit)? = null
 ) {
     val colorScheme = MaterialTheme.colorScheme
-    Column(modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)) {
+    val isTopRank = rank <= 3
+    val medalEmoji = when (rank) { 1 -> "🥇"; 2 -> "🥈"; 3 -> "🥉"; else -> null }
+    val rankTierColor = when (rank) {
+        1    -> Color(0xFFFFD700)
+        2    -> Color(0xFFB0B8C1)
+        3    -> Color(0xFFCD7F32)
+        else -> Color.Transparent
+    }
+    val avatarSize = when {
+        rank == 1 -> 40
+        rank <= 3 -> 34
+        else      -> 30
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .background(if (isTopRank) rankTierColor.copy(alpha = 0.07f) else Color.Transparent)
+            .padding(
+                horizontal = if (isTopRank) 8.dp else 2.dp,
+                vertical   = if (isTopRank) 6.dp else 4.dp
+            )
+    ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = "#$rank",
-                style = MaterialTheme.typography.titleSmall,
-                color = colorScheme.onSurfaceVariant,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.width(36.dp)
-            )
+            // Rank badge
+            if (medalEmoji != null) {
+                Text(
+                    text = medalEmoji,
+                    fontSize = if (rank == 1) 20.sp else 16.sp,
+                    modifier = Modifier.width(36.dp)
+                )
+            } else {
+                Text(
+                    text = "#$rank",
+                    style = MaterialTheme.typography.labelMedium,
+                    color = colorScheme.onSurfaceVariant,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.width(36.dp)
+                )
+            }
+
+            // Avatar
             if (entry.photoUrl.isNullOrBlank()) {
                 Box(
                     modifier = Modifier
-                        .size(28.dp)
+                        .size(avatarSize.dp)
+                        .then(if (isTopRank) Modifier.border(1.5.dp, rankTierColor.copy(alpha = 0.55f), CircleShape) else Modifier)
                         .clip(CircleShape)
-                        .background(colorScheme.primaryContainer),
+                        .background(if (isMe) colorScheme.primary else colorScheme.primaryContainer),
                     contentAlignment = Alignment.Center
                 ) {
                     Text(
                         text = (entry.displayName?.firstOrNull() ?: 'U').uppercase(),
                         style = MaterialTheme.typography.labelSmall,
-                        color = colorScheme.onPrimaryContainer
+                        color = if (isMe) colorScheme.onPrimary else colorScheme.onPrimaryContainer,
+                        fontWeight = FontWeight.Bold
                     )
                 }
             } else {
@@ -1359,25 +1407,44 @@ private fun LeaderboardCompactRow(
                     model = entry.photoUrl,
                     contentDescription = null,
                     modifier = Modifier
-                        .size(28.dp)
+                        .size(avatarSize.dp)
+                        .then(if (isTopRank) Modifier.border(1.5.dp, rankTierColor.copy(alpha = 0.55f), CircleShape) else Modifier)
                         .clip(CircleShape)
                         .background(colorScheme.surface)
                 )
             }
+
             Spacer(Modifier.width(10.dp))
+
+            // Name
             Text(
-                text = (entry.displayName ?: stringResource(R.string.user)) + if (isMe) stringResource(R.string.you_suffix) else "",
+                text = (entry.displayName ?: stringResource(R.string.user)) +
+                        if (isMe) stringResource(R.string.you_suffix) else "",
                 style = MaterialTheme.typography.bodyMedium,
                 color = colorScheme.onSurface,
-                fontWeight = if (isMe) FontWeight.SemiBold else FontWeight.Normal,
-                modifier = Modifier.weight(1f)
+                fontWeight = if (isMe || rank == 1) FontWeight.SemiBold else FontWeight.Normal,
+                modifier = Modifier.weight(1f),
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
             )
-            Text(
-                text = "${entry.co2Conserved.format(2)} kg CO₂ ${stringResource(R.string.hero_co2_saved)}",
-                style = MaterialTheme.typography.bodySmall,
-                color = colorScheme.onSurfaceVariant
-            )
+
+            // CO₂ metric
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    text = "${entry.co2Conserved.format(2)} kg",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (isTopRank) Green500 else colorScheme.onSurfaceVariant,
+                    fontWeight = if (rank == 1) FontWeight.Bold else if (isTopRank) FontWeight.SemiBold else FontWeight.Normal
+                )
+                Text(
+                    text = stringResource(R.string.hero_co2_saved),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                    fontSize = 9.sp
+                )
+            }
         }
+
         if (!isMe && onReact != null) {
             ReactionStrip(
                 reactions = entry.reactions,
@@ -1426,6 +1493,158 @@ private fun ReactionStrip(
         }
     }
 }
+
+// ── Achievement badges card ──────────────────────────────────────────────────
+
+@Composable
+private fun AchievementBadgesCard(achievements: List<AchievementBadge>) {
+    val colorScheme = MaterialTheme.colorScheme
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = colorScheme.surfaceVariant),
+        shape = RoundedCornerShape(20.dp)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(
+                    imageVector = Icons.Default.MilitaryTech,
+                    contentDescription = null,
+                    tint = Color(0xFFFFD700),
+                    modifier = Modifier.size(22.dp)
+                )
+                Spacer(Modifier.width(8.dp))
+                Column {
+                    Text(
+                        text = "Your Achievements",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = colorScheme.onSurface
+                    )
+                    val earnedCount = achievements.count { it.isEarned }
+                    Text(
+                        text = "$earnedCount of ${achievements.size} earned this week",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            Spacer(Modifier.height(14.dp))
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                contentPadding = PaddingValues(horizontal = 2.dp)
+            ) {
+                items(achievements) { badge ->
+                    AchievementBadgeChip(badge = badge)
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun AchievementBadgeChip(badge: AchievementBadge) {
+    val colorScheme = MaterialTheme.colorScheme
+    val tColor = badgeTierColor(badge.tier)
+
+    Card(
+        modifier = Modifier.width(108.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = if (badge.isEarned) tColor.copy(alpha = 0.10f) else colorScheme.surface
+        ),
+        border = BorderStroke(
+            width = if (badge.isEarned) 1.5.dp else 0.8.dp,
+            color = if (badge.isEarned) tColor.copy(alpha = 0.5f) else colorScheme.outline.copy(alpha = 0.12f)
+        ),
+        shape = RoundedCornerShape(14.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(10.dp),
+            horizontalAlignment = Alignment.CenterHorizontally
+        ) {
+            // Emoji circle — padlock when not yet earned
+            Box(
+                modifier = Modifier
+                    .size(48.dp)
+                    .clip(CircleShape)
+                    .background(
+                        if (badge.isEarned) tColor.copy(alpha = 0.18f)
+                        else colorScheme.outline.copy(alpha = 0.08f)
+                    ),
+                contentAlignment = Alignment.Center
+            ) {
+                Text(
+                    text = if (badge.isEarned) badge.emoji else "🔒",
+                    fontSize = 22.sp
+                )
+            }
+
+            Spacer(Modifier.height(6.dp))
+
+            Text(
+                text = badge.title,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.SemiBold,
+                color = if (badge.isEarned) colorScheme.onSurface else colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Center,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                fontSize = 10.sp,
+                lineHeight = 13.sp
+            )
+
+            Spacer(Modifier.height(5.dp))
+
+            LinearProgressIndicator(
+                progress = { badge.progress },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(4.dp)
+                    .clip(RoundedCornerShape(2.dp)),
+                color = if (badge.isEarned) tColor else colorScheme.outline.copy(alpha = 0.25f),
+                trackColor = colorScheme.surfaceVariant
+            )
+
+            Spacer(Modifier.height(4.dp))
+
+            if (badge.isEarned) {
+                val isMaxTier = badge.tier == BadgeTier.DIAMOND
+                Text(
+                    text = if (isMaxTier) "⭐ ${badge.tier.label}" else badge.tier.label,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = tColor,
+                    fontWeight = FontWeight.Bold,
+                    fontSize = 9.sp
+                )
+            } else {
+                Text(
+                    text = "${badgeFmtVal(badge.currentValue, badge.unit)} / ${badgeFmtVal(badge.targetValue, badge.unit)} ${badge.unit}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colorScheme.onSurfaceVariant,
+                    fontSize = 9.sp,
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
+        }
+    }
+}
+
+private fun badgeTierColor(tier: BadgeTier): Color = when (tier) {
+    BadgeTier.BRONZE  -> Color(0xFFCD7F32)
+    BadgeTier.SILVER  -> Color(0xFFB0B8C1)
+    BadgeTier.GOLD    -> Color(0xFFFFD700)
+    BadgeTier.DIAMOND -> Color(0xFF62EFFF)
+}
+
+private fun badgeFmtVal(value: Double, unit: String): String = when (unit) {
+    "days", "kcal", "m" -> value.toInt().toString()
+    else                 -> "%.1f".format(value)
+}
+
+// ── Recent session row ───────────────────────────────────────────────────────
 
 @Composable
 private fun RecentSessionRow(

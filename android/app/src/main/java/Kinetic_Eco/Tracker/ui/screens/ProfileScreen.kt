@@ -4,12 +4,15 @@ import android.net.Uri
 import android.os.Build
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -26,8 +29,11 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
@@ -37,7 +43,10 @@ import Kinetic_Eco.Tracker.data.UnitSystem
 import Kinetic_Eco.Tracker.ui.utils.usesMetricDistance
 import Kinetic_Eco.Tracker.ui.components.StatCard
 import Kinetic_Eco.Tracker.ui.components.StatCardCompact
+import Kinetic_Eco.Tracker.data.TravelRecap
+import Kinetic_Eco.Tracker.data.TripRecord
 import Kinetic_Eco.Tracker.ui.theme.Amber500
+import Kinetic_Eco.Tracker.ui.theme.Green500
 import Kinetic_Eco.Tracker.ui.theme.Red500
 import Kinetic_Eco.Tracker.ui.utils.format
 import Kinetic_Eco.Tracker.viewmodel.AnalyticsViewModel
@@ -64,6 +73,8 @@ fun ProfileScreen(
 
     val allSessions by viewModel.getAllSessions(userId).collectAsStateWithLifecycle(initialValue = emptyList())
     val aggregatedStats = viewModel.getAggregatedStats(allSessions)
+    val travelRecap by viewModel.travelRecap.collectAsStateWithLifecycle()
+    val travelRecapLoading by viewModel.travelRecapLoading.collectAsStateWithLifecycle()
     // Annual carbon footprint = last 365 days of co2Conserved (in kg) summed from
     // the user's sessions. Computed here so the existing CO2-saved card can be
     // repurposed without changing the StatCard API.
@@ -88,20 +99,11 @@ fun ProfileScreen(
     LaunchedEffect(userId) {
         if (userId.isNotEmpty()) {
             profileViewModel.loadProfile(userId)
+            viewModel.loadTravelRecap(userId)
         }
     }
 
-    val mediaPermissions = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        arrayOf(
-            android.Manifest.permission.READ_MEDIA_IMAGES,
-            android.Manifest.permission.CAMERA
-        )
-    } else {
-        arrayOf(
-            android.Manifest.permission.READ_EXTERNAL_STORAGE,
-            android.Manifest.permission.CAMERA
-        )
-    }
+    val mediaPermissions = arrayOf(android.Manifest.permission.CAMERA)
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -111,7 +113,7 @@ fun ProfileScreen(
     }
 
     val galleryPicker = rememberLauncherForActivityResult(
-        ActivityResultContracts.GetContent()
+        ActivityResultContracts.PickVisualMedia()
     ) { uri: Uri? ->
         showPhotoSourceDialog = false
         if (uri != null) {
@@ -353,6 +355,10 @@ fun ProfileScreen(
         }
 
         item {
+            TravelRecapCard(recap = travelRecap, isLoading = travelRecapLoading)
+        }
+
+        item {
             PhysicalProfileSection(onSave = onPhysicalProfileSave)
         }
         item {
@@ -445,7 +451,7 @@ fun ProfileScreen(
                     TextButton(
                         onClick = {
                             showPhotoSourceDialog = false
-                            galleryPicker.launch("image/*")
+                            galleryPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                         },
                         modifier = Modifier.fillMaxWidth()
                     ) {
@@ -478,4 +484,253 @@ fun ProfileScreen(
         )
     }
 
+}
+
+@Composable
+private fun TravelRecapCard(recap: TravelRecap?, isLoading: Boolean) {
+    val colorScheme = MaterialTheme.colorScheme
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = colorScheme.surfaceVariant)
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(
+                    Brush.horizontalGradient(
+                        listOf(Green500.copy(alpha = 0.18f), Color(0xFF06B6D4).copy(alpha = 0.12f))
+                    )
+                )
+                .padding(horizontal = 16.dp, vertical = 12.dp)
+        ) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text("🌍", fontSize = 22.sp)
+                Spacer(Modifier.width(8.dp))
+                Column {
+                    Text(
+                        "Travel Recap",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = colorScheme.onSurface
+                    )
+                    if (recap?.firstTripDate != null) {
+                        Text(
+                            "First trip: ${fmtRecapDate(recap.firstTripDate)}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+
+        when {
+            isLoading && recap == null -> {
+                LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(32.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        "Loading your travel history…",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            recap == null || recap.totalSessions == 0 -> {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(32.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                        Text("🌱", fontSize = 40.sp)
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            "No trips yet",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = colorScheme.onSurfaceVariant
+                        )
+                        Text(
+                            "Start your first eco-friendly adventure!",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+
+            else -> {
+                Column(
+                    modifier = Modifier.padding(16.dp),
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
+                ) {
+                    // Countries + cities — only shown when geocoding resolved at least one location
+                    if (recap.countriesVisited.isNotEmpty()) {
+                        if (recap.countryCodes.isNotEmpty()) {
+                            LazyRow(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
+                                items(recap.countryCodes.take(8)) { code ->
+                                    Text(countryCodeToFlag(code), fontSize = 26.sp)
+                                }
+                                if (recap.countryCodes.size > 8) {
+                                    item {
+                                        Text(
+                                            "+${recap.countryCodes.size - 8}",
+                                            style = MaterialTheme.typography.labelMedium,
+                                            color = colorScheme.onSurfaceVariant,
+                                            modifier = Modifier.padding(start = 4.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        }
+
+                        Text(
+                            buildString {
+                                append("${recap.countriesVisited.size} ")
+                                append(if (recap.countriesVisited.size == 1) "country" else "countries")
+                                if (recap.citiesVisited.isNotEmpty()) {
+                                    append("  ·  ${recap.citiesVisited.size} ")
+                                    append(if (recap.citiesVisited.size == 1) "city" else "cities")
+                                }
+                            },
+                            style = MaterialTheme.typography.labelLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            color = colorScheme.onSurface
+                        )
+
+                        if (recap.citiesVisited.isNotEmpty()) {
+                            val displayed = recap.citiesVisited.take(5).joinToString(" · ")
+                            val suffix = if (recap.citiesVisited.size > 5) " …" else ""
+                            Text(
+                                displayed + suffix,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colorScheme.onSurfaceVariant
+                            )
+                        }
+
+                        HorizontalDivider(color = colorScheme.outline.copy(alpha = 0.25f))
+                    }
+
+                    // Personal bests header
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            Icons.Default.EmojiEvents,
+                            contentDescription = null,
+                            tint = Color(0xFFFFD700),
+                            modifier = Modifier.size(20.dp)
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text(
+                            "Personal Bests",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = colorScheme.onSurface
+                        )
+                    }
+
+                    // 2-column grid of personal record tiles
+                    val tiles = listOfNotNull(
+                        recap.longestTrip?.let         { Triple("📏", "Longest Trip",     it) },
+                        recap.longestSession?.let      { Triple("⏱️", "Longest Session",  it) },
+                        recap.topSpeedRecord?.let      { Triple("⚡", "Top Speed",        it) },
+                        recap.mostElevationRecord?.let { Triple("🏔️", "Highest Climb",   it) },
+                        recap.bestCo2Record?.let       { Triple("🌿", "Best CO₂ Save",   it) },
+                        recap.mostCaloriesRecord?.let  { Triple("🔥", "Most Calories",   it) },
+                    )
+
+                    tiles.chunked(2).forEach { pair ->
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(10.dp)
+                        ) {
+                            pair.forEach { (emoji, label, record) ->
+                                TripBestTile(
+                                    emoji = emoji,
+                                    label = label,
+                                    record = record,
+                                    modifier = Modifier.weight(1f)
+                                )
+                            }
+                            if (pair.size < 2) Spacer(Modifier.weight(1f))
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun TripBestTile(
+    emoji: String,
+    label: String,
+    record: TripRecord,
+    modifier: Modifier = Modifier
+) {
+    val colorScheme = MaterialTheme.colorScheme
+    Card(
+        modifier = modifier,
+        shape = RoundedCornerShape(12.dp),
+        colors = CardDefaults.cardColors(containerColor = colorScheme.surface),
+        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp)
+    ) {
+        Column(
+            modifier = Modifier.padding(10.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Text(emoji, fontSize = 16.sp)
+                Text(
+                    record.displayValue,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = colorScheme.primary
+                )
+            }
+            Text(
+                label,
+                style = MaterialTheme.typography.labelSmall,
+                color = colorScheme.onSurfaceVariant
+            )
+            if (record.city != null) {
+                Text(
+                    record.city,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = colorScheme.onSurface,
+                    fontWeight = FontWeight.Medium
+                )
+            }
+            Text(
+                fmtRecapDate(record.sessionDate),
+                style = MaterialTheme.typography.labelSmall,
+                color = colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+private fun countryCodeToFlag(code: String): String {
+    if (code.length != 2) return ""
+    return code.uppercase().map { char ->
+        String(Character.toChars(char.code - 'A'.code + 0x1F1E6))
+    }.joinToString("")
+}
+
+private fun fmtRecapDate(date: String): String {
+    return try {
+        val sdf = java.text.SimpleDateFormat("yyyy-MM-dd", java.util.Locale.getDefault())
+        val out = java.text.SimpleDateFormat("d MMM yyyy", java.util.Locale.getDefault())
+        sdf.parse(date)?.let { out.format(it) } ?: date
+    } catch (e: Exception) { date }
 }

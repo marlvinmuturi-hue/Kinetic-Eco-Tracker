@@ -110,12 +110,7 @@ class KineticFirebaseMessagingService : FirebaseMessagingService() {
         channelId: String,
         notificationId: Int
     ) {
-        val nm = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            getSystemService(NotificationManager::class.java)
-        } else {
-            @Suppress("DEPRECATION")
-            getSystemService(NOTIFICATION_SERVICE) as NotificationManager
-        }
+        val nm = getSystemService(NotificationManager::class.java)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val (channelName, channelDesc) = when (channelId) {

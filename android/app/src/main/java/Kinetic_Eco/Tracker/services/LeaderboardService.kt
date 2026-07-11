@@ -90,8 +90,9 @@ class LeaderboardService {
             return@withContext Result.failure(Exception("Please sign in to update leaderboard preference"))
         }
         try {
-            // 1. Write leaderboard entry first (always; use zeros if fetch fails so user appears immediately)
-            writeLeaderboardEntry(userId)
+            // 1. Write leaderboard entry first so the user appears immediately. On a session-fetch failure
+            //    this writes identity-only (name/photo) rather than zeros, so scores aren't clobbered.
+            writeLeaderboardEntry(userId, writeIdentityOnFetchFailure = true)
             // 2. Set opt-in flag
             firestore.collection("users").document(userId)
                 .set(mapOf("leaderboardOptIn" to true), SetOptions.merge())
@@ -125,8 +126,15 @@ class LeaderboardService {
         }
     }
 
-    /** Write leaderboard entry (fetches sessions; uses zeros if fetch fails). */
-    private suspend fun writeLeaderboardEntry(userId: String) {
+    /**
+     * Write the leaderboard entry by aggregating the user's Firestore sessions.
+     *
+     * If the session fetch **fails** (transient network/auth error), the aggregate write is aborted so we
+     * never overwrite good scores with zeros — the bug where an active, opted-in user's board reads 0.
+     * @param writeIdentityOnFetchFailure when true (opt-in path), still create/refresh the identity fields
+     *   (name/photo) so the user appears on the board, but without touching any score/aggregate field.
+     */
+    private suspend fun writeLeaderboardEntry(userId: String, writeIdentityOnFetchFailure: Boolean = false) {
         val profile = userProfileService.getProfile(userId)
         val currentUser = auth.currentUser
         val displayName = profile?.displayName?.takeIf { it.isNotBlank() }
@@ -136,11 +144,26 @@ class LeaderboardService {
         val photoUrl = profile?.photoUrl?.takeIf { it.isNotBlank() }
             ?: currentUser?.photoUrl?.toString()?.takeIf { it.isNotBlank() }
             ?: ""
-        val sessions = firestoreSessionService.fetchSessionsFromFirestore(userId).getOrElse {
-            Log.w(TAG, "Could not fetch sessions for leaderboard, using zeros: ${it.message}")
-            emptyList()
-        }
         val now = System.currentTimeMillis()
+        val sessions = firestoreSessionService.fetchSessionsFromFirestore(userId).getOrElse { err ->
+            // A transient read failure must NOT overwrite good aggregates with zeros — that is exactly how
+            // an active, opted-in user's leaderboard ends up reading 0. Abort the aggregate write.
+            Log.w(TAG, "Could not fetch sessions for leaderboard — skipping aggregate write to avoid zeroing: ${err.message}")
+            if (writeIdentityOnFetchFailure) {
+                // Opt-in path: still create/refresh identity fields so the user appears on the board,
+                // without touching any score/aggregate field (merge leaves existing values intact).
+                val identity = hashMapOf<String, Any>(
+                    "userId" to userId,
+                    "displayName" to displayName,
+                    "photoUrl" to photoUrl,
+                    "lastUpdated" to now
+                )
+                runCatching {
+                    firestore.collection("leaderboard").document(userId).set(identity, SetOptions.merge()).await()
+                }.onFailure { Log.w(TAG, "Identity-only leaderboard write failed: ${it.message}") }
+            }
+            return
+        }
         val oneDayMs = 24 * 60 * 60 * 1000L
 
         val entry = hashMapOf<String, Any>(

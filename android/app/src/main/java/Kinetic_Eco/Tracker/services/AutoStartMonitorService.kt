@@ -21,9 +21,12 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.LifecycleService
 import androidx.lifecycle.lifecycleScope
 import com.google.android.gms.location.LocationServices
+import com.google.android.gms.location.ActivityRecognitionResult
 import com.google.android.gms.location.ActivityTransition
 import com.google.android.gms.location.ActivityTransitionResult
 import com.google.android.gms.location.DetectedActivity
+import com.google.android.gms.location.Priority
+import com.google.android.gms.tasks.CancellationTokenSource
 import Kinetic_Eco.Tracker.MainActivity
 import Kinetic_Eco.Tracker.R
 import kotlinx.coroutines.Job
@@ -101,6 +104,20 @@ class AutoStartMonitorService : LifecycleService() {
     /** Consecutive times the indoor GPS gate suppressed an auto-start. Resets on success or manual stop. */
     private var indoorGateSuppressCount: Int = 0
 
+    // ── Periodic Activity Recognition state ──────────────────────────────────
+    //
+    // Populated by [handleActivityResult] from the low-power periodic activity-updates stream.
+    // Two uses: (1) directly trigger a vehicle auto-start on a confident IN_VEHICLE reading, and
+    // (2) act as the free "is the device moving?" gate for the GPS speed poll — when the device is
+    // confidently STILL we skip the active GPS fix entirely, so battery is only spent when there's
+    // reason to believe the user is actually in motion.
+    @Volatile private var lastActivityType: Int = DetectedActivity.UNKNOWN
+    @Volatile private var lastActivityConfidence: Int = 0
+    @Volatile private var lastActivityUpdateMs: Long = 0L
+    /** Wall-clock time significant motion last fired. A recent motion trigger overrides a stale STILL
+     *  Activity-Recognition reading so the GPS speed-poll still samples right after a cold drive start. */
+    @Volatile private var lastSignificantMotionMs: Long = 0L
+
     override fun onCreate() {
         super.onCreate()
         activityTransitionManager = ActivityTransitionManager(this)
@@ -120,13 +137,15 @@ class AutoStartMonitorService : LifecycleService() {
             ACTION_START -> {
                 startForegroundIfNeeded()
                 activityTransitionManager.registerTransitions()
+                activityTransitionManager.registerActivityUpdates()
                 registerStepListener()
                 armSignificantMotionSensor()
                 startSpeedCheckLoop()
-                Log.d(TAG, "Auto-start monitor running (transitions + step counter + significant motion + GPS speed poll)")
+                Log.d(TAG, "Auto-start monitor running (transitions + periodic AR + step counter + significant motion + GPS speed poll)")
             }
             ACTION_STOP -> {
                 activityTransitionManager.unregisterTransitions()
+                activityTransitionManager.unregisterActivityUpdates()
                 unregisterStepListener()
                 disarmSignificantMotionSensor()
                 stopSpeedCheckLoop()
@@ -138,6 +157,11 @@ class AutoStartMonitorService : LifecycleService() {
                 // Required: FGS entry from Play Services — must promote to foreground immediately.
                 startForegroundIfNeeded()
                 handleActivityTransition(intent)
+            }
+            ACTION_PROCESS_ACTIVITY_RESULT -> {
+                // Also an FGS entry from Play Services — promote to foreground immediately.
+                startForegroundIfNeeded()
+                handleActivityResult(intent)
             }
             null -> {
                 restoreIfNeededAfterStickyRestart()
@@ -159,8 +183,9 @@ class AutoStartMonitorService : LifecycleService() {
             startForegroundIfNeeded()
             try {
                 activityTransitionManager.registerTransitions()
+                activityTransitionManager.registerActivityUpdates()
             } catch (e: Exception) {
-                Log.e(TAG, "restoreIfNeeded: registerTransitions failed", e)
+                Log.e(TAG, "restoreIfNeeded: registerTransitions/updates failed", e)
             }
             // Step listener, significant-motion sensor and speed-check loop may have been
             // torn down with the previous process; restart all so triggers fire after a sticky restart.
@@ -199,6 +224,31 @@ class AutoStartMonitorService : LifecycleService() {
                 startTrackingFromAutoStart(vehicleColdStart)
                 break
             }
+        }
+    }
+
+    /**
+     * Handles a periodic activity-recognition update. Records the most-probable activity so the GPS
+     * speed poll can use it as a motion gate, and directly triggers a vehicle auto-start on a confident
+     * IN_VEHICLE reading — the redundant, OEM-resilient path for the "walk→drive with no stationary gap"
+     * case that transitions miss.
+     */
+    private fun handleActivityResult(intent: Intent) {
+        if (!ActivityRecognitionResult.hasResult(intent)) return
+        val result = ActivityRecognitionResult.extractResult(intent) ?: return
+        val prefs = UserPreferencesManager(this)
+        if (!prefs.getAutoStartOnWalkEnabled() && !prefs.getPendingResumeAfterIdleAutoStop()) return
+
+        val probable = result.mostProbableActivity
+        lastActivityType = probable.type
+        lastActivityConfidence = probable.confidence
+        lastActivityUpdateMs = System.currentTimeMillis()
+
+        if (probable.type == DetectedActivity.IN_VEHICLE &&
+            probable.confidence >= IN_VEHICLE_CONFIDENCE_TRIGGER
+        ) {
+            Log.d(TAG, "AR periodic update: IN_VEHICLE conf=${probable.confidence}% → vehicle auto-start")
+            startTrackingFromAutoStart(vehicleColdStart = true)
         }
     }
 
@@ -314,32 +364,74 @@ class AutoStartMonitorService : LifecycleService() {
         speedCheckJob = null
     }
 
-    /** Checks the last known GPS speed. If it clearly indicates driving (>= [VEHICLE_SPEED_THRESHOLD_MS])
-     *  and the fix is fresh, launches TrackingService immediately — catching vehicle starts that the
-     *  step counter (no steps while driving) and Activity Recognition (suppressed on many OEM ROMs) missed. */
+    /** Requests a single fresh GPS fix and, if its speed clearly indicates driving
+     *  (>= [VEHICLE_SPEED_THRESHOLD_MS]), launches TrackingService — catching vehicle starts that the
+     *  step counter (no steps while driving) and Activity Recognition transitions (suppressed on many
+     *  OEM ROMs) missed.
+     *
+     *  Battery: this used to read the passive `lastLocation` cache, which is almost always stale when
+     *  the app is closed (nothing keeps a fix warm) — so it never fired, and driving went unrecorded.
+     *  It now takes an **active** balanced-power fix, but only when the free Activity-Recognition gate
+     *  says the device may be moving. When AR confidently reports STILL, or a session is already
+     *  running, we spend zero GPS — active location is only used when there's real reason to. */
     private suspend fun checkGpsSpeedForVehicleStart() {
         val prefs = UserPreferencesManager(this@AutoStartMonitorService)
         if (!prefs.getAutoStartOnWalkEnabled() && !prefs.getPendingResumeAfterIdleAutoStop()) return
+        // A session is already tracking — TrackingService owns GPS; don't double-sample.
+        if (TrackingService.isActivelyTracking) return
+
+        // Free motion gate: skip the active GPS fix when AR recently and confidently said STILL.
+        // If AR data is stale (suppressed / not yet delivered) we fall through and sample anyway.
+        // Exception: if significant motion just fired, the STILL reading is stale by definition — AR
+        // lags a fresh cold drive-off — so sample anyway or an immediate short drive gets missed.
+        val motionRecentlyFired = lastSignificantMotionMs > 0L &&
+            (System.currentTimeMillis() - lastSignificantMotionMs) < MOTION_GATE_OVERRIDE_MS
+        val arAgeMs = System.currentTimeMillis() - lastActivityUpdateMs
+        if (!motionRecentlyFired &&
+            arAgeMs < ACTIVITY_GATE_STALE_MS &&
+            lastActivityType == DetectedActivity.STILL &&
+            lastActivityConfidence >= STILL_CONFIDENCE_GATE
+        ) {
+            return
+        }
+
+        sampleGpsAndMaybeVehicleStart()
+    }
+
+    /**
+     * Takes a single **active** balanced-power GPS fix and, if its speed clearly indicates driving
+     * (>= [VEHICLE_SPEED_THRESHOLD_MS]), launches TrackingService as a vehicle cold-start.
+     * Returns true iff a vehicle start was launched. Shared by the periodic speed-poll and the
+     * significant-motion trigger (which needs a fresh fix, not the stale cached `lastLocation`).
+     */
+    private suspend fun sampleGpsAndMaybeVehicleStart(): Boolean {
         val fine = ActivityCompat.checkSelfPermission(
             this@AutoStartMonitorService, Manifest.permission.ACCESS_FINE_LOCATION
         ) == PackageManager.PERMISSION_GRANTED
         val coarse = ActivityCompat.checkSelfPermission(
             this@AutoStartMonitorService, Manifest.permission.ACCESS_COARSE_LOCATION
         ) == PackageManager.PERMISSION_GRANTED
-        if (!fine && !coarse) return
+        if (!fine && !coarse) return false
+
+        val cts = CancellationTokenSource()
         try {
             val loc = LocationServices.getFusedLocationProviderClient(applicationContext)
-                .lastLocation.await()
+                .getCurrentLocation(Priority.PRIORITY_BALANCED_POWER_ACCURACY, cts.token)
+                .await()
             if (loc != null && loc.hasSpeed()) {
                 val ageMs = System.currentTimeMillis() - loc.time
                 if (ageMs < SPEED_CHECK_STALE_MS && loc.speed >= VEHICLE_SPEED_THRESHOLD_MS) {
-                    Log.d(TAG, "Speed-poll: GPS=${loc.speed * 3.6f}km/h (${ageMs / 1000}s old) → vehicle auto-start")
+                    Log.d(TAG, "Speed sample: GPS=${loc.speed * 3.6f}km/h (${ageMs / 1000}s old) → vehicle auto-start")
                     startTrackingFromAutoStart(vehicleColdStart = true)
+                    return true
                 }
             }
         } catch (e: Exception) {
             Log.w(TAG, "Speed check failed", e)
+        } finally {
+            cts.cancel()
         }
+        return false
     }
 
     /**
@@ -349,7 +441,20 @@ class AutoStartMonitorService : LifecycleService() {
     private fun handleSignificantMotionTrigger() {
         val prefs = UserPreferencesManager(this)
         if (!prefs.getAutoStartOnWalkEnabled() && !prefs.getPendingResumeAfterIdleAutoStop()) return
-        startTrackingFromAutoStart(vehicleColdStart = false)
+        // Record the motion so the GPS speed-poll ignores a stale STILL reading (AR lags a cold drive-off).
+        lastSignificantMotionMs = System.currentTimeMillis()
+        // A session is already tracking — nothing to start; the timestamp above is still useful.
+        if (TrackingService.isActivelyTracking) return
+        // Take an immediate active GPS fix rather than trusting the stale cached lastLocation: a real
+        // vehicle start is caught in ~seconds and launched as a cold-start (halved motor-promotion
+        // latency, skips the indoor GPS gate). If speed isn't clearly vehicular, fall back to the
+        // pedestrian path (indoor accuracy gate) so this still works as a walk auto-start.
+        lifecycleScope.launch {
+            val launchedVehicle = sampleGpsAndMaybeVehicleStart()
+            if (!launchedVehicle) {
+                startTrackingFromAutoStart(vehicleColdStart = false)
+            }
+        }
     }
 
     /**
@@ -477,12 +582,23 @@ class AutoStartMonitorService : LifecycleService() {
             .build()
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            ServiceCompat.startForeground(
-                this,
-                NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
-            )
+            // Guarded: throws ForegroundServiceStartNotAllowedException (Android 12+, background start)
+            // or SecurityException/MissingForegroundServiceType (Android 14+, no location permission).
+            // Aggressive OEM ROMs (Samsung, Xiaomi) hit this where stock Android doesn't. Swallow and stop
+            // the monitor rather than crashing the whole app; the non-fatal surfaces the real cause.
+            try {
+                ServiceCompat.startForeground(
+                    this,
+                    NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+                )
+            } catch (e: Exception) {
+                Log.e(TAG, "startForeground failed: ${e.javaClass.simpleName}", e)
+                com.google.firebase.crashlytics.FirebaseCrashlytics.getInstance().recordException(e)
+                stopSelf()
+                return
+            }
         }
         // Android 14+ expects location-type FGS to interact with location APIs; keeps policy consistent on OEM builds.
         pingFusedLocationForFgsCompliance()
@@ -562,10 +678,26 @@ class AutoStartMonitorService : LifecycleService() {
          *  safely above the fastest running pace (~4 m/s) to avoid false triggers. */
         private const val VEHICLE_SPEED_THRESHOLD_MS = 8f
 
+        /** Minimum confidence (%) on a periodic IN_VEHICLE reading to auto-start directly. */
+        private const val IN_VEHICLE_CONFIDENCE_TRIGGER = 60
+
+        /** Confidence (%) at/above which a STILL reading gates off the active GPS speed poll. */
+        private const val STILL_CONFIDENCE_GATE = 70
+
+        /** Beyond this age, the last activity reading is too stale to gate the GPS poll —
+         *  sample anyway (covers OEMs that suppress activity delivery). */
+        private const val ACTIVITY_GATE_STALE_MS = 90_000L
+
+        /** If significant motion fired within this window, the STILL motion gate is overridden and the
+         *  GPS speed-poll samples anyway — a fresh physical motion trigger beats a lagging STILL reading. */
+        private const val MOTION_GATE_OVERRIDE_MS = 60_000L
+
         const val ACTION_START = "kinetic_eco.ACTION_START_AUTO_MONITOR"
         const val ACTION_STOP = "kinetic_eco.ACTION_STOP_AUTO_MONITOR"
         /** Delivered by Play Services when activity transitions fire (see [ActivityTransitionManager]). */
         const val ACTION_PROCESS_ACTIVITY_TRANSITION = "kinetic_eco.ACTION_PROCESS_ACTIVITY_TRANSITION"
+        /** Delivered by Play Services for periodic activity-recognition updates (see [ActivityTransitionManager]). */
+        const val ACTION_PROCESS_ACTIVITY_RESULT = "kinetic_eco.ACTION_PROCESS_ACTIVITY_RESULT"
 
         fun start(context: Context) {
             val intent = Intent(context, AutoStartMonitorService::class.java).apply {

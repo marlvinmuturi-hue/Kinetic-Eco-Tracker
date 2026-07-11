@@ -115,6 +115,8 @@ class SessionManager(private val context: Context) {
                 }
                 .onSuccess {
                     Log.d(TAG, "✅ Session synced to Firestore")
+                    // Confirmed on the server — mark it so the backfill worker skips it.
+                    runCatching { sessionDao.markSessionSynced(sessionId) }
                     // Refresh the leaderboard entry so co2Conserved7d/30d/AllTime stay
                     // in sync with reality. updateLeaderboardEntry is a no-op when the
                     // user hasn't opted in, so this is safe to call unconditionally.
@@ -128,7 +130,61 @@ class SessionManager(private val context: Context) {
         
         return sessionId
     }
-    
+
+    /**
+     * Upload any locally-saved sessions that were never confirmed in Firestore (server-acked).
+     *
+     * This is the durable counterpart to the fire-and-forget sync in [saveSession]: that sync can be
+     * killed with the process when a session ends and the app is backgrounded, leaving the session only
+     * in Room. This method — driven by [Kinetic_Eco.Tracker.services.SessionSyncWorker] on launch /
+     * network-regained — re-uploads them, **reusing each session's id as the Firestore doc id** so
+     * re-uploads overwrite rather than duplicate. Marks each row synced on success.
+     *
+     * @return number of sessions successfully uploaded, or a failure if the batch hit an error
+     *   (WorkManager then retries with backoff, so a partial upload resumes where it left off).
+     */
+    suspend fun backfillUnsyncedSessions(userId: String): Result<Int> {
+        return try {
+            val unsynced = sessionDao.getUnsyncedSessions(userId)
+            if (unsynced.isEmpty()) {
+                return Result.success(0)
+            }
+            Log.d(TAG, "☁️ Backfill: ${unsynced.size} un-synced session(s) for $userId")
+            var uploaded = 0
+            var lastError: Throwable? = null
+            for (entity in unsynced) {
+                val stats = entity.toSessionStats()
+                val result = firestoreService.saveSessionToFirestore(
+                    stats = stats,
+                    sessionStartTimeMs = entity.createdAt,
+                    sessionId = entity.id,
+                    sessionDateKey = entity.date
+                )
+                result
+                    .onSuccess {
+                        sessionDao.markSessionSynced(entity.id)
+                        uploaded++
+                    }
+                    .onFailure { e ->
+                        // Stop on the first failure (usually offline / auth) — remaining rows stay
+                        // un-synced and are retried on the next run, preserving order.
+                        lastError = e
+                    }
+                if (lastError != null) break
+            }
+            if (uploaded > 0) {
+                Log.d(TAG, "✅ Backfill uploaded $uploaded session(s)")
+                // Keep the leaderboard aggregate honest now that history reached the server.
+                runCatching { LeaderboardService.getInstance().updateLeaderboardEntry(userId) }
+            }
+            lastError?.let { return Result.failure(it as? Exception ?: Exception(it.message ?: "backfill failed")) }
+            Result.success(uploaded)
+        } catch (e: Exception) {
+            Log.e(TAG, "Backfill failed", e)
+            Result.failure(e)
+        }
+    }
+
     companion object {
         private const val TAG = "SessionManager"
     }

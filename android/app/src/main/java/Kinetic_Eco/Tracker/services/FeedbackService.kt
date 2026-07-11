@@ -1,7 +1,9 @@
 package Kinetic_Eco.Tracker.services
 
+import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.FirebaseFirestore
 import kotlinx.coroutines.tasks.await
+import Kinetic_Eco.Tracker.BuildConfig
 import java.util.Date
 
 data class FeedbackData(
@@ -12,10 +14,12 @@ data class FeedbackData(
     val rating: Int? = null,
     val timestamp: Date = Date(),
     val platform: String = "android",
-    val appVersion: String = "1.0.0"
+    // Real build version so you can tell which release a report came from (was hardcoded "1.0.0").
+    val appVersion: String = BuildConfig.VERSION_NAME
 )
 
 class FeedbackService {
+    private val auth = FirebaseAuth.getInstance()
     private val firestore = FirebaseFirestore.getInstance()
     private val feedbackCollection = firestore.collection("feedback")
 
@@ -46,9 +50,13 @@ class FeedbackService {
         message: String,
         category: String = "general"
     ): Result<String> {
+        // Fall back to the signed-in Firebase user for attribution when the caller passes blanks —
+        // the security rule requires an authenticated request anyway, so this keeps every report tied
+        // to a real account instead of "anonymous".
+        val authUser = auth.currentUser
         val feedback = FeedbackData(
-            userId = userId,
-            userEmail = userEmail,
+            userId = userId.ifBlank { authUser?.uid ?: "anonymous" },
+            userEmail = userEmail.ifBlank { authUser?.email ?: "anonymous@kinetic.app" },
             message = message,
             category = category
         )

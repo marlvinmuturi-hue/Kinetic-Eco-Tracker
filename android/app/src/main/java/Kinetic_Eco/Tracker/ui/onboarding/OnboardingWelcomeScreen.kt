@@ -102,7 +102,7 @@ fun OnboardingWelcomeScreen(onGetStarted: () -> Unit) {
             Spacer(Modifier.height(16.dp))
 
             Text(
-                text = "The average person emits 4+ tonnes of CO₂ a year.\nFind out where yours comes from.",
+                text = "The average person emits about 1 tonne of CO₂ on transport per year.\nTrack your emissions and conservation efforts today.",
                 style = MaterialTheme.typography.bodyLarge,
                 textAlign = TextAlign.Center,
                 color = Color.White.copy(alpha = 0.88f)

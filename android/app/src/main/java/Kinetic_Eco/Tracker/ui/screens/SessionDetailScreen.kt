@@ -36,6 +36,7 @@ import Kinetic_Eco.Tracker.R
 import Kinetic_Eco.Tracker.data.ActivityColors
 import Kinetic_Eco.Tracker.data.ActivitySegment
 import Kinetic_Eco.Tracker.data.ActivityType
+import Kinetic_Eco.Tracker.util.ActivityReclassification
 import Kinetic_Eco.Tracker.data.SessionStats
 import Kinetic_Eco.Tracker.data.UnitSystem
 import Kinetic_Eco.Tracker.ui.components.ActivityDonutChart
@@ -295,8 +296,16 @@ fun SessionDetailScreen(
 
             // Mode timeline — shown when a session has 2+ distinct activity segments,
             // or always for individual sessions so the user can edit/comment any segment.
-            val meaningfulSegments = displayStats.segments.filter {
-                it.type != ActivityType.IDLE && (it.distance >= 50.0 || (it.endTime - it.startTime) >= 15_000L)
+            // Idle segments are included when significant (≥ IDLE_MIN_EDIT_DURATION_MS) so a
+            // mis-detected pause (e.g. idle while stopped in traffic) can be reclassified to driving,
+            // while sub-second GPS-jitter idles stay hidden.
+            val meaningfulSegments = displayStats.segments.filter { seg ->
+                val durationMs = seg.endTime - seg.startTime
+                if (seg.effectiveType == ActivityType.IDLE) {
+                    durationMs >= ActivityReclassification.IDLE_MIN_EDIT_DURATION_MS
+                } else {
+                    seg.distance >= 50.0 || durationMs >= 15_000L
+                }
             }
             if (meaningfulSegments.map { it.effectiveType }.toSet().size >= 2 || (isIndividualSession && meaningfulSegments.isNotEmpty())) {
                 item {
@@ -320,6 +329,7 @@ fun SessionDetailScreen(
     editingSegment?.let { seg ->
         EditSegmentSheet(
             segment = seg,
+            allSegments = displayStats.segments,
             onSave = { edited ->
                 val merged = displayStats.segments.map { if (it.startTime == edited.startTime) edited else it }
                 onUpdateSegments(merged)
@@ -678,6 +688,7 @@ private fun activityIcon(type: ActivityType): ImageVector = when (type) {
 @Composable
 fun EditSegmentSheet(
     segment: ActivitySegment,
+    allSegments: List<ActivitySegment>,
     onSave: (ActivitySegment) -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -685,7 +696,11 @@ fun EditSegmentSheet(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var selectedType by remember { mutableStateOf(segment.effectiveType) }
     var comment by remember { mutableStateOf(segment.comment) }
-    val editableActivities = ActivityType.values().filter { it != ActivityType.IDLE }
+    // Only offer types that fit this segment's recorded speed or its neighbours' — so a mis-detected
+    // idle between two driving segments can become Driving, but not Flying. Enum-ordered for stability.
+    val editableActivities = remember(segment, allSegments) {
+        ActivityReclassification.allowedTypesFor(segment, allSegments).sortedBy { it.ordinal }
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,

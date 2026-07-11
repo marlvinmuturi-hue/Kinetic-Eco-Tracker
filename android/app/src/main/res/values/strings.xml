@@ -138,6 +138,8 @@
     <string name="notification_sounds_desc">Play sound for tracking start/stop and session summary. Respects Do Not Disturb.</string>
     <string name="auto_start_walk">Auto-Start on movement</string>
     <string name="auto_start_walk_desc">Automatically start tracking when movement is detected (works in background)</string>
+    <string name="auto_start_battery_warning">Battery optimization may stop auto-start when the app is closed</string>
+    <string name="auto_start_battery_fix">Fix</string>
     <string name="auto_start_channel_name">Auto-start</string>
     <string name="auto_start_channel_desc">Background monitoring for auto-start on walk</string>
     <string name="auto_start_notification_title">Auto-start enabled</string>
@@ -505,6 +507,7 @@
     <string name="dashboard_weekly_report">Weekly report</string>
     <string name="dashboard_leaderboard_7d">Leaderboard (7d)</string>
     <string name="dashboard_leaderboard_opt_in">Opt in via Settings to see your rank and compete with friends.</string>
+    <string name="leaderboard_climb_nudge">Walk, run or cycle to climb the board →</string>
     <string name="open_settings">Open Settings</string>
     <string name="loading_leaderboard">Loading leaderboard…</string>
     <string name="weekly_co2_goal">Weekly CO₂ goal</string>

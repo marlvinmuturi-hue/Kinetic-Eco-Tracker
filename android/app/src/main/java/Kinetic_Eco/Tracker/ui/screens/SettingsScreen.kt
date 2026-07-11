@@ -38,6 +38,8 @@ import Kinetic_Eco.Tracker.data.UnitSystem
 import Kinetic_Eco.Tracker.data.VehicleBodyType
 import Kinetic_Eco.Tracker.data.VehicleProfile
 import Kinetic_Eco.Tracker.ui.components.BirthDatePicker
+import Kinetic_Eco.Tracker.ui.components.BatteryReliabilityDialog
+import Kinetic_Eco.Tracker.util.BatteryOptimizationHelper
 import Kinetic_Eco.Tracker.ui.theme.Red500
 import Kinetic_Eco.Tracker.services.UserPhysicalProfile
 import Kinetic_Eco.Tracker.services.UserPreferencesManager
@@ -81,6 +83,20 @@ fun SettingsScreen(
     onFeedbackClick: () -> Unit = {},
 ) {
     val colorScheme = MaterialTheme.colorScheme
+    val context = LocalContext.current
+
+    // Battery-optimization reliability nudge: shown when the user turns auto-start on while the app is
+    // still battery-optimized, and re-openable from the status row under the auto-start toggle.
+    var showBatteryDialog by remember { mutableStateOf(false) }
+    // Recomputed on each recomposition (cheap) so the warning row disappears once the user fixes it and
+    // returns to this screen.
+    val batteryOptimized = !BatteryOptimizationHelper.isIgnoringBatteryOptimizations(context)
+    val needsBackgroundLocation = !BatteryOptimizationHelper.hasBackgroundLocationAccess(context)
+    // Either gap breaks background auto-start, so the nudge/warning key off both.
+    val backgroundReliabilityAtRisk = batteryOptimized || needsBackgroundLocation
+    if (showBatteryDialog) {
+        BatteryReliabilityDialog(onDismiss = { showBatteryDialog = false })
+    }
 
     Box(modifier = Modifier.fillMaxSize()) {
         LazyColumn(
@@ -344,13 +360,52 @@ fun SettingsScreen(
                     }
                     Switch(
                         checked = autoStartOnWalkEnabled,
-                        onCheckedChange = onAutoStartOnWalkChange,
+                        onCheckedChange = { enabled ->
+                            onAutoStartOnWalkChange(enabled)
+                            // The moment auto-start is switched on while a background-reliability setting is
+                            // still missing, offer the one-off reliability nudge — this is exactly when it matters.
+                            if (enabled && backgroundReliabilityAtRisk) showBatteryDialog = true
+                        },
                         colors = SwitchDefaults.colors(
                             checkedThumbColor = colorScheme.surface,
                             checkedTrackColor = colorScheme.onSurface,
                             uncheckedThumbColor = colorScheme.outline,
                             uncheckedTrackColor = colorScheme.surfaceVariant
                         )
+                    )
+                }
+            }
+        }
+
+        // Contextual warning: auto-start is on but the OS may kill it in the background. Tappable to
+        // re-open the fix. Only shown when both conditions hold, so it self-clears once resolved.
+        if (autoStartOnWalkEnabled && backgroundReliabilityAtRisk) {
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { showBatteryDialog = true }
+                        .padding(horizontal = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Filled.BatteryAlert,
+                        contentDescription = null,
+                        tint = colorScheme.tertiary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = stringResource(R.string.auto_start_battery_warning),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colorScheme.tertiary,
+                        modifier = Modifier.weight(1f)
+                    )
+                    Text(
+                        text = stringResource(R.string.auto_start_battery_fix),
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        color = colorScheme.primary
                     )
                 }
             }

@@ -226,7 +226,7 @@ fun OnboardingProfileScreen(
 
         Spacer(Modifier.height(8.dp))
 
-        OnboardingStepIndicator(currentStep = 2, totalSteps = 3) // step 3 of 3
+        OnboardingStepIndicator(currentStep = 1, totalSteps = 2) // step 2 of 2
 
         Spacer(Modifier.height(4.dp))
 

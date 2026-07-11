@@ -469,16 +469,30 @@ class TrackingService : LifecycleService() {
         locationService.setFlyingMode(false)
         _isTracking.value = true
 
-        // Call startForeground immediately after marking active — avoids FGS timeout if later init is slow
+        // Call startForeground immediately after marking active — avoids FGS timeout if later init is slow.
+        // Guarded: on Android 12+ this throws ForegroundServiceStartNotAllowedException when started from
+        // the background, and on Android 14+ it throws SecurityException/MissingForegroundServiceType when
+        // location permission isn't held. Neither is recoverable here — abort the start cleanly instead of
+        // letting the process crash (the failure is reported as a non-fatal so we can see it in Crashlytics).
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-            val notification = createNotification()
-            ServiceCompat.startForeground(
-                this,
-                NOTIFICATION_ID,
-                notification,
-                ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
-            )
+            try {
+                val notification = createNotification()
+                ServiceCompat.startForeground(
+                    this,
+                    NOTIFICATION_ID,
+                    notification,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_LOCATION
+                )
+            } catch (e: Exception) {
+                android.util.Log.e("TrackingService", "startForeground failed: ${e.javaClass.simpleName}", e)
+                com.google.firebase.crashlytics.FirebaseCrashlytics.getInstance().recordException(e)
+                _isTracking.value = false
+                isActivelyTracking = false
+                stopSelf()
+                return
+            }
         }
+        isActivelyTracking = true
 
         lastUpdateTime = System.currentTimeMillis()
         lastPosition = null
@@ -623,6 +637,7 @@ class TrackingService : LifecycleService() {
         deadReckoningJob = null
         _leanActivityHint.value = null
         _isTracking.value = false
+        isActivelyTracking = false
         _currentActivity.value = ActivityType.IDLE
         locationService.setFlyingMode(false)
         smoothedSpeed = 0f
@@ -2855,6 +2870,15 @@ class TrackingService : LifecycleService() {
     }
 
     companion object {
+        /**
+         * Process-wide flag: true while a tracking session is actively running.
+         * Read by [AutoStartMonitorService] so its background vehicle-detection poll can
+         * skip spending a GPS fix when a session is already in progress (battery saver).
+         */
+        @Volatile
+        var isActivelyTracking: Boolean = false
+            private set
+
         const val NOTIFICATION_ID = 101
         const val ACTIVITY_HINT_NOTIFICATION_ID = 106
         const val SESSION_SUMMARY_NOTIFICATION_ID = 103

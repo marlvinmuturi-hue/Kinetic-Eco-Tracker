@@ -10,6 +10,7 @@ plugins {
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose") version "2.2.21"
     id("com.google.gms.google-services")
+    id("com.google.firebase.crashlytics") version "3.0.3"
     id("com.google.devtools.ksp") version "2.2.21-2.0.5"
 }
 
@@ -17,12 +18,25 @@ android {
     namespace = "Kinetic_Eco.Tracker"
     compileSdk = 35
 
+    lint {
+        // Compose's runtime lint detectors crash on this project because the Kotlin compiler is newer
+        // than the kotlinx-metadata bundled in the current AGP/lint (checkMetadataVersionForRead throws),
+        // aborting the whole run before useful checks (NewApi etc.) report. Disable the Compose checks
+        // that read composable metadata. Real fix: bump AGP so its lint matches the Kotlin version.
+        disable += "StateFlowValueCalledInComposition"
+        disable += "CoroutineCreationDuringComposition"
+
+        // Snapshot existing issues so only NEW problems fail future builds. Regenerate by deleting
+        // lint-baseline.xml and re-running lint. As issues are fixed, prune stale entries from it.
+        baseline = file("lint-baseline.xml")
+    }
+
     defaultConfig {
         applicationId = "com.kineticecotracker"
         minSdk = 24
         targetSdk = 35
-        versionCode = 11
-        versionName = "V1.8.1"
+        versionCode = 12
+        versionName = "V1.9.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "FUNCTIONS_BASE_URL", "\"https://us-central1-gen-lang-client-0114974661.cloudfunctions.net\"")
@@ -53,6 +67,9 @@ android {
     }
     
     compileOptions {
+        // Backport java.time (and other newer JDK APIs) to minSdk 24/25 — without this the app
+        // crashes with NoClassDefFoundError on Android 7.x when it touches java.time (Analysis screens).
+        isCoreLibraryDesugaringEnabled = true
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
@@ -73,6 +90,9 @@ ksp {
 }
 
 dependencies {
+    // Core library desugaring runtime — backports java.time etc. for minSdk 24/25 (see compileOptions).
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
+
     // AndroidX Core
     implementation("androidx.core:core-ktx:1.12.0")
     implementation("androidx.appcompat:appcompat:1.6.1")
@@ -96,10 +116,14 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.7.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
     implementation("androidx.lifecycle:lifecycle-service:2.7.0")
+
+    // WorkManager — durable, retryable background sync of un-synced sessions to Firestore
+    implementation("androidx.work:work-runtime-ktx:2.9.1")
     
     // Firebase (Native - not WebView)
     implementation(platform("com.google.firebase:firebase-bom:34.14.0"))
     implementation("com.google.firebase:firebase-analytics")
+    implementation("com.google.firebase:firebase-crashlytics")
     implementation("com.google.firebase:firebase-auth")
     implementation("com.google.firebase:firebase-firestore")
     implementation("com.google.firebase:firebase-storage")

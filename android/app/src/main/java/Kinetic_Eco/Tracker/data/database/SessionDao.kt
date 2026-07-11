@@ -29,6 +29,16 @@ interface SessionDao {
     @Query("DELETE FROM sessions WHERE userId = :userId")
     suspend fun deleteAllSessions(userId: String)
 
+    // ── Firestore sync backfill ───────────────────────────────────────────────
+
+    /** Sessions not yet confirmed in Firestore, oldest first (so backfill preserves chronology). */
+    @Query("SELECT * FROM sessions WHERE userId = :userId AND synced = 0 ORDER BY createdAt ASC")
+    suspend fun getUnsyncedSessions(userId: String): List<SessionEntity>
+
+    /** Mark a session as confirmed-synced to Firestore. */
+    @Query("UPDATE sessions SET synced = 1 WHERE id = :sessionId")
+    suspend fun markSessionSynced(sessionId: String)
+
     // ── Time-series aggregation ───────────────────────────────────────────────
 
     /** CO2 saved/emitted summed per calendar day. [fromDate] is "yyyy-MM-dd". */

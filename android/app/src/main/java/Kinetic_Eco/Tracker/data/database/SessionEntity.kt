@@ -30,7 +30,14 @@ data class SessionEntity(
     val segmentsJson: String = "[]", // JSON list of ActivitySegment
     @ColumnInfo(name = "routePathJson") val routePath: List<RoutePoint> = emptyList(),
     val createdAt: Long, // timestamp
-    val breakdown: Map<ActivityType, ActivityBreakdownEntity> // JSON stored as String
+    val breakdown: Map<ActivityType, ActivityBreakdownEntity>, // JSON stored as String
+    /**
+     * True once this session has been confirmed written to Firestore (server-acked).
+     * New rows start false; a background [SessionSyncWorker] backfills any that are still false
+     * (e.g. the fire-and-forget sync at save time was killed with the process). Defaults to 0 for
+     * rows migrated from schema v7, so existing local sessions are (idempotently) re-uploaded.
+     */
+    @ColumnInfo(name = "synced", defaultValue = "0") val synced: Boolean = false
 )
 
 data class ActivityBreakdownEntity(

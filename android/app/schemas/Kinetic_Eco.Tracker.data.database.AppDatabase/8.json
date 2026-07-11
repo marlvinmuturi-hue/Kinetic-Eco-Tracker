@@ -1,0 +1,161 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 8,
+    "identityHash": "87cd6df5b133de0c423ea4a7465c3c0b",
+    "entities": [
+      {
+        "tableName": "sessions",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` TEXT NOT NULL, `userId` TEXT NOT NULL, `date` TEXT NOT NULL, `totalDuration` INTEGER NOT NULL, `totalDistance` REAL NOT NULL, `caloriesBurned` REAL NOT NULL, `co2Emissions` REAL NOT NULL, `co2Conserved` REAL NOT NULL, `totalSteps` INTEGER NOT NULL, `elevationGain` REAL NOT NULL, `elevationLoss` REAL NOT NULL, `startingAltitude` REAL, `stoppingAltitude` REAL, `minAltitude` REAL, `maxAltitude` REAL, `topSpeedMps` REAL NOT NULL, `kmMilestonesJson` TEXT NOT NULL, `segmentsJson` TEXT NOT NULL, `routePathJson` TEXT NOT NULL, `createdAt` INTEGER NOT NULL, `breakdown` TEXT NOT NULL, `synced` INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(`id`))",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "userId",
+            "columnName": "userId",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "date",
+            "columnName": "date",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "totalDuration",
+            "columnName": "totalDuration",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "totalDistance",
+            "columnName": "totalDistance",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "caloriesBurned",
+            "columnName": "caloriesBurned",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "co2Emissions",
+            "columnName": "co2Emissions",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "co2Conserved",
+            "columnName": "co2Conserved",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "totalSteps",
+            "columnName": "totalSteps",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "elevationGain",
+            "columnName": "elevationGain",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "elevationLoss",
+            "columnName": "elevationLoss",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "startingAltitude",
+            "columnName": "startingAltitude",
+            "affinity": "REAL",
+            "notNull": false
+          },
+          {
+            "fieldPath": "stoppingAltitude",
+            "columnName": "stoppingAltitude",
+            "affinity": "REAL",
+            "notNull": false
+          },
+          {
+            "fieldPath": "minAltitude",
+            "columnName": "minAltitude",
+            "affinity": "REAL",
+            "notNull": false
+          },
+          {
+            "fieldPath": "maxAltitude",
+            "columnName": "maxAltitude",
+            "affinity": "REAL",
+            "notNull": false
+          },
+          {
+            "fieldPath": "topSpeedMps",
+            "columnName": "topSpeedMps",
+            "affinity": "REAL",
+            "notNull": true
+          },
+          {
+            "fieldPath": "kmMilestonesJson",
+            "columnName": "kmMilestonesJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "segmentsJson",
+            "columnName": "segmentsJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "routePath",
+            "columnName": "routePathJson",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "createdAt",
+            "columnName": "createdAt",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "breakdown",
+            "columnName": "breakdown",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "synced",
+            "columnName": "synced",
+            "affinity": "INTEGER",
+            "notNull": true,
+            "defaultValue": "0"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "id"
+          ]
+        },
+        "indices": [],
+        "foreignKeys": []
+      }
+    ],
+    "views": [],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '87cd6df5b133de0c423ea4a7465c3c0b')"
+    ]
+  }
+}

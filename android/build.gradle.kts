@@ -6,6 +6,7 @@ plugins {
 
     // Add the dependency for the Google services Gradle plugin
     id("com.google.gms.google-services") version "4.4.4" apply false
+    // Firebase Crashlytics plugin version is pinned in :app (see app/build.gradle.kts)
 }
 
 

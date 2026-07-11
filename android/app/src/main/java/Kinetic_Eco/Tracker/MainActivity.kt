@@ -43,6 +43,7 @@ import Kinetic_Eco.Tracker.data.UnitSystem
 import Kinetic_Eco.Tracker.navigation.AppNavGraph
 import Kinetic_Eco.Tracker.navigation.Screen
 import Kinetic_Eco.Tracker.ui.components.AdMobBanner
+import Kinetic_Eco.Tracker.ui.components.BatteryReliabilityDialog
 import Kinetic_Eco.Tracker.ui.components.BottomNavigationBar
 import Kinetic_Eco.Tracker.ui.components.ConsentManager
 import Kinetic_Eco.Tracker.ui.components.DraggableFloatingPlayButton
@@ -52,7 +53,9 @@ import Kinetic_Eco.Tracker.viewmodel.AnalyticsViewModel
 import Kinetic_Eco.Tracker.viewmodel.AuthViewModel
 import Kinetic_Eco.Tracker.viewmodel.ProfileViewModel
 import Kinetic_Eco.Tracker.viewmodel.TrackerViewModel
+import Kinetic_Eco.Tracker.services.SessionSyncWorker
 import Kinetic_Eco.Tracker.services.UserPreferencesManager
+import Kinetic_Eco.Tracker.util.BatteryOptimizationHelper
 import org.osmdroid.config.Configuration
 
 class MainActivity : AppCompatActivity() {
@@ -248,6 +251,10 @@ class MainActivity : AppCompatActivity() {
                     LaunchedEffect(currentUser) {
                         currentUser?.let { user ->
                             analyticsViewModel.restoreSessionsFromFirestore(user.uid)
+                            // Push local→cloud: durably re-upload any sessions that never confirmed to
+                            // Firestore (fire-and-forget sync killed with the process). Retryable +
+                            // network-aware via WorkManager. Complements the download call above.
+                            SessionSyncWorker.enqueue(applicationContext)
                             profileViewModel.autoOptInOnLogin(user.uid)
                             // Only redirect here when the nav stack is still sitting on Login.
                             // onSignInSuccess in LoginScreen handles the same redirect for interactive
@@ -256,16 +263,15 @@ class MainActivity : AppCompatActivity() {
                             // second copy if the user is already mid-flow (e.g. mid-onboarding when
                             // the auth state observer re-fires after a transient sign-out/sign-in).
                             val onOnboarding = currentRoute == Screen.OnboardingWelcome.route ||
-                                currentRoute == Screen.OnboardingDescription.route ||
                                 currentRoute == Screen.OnboardingPermissions.route ||
                                 currentRoute == Screen.OnboardingProfile.route
                             if (currentRoute == Screen.Login.route && !onOnboarding) {
                                 selectedMainTabIndex = 0
-                                // Post-login onboarding starts at the Description screen; Welcome
+                                // Post-login onboarding starts at the merged Permissions step; Welcome
                                 // is now the pre-login splash and is skipped once the user is
                                 // authenticated.
                                 val dest = if (!userPrefsManager.isOnboardingDone())
-                                    Screen.OnboardingDescription.route
+                                    Screen.OnboardingPermissions.route
                                 else
                                     Screen.MainTabs.route
                                 navController.navigate(dest) {
@@ -298,7 +304,6 @@ class MainActivity : AppCompatActivity() {
                         val onBlockingFlow = currentRoute == Screen.Login.route ||
                             currentRoute == Screen.Terms.route ||
                             currentRoute == Screen.OnboardingWelcome.route ||
-                            currentRoute == Screen.OnboardingDescription.route ||
                             currentRoute == Screen.OnboardingPermissions.route ||
                             currentRoute == Screen.OnboardingProfile.route
                         if (onBlockingFlow) {
@@ -324,6 +329,30 @@ class MainActivity : AppCompatActivity() {
                                 restoreState = true
                             }
                         }
+                    }
+
+                    // ── Background-reliability nudge ──────────────────────────────
+                    //
+                    // If the user skipped "Allow all the time" location and/or Unrestricted battery,
+                    // background auto-start silently fails (the monitor can't take GPS fixes while
+                    // closed). Prompt with the adaptive reliability dialog once the user reaches the
+                    // main app. Shown at most once per app launch (reliabilityChecked latches) so it
+                    // never nags within a session; it reappears on a later launch only if still missing.
+                    var showReliabilityDialog by remember { mutableStateOf(false) }
+                    var reliabilityChecked by remember { mutableStateOf(false) }
+                    LaunchedEffect(currentUser, currentRoute) {
+                        if (reliabilityChecked) return@LaunchedEffect
+                        if (currentUser == null) return@LaunchedEffect
+                        // Only after onboarding/login — the Permissions step already asks there.
+                        if (currentRoute != Screen.MainTabs.route) return@LaunchedEffect
+                        val ctx = applicationContext
+                        val missing = !BatteryOptimizationHelper.hasBackgroundLocationAccess(ctx) ||
+                            !BatteryOptimizationHelper.isIgnoringBatteryOptimizations(ctx)
+                        if (missing) showReliabilityDialog = true
+                        reliabilityChecked = true
+                    }
+                    if (showReliabilityDialog) {
+                        BatteryReliabilityDialog(onDismiss = { showReliabilityDialog = false })
                     }
 
                     val nestedScrollConnection = remember {
@@ -441,7 +470,6 @@ class MainActivity : AppCompatActivity() {
                         }
                         
                         val isOnboardingRoute = currentRoute == Screen.OnboardingWelcome.route ||
-                            currentRoute == Screen.OnboardingDescription.route ||
                             currentRoute == Screen.OnboardingPermissions.route ||
                             currentRoute == Screen.OnboardingProfile.route
                         val isFullScreenSettingsRoute = currentRoute == Screen.Settings.route ||

@@ -28,7 +28,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import Kinetic_Eco.Tracker.R
-import android.os.Build
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -155,9 +154,7 @@ fun RouteMapMultiSessionView(
             // osmdroid tile rendering doesn't bleed over Compose siblings above.
             clipToOutline = true
             outlineProvider = android.view.ViewOutlineProvider.BOUNDS
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN) {
-                setHasTransientState(true)
-            }
+            setHasTransientState(true)
         }
     }
 

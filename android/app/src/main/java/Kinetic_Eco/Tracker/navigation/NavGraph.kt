@@ -48,7 +48,6 @@ import Kinetic_Eco.Tracker.data.VehicleProfile
 import Kinetic_Eco.Tracker.data.PrimaryFuelType
 import Kinetic_Eco.Tracker.services.StepMonitor
 import Kinetic_Eco.Tracker.ui.onboarding.OnboardingCelebrationScreen
-import Kinetic_Eco.Tracker.ui.onboarding.OnboardingDescriptionScreen
 import Kinetic_Eco.Tracker.ui.onboarding.OnboardingPermissionsScreen
 import Kinetic_Eco.Tracker.ui.onboarding.OnboardingProfileScreen
 import Kinetic_Eco.Tracker.ui.onboarding.OnboardingWelcomeScreen
@@ -84,8 +83,7 @@ sealed class Screen(val route: String) {
     object OnboardingWelcome : Screen("onboarding_welcome")
     object Terms : Screen("terms")
     object Login : Screen("login")
-    /** Post-login onboarding — 3 steps: Description, Permissions, Profile. */
-    object OnboardingDescription : Screen("onboarding_description")
+    /** Post-login onboarding — 2 steps: Permissions (intro tour + permissions), Profile. */
     object OnboardingPermissions : Screen("onboarding_permissions")
     object OnboardingProfile : Screen("onboarding_profile")
     /** Post-onboarding celebration moment — shown once, auto-advances to MainTabs after 1.5 s. */
@@ -198,10 +196,10 @@ fun AppNavGraph(
             LoginScreen(
                 viewModel = authViewModel,
                 onSignInSuccess = {
-                    // Post-login onboarding starts at the Description screen now;
-                    // Welcome moved to the pre-login slot.
+                    // Post-login onboarding now opens directly on the merged Permissions step
+                    // (intro tour + permissions on one screen); Welcome is in the pre-login slot.
                     val dest = if (!userPrefsManager.isOnboardingDone())
-                        Screen.OnboardingDescription.route
+                        Screen.OnboardingPermissions.route
                     else
                         Screen.MainTabs.route
                     navController.navigate(dest) {
@@ -214,15 +212,7 @@ fun AppNavGraph(
             )
         }
 
-        // ── Post-login onboarding (3 steps) ──────────────────────────────────
-
-        fadeComposable(Screen.OnboardingDescription.route) {
-            OnboardingDescriptionScreen(
-                onContinue = {
-                    navController.navigate(Screen.OnboardingPermissions.route)
-                }
-            )
-        }
+        // ── Post-login onboarding (2 steps: Permissions, Profile) ────────────
 
         fadeComposable(Screen.OnboardingPermissions.route) {
             OnboardingPermissionsScreen(

@@ -26,6 +26,10 @@ class KineticEcoApplication : Application() {
     /**
      * Logs the full stack to Logcat before the process exits. Filter Logcat for [CRASH_LOG_TAG]
      * or "FATAL" to capture the real exception when diagnosing "keeps stopping".
+     *
+     * This chains to [previous], which is Firebase Crashlytics' handler (installed during Firebase's
+     * ContentProvider init, before this runs) — so fatals are still reported to the Crashlytics console
+     * on the user's device. This local logger is just for on-device / adb debugging.
      */
     private fun installUncaughtExceptionLogger() {
         val previous = Thread.getDefaultUncaughtExceptionHandler()

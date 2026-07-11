@@ -1354,6 +1354,13 @@ private fun LeaderboardCompactRow(
         else      -> 30
     }
 
+    // Active-but-zero: the user has recorded activity this window but saved ~0 kg CO₂ (e.g. drives only),
+    // so a bare "0.00 kg" reads as broken/discouraging. Show a dash + an encouraging nudge for their own
+    // row instead. Only for `isMe` — other rows are left as-is.
+    val savedRoundsToZero = entry.co2Conserved < 0.005
+    val recordedActivity = entry.totalSessions > 0 || entry.totalDistance > 0.0
+    val showEncouraging = isMe && savedRoundsToZero && recordedActivity
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -1428,10 +1435,10 @@ private fun LeaderboardCompactRow(
                 overflow = TextOverflow.Ellipsis
             )
 
-            // CO₂ metric
+            // CO₂ metric — a dash instead of "0.00 kg" when this is my own active-but-zero row.
             Column(horizontalAlignment = Alignment.End) {
                 Text(
-                    text = "${entry.co2Conserved.format(2)} kg",
+                    text = if (showEncouraging) "—" else "${entry.co2Conserved.format(2)} kg",
                     style = MaterialTheme.typography.bodySmall,
                     color = if (isTopRank) Green500 else colorScheme.onSurfaceVariant,
                     fontWeight = if (rank == 1) FontWeight.Bold else if (isTopRank) FontWeight.SemiBold else FontWeight.Normal
@@ -1443,6 +1450,16 @@ private fun LeaderboardCompactRow(
                     fontSize = 9.sp
                 )
             }
+        }
+
+        // Encouraging nudge under my own row when I've been active but saved ~0 kg CO₂.
+        if (showEncouraging) {
+            Text(
+                text = stringResource(R.string.leaderboard_climb_nudge),
+                style = MaterialTheme.typography.labelSmall,
+                color = colorScheme.primary,
+                modifier = Modifier.padding(start = 46.dp, top = 2.dp)
+            )
         }
 
         if (!isMe && onReact != null) {

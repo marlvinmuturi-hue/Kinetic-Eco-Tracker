@@ -85,7 +85,9 @@ class SessionManager(private val context: Context) {
             kmMilestonesJson = kmMilestonesJson,
             segmentsJson = segmentsJson,
             routePath = stats.routePath,
-            createdAt = System.currentTimeMillis(),
+            // Real session time (matches `date`), not save-time — createdAt is used downstream as the
+            // session's effective time for date grouping, and as the incremental-sync watermark.
+            createdAt = if (sessionStartTimeMs > 0) sessionStartTimeMs else System.currentTimeMillis(),
             breakdown = breakdownEntity
         )
         
@@ -339,7 +341,7 @@ class SessionManager(private val context: Context) {
             for (doc in docs) {
                 try {
                     val existing = sessionDao.getSessionById(doc.id)
-                    if (existing != null && existing.createdAt >= doc.createdAtMs) {
+                    if (existing != null && existing.createdAt >= doc.timestamp) {
                         Log.d(TAG, "📥 Skipping ${doc.id} - local version newer")
                         continue
                     }
@@ -376,7 +378,9 @@ class SessionManager(private val context: Context) {
                         topSpeedMps = doc.topSpeedMps,
                         kmMilestonesJson = kmMilestonesJson,
                         routePath = routePath,
-                        createdAt = doc.createdAtMs,
+                        // Real session time (doc.timestamp), NOT the Firestore write-time (createdAtMs).
+                        // This self-heals histories whose createdAt was corrupted by a past re-upload.
+                        createdAt = doc.timestamp,
                         breakdown = breakdownEntity
                     )
                     

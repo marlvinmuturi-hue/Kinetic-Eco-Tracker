@@ -145,7 +145,9 @@ class LeaderboardService {
             ?: currentUser?.photoUrl?.toString()?.takeIf { it.isNotBlank() }
             ?: ""
         val now = System.currentTimeMillis()
-        val sessions = firestoreSessionService.fetchSessionsFromFirestore(userId).getOrElse { err ->
+        // lightweight=true: aggregation needs only numeric stats, never the route geometry — skipping it
+        // avoids loading thousands of route points per session across the whole history (OOM guard).
+        val sessions = firestoreSessionService.fetchSessionsFromFirestore(userId, lightweight = true).getOrElse { err ->
             // A transient read failure must NOT overwrite good aggregates with zeros — that is exactly how
             // an active, opted-in user's leaderboard ends up reading 0. Abort the aggregate write.
             Log.w(TAG, "Could not fetch sessions for leaderboard — skipping aggregate write to avoid zeroing: ${err.message}")

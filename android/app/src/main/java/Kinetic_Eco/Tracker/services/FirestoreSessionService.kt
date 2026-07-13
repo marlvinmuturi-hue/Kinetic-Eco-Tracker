@@ -97,7 +97,10 @@ class FirestoreSessionService {
                 "co2Emissions" to (stats.co2Emissions),
                 "co2Conserved" to (stats.co2Conserved),
                 "breakdown" to convertBreakdown(stats),
-                "createdAt" to com.google.firebase.Timestamp.now(),
+                // Use the real session time, NOT Timestamp.now(): createdAt is read back as the session's
+                // effective time (dashboard sessionEndTimeMs). Stamping write-time here meant any re-upload
+                // (backfill/migration) reset it to "now" and collapsed the whole history into the current week.
+                "createdAt" to com.google.firebase.Timestamp(Date(timestampMs)),
                 "userId" to user.uid,
                 "userEmail" to (user.email ?: "unknown"),
                 "elevationGain" to stats.elevationGain,
@@ -197,7 +200,11 @@ class FirestoreSessionService {
      * (incremental sync — avoids re-downloading the full history on every launch).
      * Pass null to fetch the complete collection (e.g. first sync on a fresh install).
      */
-    suspend fun fetchSessionsFromFirestore(userId: String, sinceMs: Long? = null): Result<List<FirestoreSessionDoc>> {
+    suspend fun fetchSessionsFromFirestore(
+        userId: String,
+        sinceMs: Long? = null,
+        lightweight: Boolean = false
+    ): Result<List<FirestoreSessionDoc>> {
         return try {
             val user = auth.currentUser
             if (user == null || user.uid != userId) {
@@ -210,7 +217,9 @@ class FirestoreSessionService {
                 .document(userId)
                 .collection("sessions")
             if (sinceMs != null) {
-                query = query.whereGreaterThan("createdAt", Timestamp(Date(sinceMs)))
+                // Watermark on the real session time (`timestamp`, a Number), not the write-time `createdAt`,
+                // so incremental sync stays event-time consistent and isn't skewed by re-uploaded docs.
+                query = query.whereGreaterThan("timestamp", sinceMs)
             }
 
             Log.d(TAG, "📥 Fetching sessions from Firestore for user: $userId" +
@@ -246,32 +255,39 @@ class FirestoreSessionService {
                     val maxAltitude = (data["maxAltitude"] as? Number)?.toDouble()?.takeIf { it != 0.0 }
                     val topSpeedMps = (data["topSpeedMps"] as? Number)?.toDouble() ?: 0.0
                     
-                    @Suppress("UNCHECKED_CAST")
-                    val routePathRaw = data["routePath"] as? List<Map<String, Any>> ?: emptyList()
-                    val routePath = routePathRaw.mapNotNull fe@{ m ->
-                        val lat = (m["latitude"] as? Number)?.toDouble() ?: return@fe null
-                        val lon = (m["longitude"] as? Number)?.toDouble() ?: return@fe null
-                        val activityStr = m["activity"] as? String
-                        val activity = activityStr?.let { str ->
-                            try { Kinetic_Eco.Tracker.data.ActivityType.valueOf(str) } catch (_: Exception) { null }
+                    // Lightweight callers (e.g. leaderboard aggregation) need only numeric stats, not the
+                    // route geometry — skip parsing/retaining routePath so we don't hold thousands of points
+                    // per session across the whole history (the source of the dashboard OOM).
+                    val routePath = if (lightweight) emptyList() else {
+                        @Suppress("UNCHECKED_CAST")
+                        val routePathRaw = data["routePath"] as? List<Map<String, Any>> ?: emptyList()
+                        routePathRaw.mapNotNull fe@{ m ->
+                            val lat = (m["latitude"] as? Number)?.toDouble() ?: return@fe null
+                            val lon = (m["longitude"] as? Number)?.toDouble() ?: return@fe null
+                            val activityStr = m["activity"] as? String
+                            val activity = activityStr?.let { str ->
+                                try { Kinetic_Eco.Tracker.data.ActivityType.valueOf(str) } catch (_: Exception) { null }
+                            }
+                            val alt = (m["altitude"] as? Number)?.toDouble()
+                                ?: (m["altitudeMeters"] as? Number)?.toDouble()
+                            val altitudeMeters = alt?.takeIf { it.isFinite() }
+                            Kinetic_Eco.Tracker.data.RoutePoint(
+                                latitude = lat,
+                                longitude = lon,
+                                activity = activity,
+                                altitudeMeters = altitudeMeters
+                            )
                         }
-                        val alt = (m["altitude"] as? Number)?.toDouble()
-                            ?: (m["altitudeMeters"] as? Number)?.toDouble()
-                        val altitudeMeters = alt?.takeIf { it.isFinite() }
-                        Kinetic_Eco.Tracker.data.RoutePoint(
-                            latitude = lat,
-                            longitude = lon,
-                            activity = activity,
-                            altitudeMeters = altitudeMeters
-                        )
                     }
                     
-                    @Suppress("UNCHECKED_CAST")
-                    val kmMilestonesRaw = data["kmMilestones"] as? List<Map<String, Any>> ?: emptyList()
-                    val kmMilestones = kmMilestonesRaw.mapNotNull km@{ m ->
-                        val kmVal = (m["km"] as? Number)?.toInt() ?: return@km null
-                        val secondsVal = (m["secondsForKm"] as? Number)?.toLong() ?: return@km null
-                        KmMilestone(km = kmVal, secondsForKm = secondsVal)
+                    val kmMilestones = if (lightweight) emptyList() else {
+                        @Suppress("UNCHECKED_CAST")
+                        val kmMilestonesRaw = data["kmMilestones"] as? List<Map<String, Any>> ?: emptyList()
+                        kmMilestonesRaw.mapNotNull km@{ m ->
+                            val kmVal = (m["km"] as? Number)?.toInt() ?: return@km null
+                            val secondsVal = (m["secondsForKm"] as? Number)?.toLong() ?: return@km null
+                            KmMilestone(km = kmVal, secondsForKm = secondsVal)
+                        }
                     }
                     
                     FirestoreSessionDoc(

@@ -31,3 +31,7 @@ local.properties
 
 
 
+
+# Local device pulls (APK + DB) — never commit
+device-apk/
+device-db/

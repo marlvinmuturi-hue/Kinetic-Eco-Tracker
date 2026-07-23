@@ -38,8 +38,14 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
     private val _leaderboardEntries = MutableStateFlow<List<LeaderboardEntry>>(emptyList())
     val leaderboardEntries: StateFlow<List<LeaderboardEntry>> = _leaderboardEntries.asStateFlow()
 
-    /** Default rolling window so the day wheel is enabled (All time would disable the wheel). */
-    private val _leaderboardPeriod = MutableStateFlow<LeaderboardPeriod>(LeaderboardPeriod.Rolling(30))
+    /**
+     * The dashboard's compact leaderboard row is the only surface that renders entries, and it always
+     * wants the current calendar week. The default must therefore match it: [loadLeaderboard] reads this
+     * at call time, and `autoOptInOnLogin` loads without setting a period first, so any other default
+     * races the dashboard's own load and can win — which is how a 30-day total ended up under a
+     * weekly heading.
+     */
+    private val _leaderboardPeriod = MutableStateFlow<LeaderboardPeriod>(LeaderboardPeriod.ThisWeek)
     val leaderboardPeriod: StateFlow<LeaderboardPeriod> = _leaderboardPeriod.asStateFlow()
 
     /**
@@ -184,7 +190,7 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
     fun toggleLeaderboardAllTime() {
         _leaderboardSessionDayKey.value = null
         _leaderboardPeriod.value = if (_leaderboardPeriod.value is LeaderboardPeriod.AllTime) {
-            LeaderboardPeriod.Rolling(30)
+            LeaderboardPeriod.ThisWeek
         } else {
             LeaderboardPeriod.AllTime
         }
@@ -198,7 +204,7 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
     fun setLeaderboardSingleDay(dateKey: String) {
         _leaderboardSessionDayKey.value = dateKey
         if (_leaderboardPeriod.value is LeaderboardPeriod.AllTime) {
-            _leaderboardPeriod.value = LeaderboardPeriod.Rolling(30)
+            _leaderboardPeriod.value = LeaderboardPeriod.ThisWeek
         }
     }
 

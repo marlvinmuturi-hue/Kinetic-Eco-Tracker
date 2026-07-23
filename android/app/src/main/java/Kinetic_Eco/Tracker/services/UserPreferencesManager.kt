@@ -177,6 +177,22 @@ class UserPreferencesManager(context: Context) {
 
         /** Set after the user manually dismisses the "start your first trip" dashboard hint. */
         private const val KEY_FIRST_TRIP_PROMPT_DISMISSED = "kinetic_first_trip_prompt_dismissed"
+
+        /**
+         * Per-badge high-water-mark of the tier the user has already been congratulated for
+         * (stored as [Kinetic_Eco.Tracker.data.BadgeTier.ordinal]; -1 = never celebrated). Suffixed
+         * with the badge id (e.g. "badge_celebrated_tier_co2"). The achievement pop-up fires only
+         * when a freshly-earned tier exceeds this mark, so a user is celebrated once per new personal
+         * best rather than every week they re-earn the same tier.
+         */
+        private const val KEY_BADGE_CELEBRATED_TIER_PREFIX = "badge_celebrated_tier_"
+
+        /**
+         * True once we've recorded the user's already-earned badges as the celebration baseline. Set
+         * on first run of the badge-celebration feature so existing achievements are not all popped
+         * up at once — only tiers earned *after* baselining trigger the pop-up.
+         */
+        private const val KEY_BADGES_CELEBRATION_BASELINE_DONE = "kinetic_badges_celebration_baseline_done"
     }
     
     /**
@@ -607,6 +623,21 @@ class UserPreferencesManager(context: Context) {
 
     fun setHeroEquivalencyHintSeen() {
         prefs.edit().putBoolean(KEY_HERO_EQUIVALENCY_HINT_SEEN, true).apply()
+    }
+
+    /** Tier ordinal already celebrated for [badgeId] (-1 = never). See [KEY_BADGE_CELEBRATED_TIER_PREFIX]. */
+    fun getCelebratedBadgeTier(badgeId: String): Int =
+        prefs.getInt(KEY_BADGE_CELEBRATED_TIER_PREFIX + badgeId, -1)
+
+    fun setCelebratedBadgeTier(badgeId: String, tierOrdinal: Int) {
+        prefs.edit().putInt(KEY_BADGE_CELEBRATED_TIER_PREFIX + badgeId, tierOrdinal).apply()
+    }
+
+    fun isBadgeCelebrationBaselineDone(): Boolean =
+        prefs.getBoolean(KEY_BADGES_CELEBRATION_BASELINE_DONE, false)
+
+    fun setBadgeCelebrationBaselineDone() {
+        prefs.edit().putBoolean(KEY_BADGES_CELEBRATION_BASELINE_DONE, true).apply()
     }
 
     fun hasFirstTripPromptBeenDismissed(): Boolean =

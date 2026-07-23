@@ -37,7 +37,8 @@ data class FirestoreSessionDoc(
     val maxAltitude: Double? = null,
     val topSpeedMps: Double = 0.0,
     val routePath: List<Kinetic_Eco.Tracker.data.RoutePoint> = emptyList(),
-    val kmMilestones: List<KmMilestone> = emptyList()
+    val kmMilestones: List<KmMilestone> = emptyList(),
+    val segments: List<Kinetic_Eco.Tracker.data.ActivitySegment> = emptyList()
 )
 
 /**
@@ -289,7 +290,33 @@ class FirestoreSessionService {
                             KmMilestone(km = kmVal, secondsForKm = secondsVal)
                         }
                     }
-                    
+
+                    // Segments power the post-session "Mode timeline" (reclassify a segment's activity).
+                    // Firestore stores them at save time; without parsing them back here, restored sessions
+                    // lose all segments and the Mode-timeline card never appears.
+                    val segments = if (lightweight) emptyList() else {
+                        @Suppress("UNCHECKED_CAST")
+                        val segRaw = data["segments"] as? List<Map<String, Any>> ?: emptyList()
+                        segRaw.mapNotNull sg@{ m ->
+                            val typeStr = m["type"] as? String ?: return@sg null
+                            val type = try { Kinetic_Eco.Tracker.data.ActivityType.valueOf(typeStr) } catch (_: Exception) { return@sg null }
+                            val startTime = (m["startTime"] as? Number)?.toLong() ?: return@sg null
+                            val endTime = (m["endTime"] as? Number)?.toLong() ?: return@sg null
+                            val corrected = (m["userCorrectedType"] as? String)
+                                ?.takeIf { it.isNotEmpty() }
+                                ?.let { try { Kinetic_Eco.Tracker.data.ActivityType.valueOf(it) } catch (_: Exception) { null } }
+                            Kinetic_Eco.Tracker.data.ActivitySegment(
+                                type = type,
+                                startTime = startTime,
+                                endTime = endTime,
+                                distance = (m["distance"] as? Number)?.toDouble() ?: 0.0,
+                                avgSpeed = (m["avgSpeed"] as? Number)?.toDouble() ?: 0.0,
+                                comment = m["comment"] as? String ?: "",
+                                userCorrectedType = corrected
+                            )
+                        }
+                    }
+
                     FirestoreSessionDoc(
                         id = doc.id,
                         timestamp = timestamp,
@@ -309,7 +336,8 @@ class FirestoreSessionService {
                         maxAltitude = maxAltitude,
                         topSpeedMps = topSpeedMps,
                         routePath = routePath,
-                        kmMilestones = kmMilestones
+                        kmMilestones = kmMilestones,
+                        segments = segments
                     )
                 } catch (e: Exception) {
                     Log.e(TAG, "Failed to parse Firestore doc ${doc.id}", e)

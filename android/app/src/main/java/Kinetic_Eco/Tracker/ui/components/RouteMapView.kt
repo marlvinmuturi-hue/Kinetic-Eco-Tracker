@@ -117,8 +117,13 @@ private fun RouteMapLegendLabel(text: String, color: Color) {
  */
 private fun routePathsContentSignature(paths: List<List<RoutePoint>>): String =
     paths.joinToString("|") { path ->
+        // The activity hash is essential, not decorative: reclassifying a segment changes only
+        // interior points' `activity`, leaving size and endpoints identical. Without it the
+        // signature is unchanged, LaunchedEffect(routeSignature) never re-fires, and the polylines
+        // keep their old colours until the screen is re-entered.
         "${path.size}_${path.firstOrNull()?.latitude}_${path.firstOrNull()?.longitude}_" +
-            "${path.lastOrNull()?.latitude}_${path.lastOrNull()?.longitude}"
+            "${path.lastOrNull()?.latitude}_${path.lastOrNull()?.longitude}_" +
+            "${path.map { it.activity }.hashCode()}"
     }
 
 /**
@@ -328,7 +333,8 @@ fun RouteMapMultiSessionView(
 fun RouteMapView(
     routePath: List<RoutePoint>,
     modifier: Modifier = Modifier.fillMaxWidth(),
-    heightDp: Int = 250
+    heightDp: Int = 250,
+    showElevationProfile: Boolean = true
 ) {
     val paths = remember(routePath) {
         if (routePath.isEmpty()) emptyList() else listOf(routePath)
@@ -337,6 +343,6 @@ fun RouteMapView(
         routePaths = paths,
         modifier = modifier,
         heightDp = heightDp,
-        showElevationProfile = true
+        showElevationProfile = showElevationProfile
     )
 }

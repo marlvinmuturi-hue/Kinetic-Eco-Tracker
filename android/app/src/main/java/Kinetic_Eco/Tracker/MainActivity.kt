@@ -43,6 +43,7 @@ import Kinetic_Eco.Tracker.data.UnitSystem
 import Kinetic_Eco.Tracker.navigation.AppNavGraph
 import Kinetic_Eco.Tracker.navigation.Screen
 import Kinetic_Eco.Tracker.ui.components.AdMobBanner
+import Kinetic_Eco.Tracker.ui.components.AppOpenAdManager
 import Kinetic_Eco.Tracker.ui.components.BatteryReliabilityDialog
 import Kinetic_Eco.Tracker.ui.components.BottomNavigationBar
 import Kinetic_Eco.Tracker.ui.components.ConsentManager
@@ -245,7 +246,19 @@ class MainActivity : AppCompatActivity() {
                     val navController = rememberNavController()
                     val navBackStackEntry by navController.currentBackStackEntryAsState()
                     currentRoute = navBackStackEntry?.destination?.route
-                    
+
+                    // Keep the App Open ad gate in sync with whether the user is in the main app.
+                    // App-open ads must not cover the consent form, login, terms, or onboarding —
+                    // AppOpenAdManager only shows a foreground ad while gateOpen is true.
+                    LaunchedEffect(currentUser, currentRoute) {
+                        val inPreAppFlow = currentRoute == Screen.Login.route ||
+                            currentRoute == Screen.Terms.route ||
+                            currentRoute == Screen.OnboardingWelcome.route ||
+                            currentRoute == Screen.OnboardingPermissions.route ||
+                            currentRoute == Screen.OnboardingProfile.route
+                        AppOpenAdManager.gateOpen = currentUser != null && currentRoute != null && !inPreAppFlow
+                    }
+
                     // Navigate to Tracker when user logs in (avoids dynamic startDestination issues)
                     // Restore sessions from Firestore on login and app launch (when user is logged in)
                     LaunchedEffect(currentUser) {
@@ -651,6 +664,9 @@ class MainActivity : AppCompatActivity() {
 
     /** Opens Play Store app listing — swap for Play Billing / paywall when ready. */
     private fun openPremiumOrStoreListing() {
+        // Leaving for the Play Store / web listing is app-initiated — suppress the App Open ad that
+        // would otherwise fire when the user returns.
+        AppOpenAdManager.suppressNextForegroundAd()
         val pkg = packageName
         val marketUri = Uri.parse("market://details?id=$pkg")
         val webUri = Uri.parse("https://play.google.com/store/apps/details?id=$pkg")
@@ -699,6 +715,9 @@ class MainActivity : AppCompatActivity() {
     }
     
     fun launchGoogleSignIn() {
+        // Returning from the Google account picker is a return from an app-initiated external flow,
+        // not a fresh app open — do not let an App Open ad cover the sign-in result.
+        AppOpenAdManager.suppressNextForegroundAd()
         val signInIntent = authViewModel.getGoogleSignInClient().signInIntent
         googleSignInLauncher.launch(signInIntent)
     }

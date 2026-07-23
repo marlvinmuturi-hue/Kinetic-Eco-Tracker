@@ -339,7 +339,12 @@ class LocationService(private val context: Context) {
             altitude = if (hasAltitude()) altitude else null,
             speed = speed,
             timestamp = time,
-            accuracy = accuracy
+            accuracy = accuracy,
+            // Vertical accuracy is API 26+ and only present on some providers; null when unavailable
+            // so the altitude pipeline can fall back to its own gating.
+            verticalAccuracy = if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.O &&
+                hasVerticalAccuracy()
+            ) verticalAccuracyMeters else null
         )
     }
 }

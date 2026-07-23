@@ -20,29 +20,11 @@ object AchievementComputer {
         TierDef(BadgeTier.GOLD,    15.0),
         TierDef(BadgeTier.DIAMOND, 30.0)
     )
-    private val HOURS = listOf(
-        TierDef(BadgeTier.BRONZE,  1.0),
-        TierDef(BadgeTier.SILVER,  3.0),
-        TierDef(BadgeTier.GOLD,    6.0),
-        TierDef(BadgeTier.DIAMOND, 12.0)
-    )
     private val STREAK_DAYS = listOf(
         TierDef(BadgeTier.BRONZE,  3.0),
         TierDef(BadgeTier.SILVER,  7.0),
         TierDef(BadgeTier.GOLD,    14.0),
         TierDef(BadgeTier.DIAMOND, 30.0)
-    )
-    private val CALORIES = listOf(
-        TierDef(BadgeTier.BRONZE,  200.0),
-        TierDef(BadgeTier.SILVER,  500.0),
-        TierDef(BadgeTier.GOLD,    1000.0),
-        TierDef(BadgeTier.DIAMOND, 2000.0)
-    )
-    private val ELEVATION_M = listOf(
-        TierDef(BadgeTier.BRONZE,  50.0),
-        TierDef(BadgeTier.SILVER,  200.0),
-        TierDef(BadgeTier.GOLD,    500.0),
-        TierDef(BadgeTier.DIAMOND, 1000.0)
     )
 
     fun compute(
@@ -50,31 +32,19 @@ object AchievementComputer {
         @Suppress("UNUSED_PARAMETER") allSessions: List<SessionStats>,
         streakDays: Int
     ): List<AchievementBadge> {
-        val weekDistKm   = weekSessions.sumOf { it.totalDistance } / 1000.0
-        val weekCo2Kg    = weekSessions.sumOf { it.co2Conserved }
-        val weekHours    = weekSessions.sumOf { it.totalDuration } / 3600.0
-        val weekCalories = weekSessions.sumOf { it.caloriesBurned }
-        val weekElevM    = weekSessions.sumOf { it.elevationGain }
+        val weekDistKm = weekSessions.sumOf { it.totalDistance } / 1000.0
+        val weekCo2Kg  = weekSessions.sumOf { it.co2Conserved }
 
         return listOf(
-            badge("distance", "🏃", "Distance Champion",
-                "Eco km covered this week",
-                weekDistKm, DISTANCE_KM, "km"),
             badge("co2", "🌿", "CO₂ Hero",
                 "CO₂ conserved this week",
                 weekCo2Kg, CO2_KG, "kg"),
-            badge("time", "⏱️", "Active Timer",
-                "Hours active this week",
-                weekHours, HOURS, "hrs"),
             badge("streak", "🔥", "Green Streak",
                 "Consecutive eco-friendly days",
                 streakDays.toDouble(), STREAK_DAYS, "days"),
-            badge("calories", "💪", "Calorie Crusher",
-                "Calories burned this week",
-                weekCalories, CALORIES, "kcal"),
-            badge("elevation", "🏔️", "Peak Climber",
-                "Elevation gained this week",
-                weekElevM, ELEVATION_M, "m"),
+            badge("distance", "🏃", "Distance Champion",
+                "Eco km covered this week",
+                weekDistKm, DISTANCE_KM, "km"),
         )
     }
 

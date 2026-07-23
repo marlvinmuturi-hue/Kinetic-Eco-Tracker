@@ -32,12 +32,34 @@ sealed class LeaderboardPeriod {
         }
     }
 
+    /**
+     * Current calendar week, local Monday 00:00 → now — the same window the dashboard's
+     * Weekly Report card uses. [Rolling] windows are anchored to the wall clock instead
+     * (7d = now − 168h), so they reach back into the previous week and can never agree
+     * with the weekly report; this period is what the two surfaces share.
+     */
+    data object ThisWeek : LeaderboardPeriod()
+
     data object AllTime : LeaderboardPeriod()
 }
 
 private fun LeaderboardPeriod.fieldSuffix(): String = when (this) {
     is LeaderboardPeriod.Rolling -> "${days}d"
+    LeaderboardPeriod.ThisWeek -> "ThisWeek"
     LeaderboardPeriod.AllTime -> "AllTime"
+}
+
+/** Local Monday 00:00 of the calendar week containing [now]. Mirrors DashboardScreen's `thisWeekCutoff`. */
+private fun startOfCalendarWeekMs(now: Long): Long {
+    val cal = java.util.Calendar.getInstance()
+    cal.timeInMillis = now
+    cal.set(java.util.Calendar.HOUR_OF_DAY, 0)
+    cal.set(java.util.Calendar.MINUTE, 0)
+    cal.set(java.util.Calendar.SECOND, 0)
+    cal.set(java.util.Calendar.MILLISECOND, 0)
+    val daysFromMonday = (cal.get(java.util.Calendar.DAY_OF_WEEK) - java.util.Calendar.MONDAY + 7) % 7
+    cal.add(java.util.Calendar.DAY_OF_YEAR, -daysFromMonday)
+    return cal.timeInMillis
 }
 
 /**
@@ -181,42 +203,17 @@ class LeaderboardService {
         for (days in 366 downTo 1) {
             val cutoff = now - days * oneDayMs
             while (lo < sortedAsc.size && sortedAsc[lo].timestamp < cutoff) lo++
-            val stats = aggregateSessions(sortedAsc.subList(lo, sortedAsc.size))
-            val score = LeaderboardEntry.computeScore(
-                stats.totalDistance,
-                stats.co2Conserved,
-                stats.totalSessions
-            )
-            val suffix = "${days}d"
-            entry["score$suffix"] = score
-            entry["totalDistance$suffix"] = stats.totalDistance
-            entry["totalSessions$suffix"] = stats.totalSessions
-            entry["co2Conserved$suffix"] = stats.co2Conserved
-            entry["co2Emissions$suffix"] = stats.co2Emissions
-            entry["topSpeedMps$suffix"] = stats.topSpeedMps
-            entry["distanceWalking$suffix"] = stats.distanceWalking
-            entry["distanceRunning$suffix"] = stats.distanceRunning
-            entry["distanceCycling$suffix"] = stats.distanceCycling
+            entry.putStats("${days}d", aggregateSessions(sortedAsc.subList(lo, sortedAsc.size)))
         }
 
-        run {
-            val stats = aggregateSessions(sessions)
-            val score = LeaderboardEntry.computeScore(
-                stats.totalDistance,
-                stats.co2Conserved,
-                stats.totalSessions
-            )
-            val suffix = "AllTime"
-            entry["score$suffix"] = score
-            entry["totalDistance$suffix"] = stats.totalDistance
-            entry["totalSessions$suffix"] = stats.totalSessions
-            entry["co2Conserved$suffix"] = stats.co2Conserved
-            entry["co2Emissions$suffix"] = stats.co2Emissions
-            entry["topSpeedMps$suffix"] = stats.topSpeedMps
-            entry["distanceWalking$suffix"] = stats.distanceWalking
-            entry["distanceRunning$suffix"] = stats.distanceRunning
-            entry["distanceCycling$suffix"] = stats.distanceCycling
-        }
+        // Calendar week-to-date (local Monday 00:00 → now), so the dashboard's leaderboard row and its
+        // Weekly Report card sum the same sessions. sortedAsc is ascending, so the first index at or
+        // after the cutoff bounds the window without another full scan.
+        val weekStart = startOfCalendarWeekMs(now)
+        val weekLo = sortedAsc.indexOfFirst { it.timestamp >= weekStart }.takeIf { it >= 0 } ?: sortedAsc.size
+        entry.putStats("ThisWeek", aggregateSessions(sortedAsc.subList(weekLo, sortedAsc.size)))
+
+        entry.putStats("AllTime", aggregateSessions(sessions))
 
         firestore.collection("leaderboard").document(userId)
             .set(entry, SetOptions.merge())
@@ -235,6 +232,23 @@ class LeaderboardService {
             Log.e(TAG, "Update leaderboard failed", e)
             Result.failure(e as? Exception ?: Exception(e.message ?: "Update leaderboard failed"))
         }
+    }
+
+    /** Write one window's aggregate into the entry map under the given field suffix (e.g. "7d", "ThisWeek"). */
+    private fun HashMap<String, Any>.putStats(suffix: String, stats: AggregatedStats) {
+        this["score$suffix"] = LeaderboardEntry.computeScore(
+            stats.totalDistance,
+            stats.co2Conserved,
+            stats.totalSessions
+        )
+        this["totalDistance$suffix"] = stats.totalDistance
+        this["totalSessions$suffix"] = stats.totalSessions
+        this["co2Conserved$suffix"] = stats.co2Conserved
+        this["co2Emissions$suffix"] = stats.co2Emissions
+        this["topSpeedMps$suffix"] = stats.topSpeedMps
+        this["distanceWalking$suffix"] = stats.distanceWalking
+        this["distanceRunning$suffix"] = stats.distanceRunning
+        this["distanceCycling$suffix"] = stats.distanceCycling
     }
 
     private fun aggregateSessions(docs: List<FirestoreSessionDoc>): AggregatedStats {
@@ -323,6 +337,21 @@ class LeaderboardService {
     ): Result<List<LeaderboardEntry>> = withContext(Dispatchers.IO) {
         try {
             val suffix = period.fieldSuffix()
+            // `…ThisWeek` fields only exist on entries written by a client that has this code. An entry
+            // last synced by an older build has none, and would read 0.00 and look inactive. Fall back to
+            // the rolling window covering the same days (Monday..today) so those rows stay populated —
+            // approximate at its far edge (it reaches back to this time-of-day last Sunday rather than to
+            // Monday 00:00), but far better than showing a real user as zero. Exact once they upgrade.
+            val fallbackSuffix = if (period is LeaderboardPeriod.ThisWeek) {
+                val cal = java.util.Calendar.getInstance()
+                val daysFromMonday = (cal.get(java.util.Calendar.DAY_OF_WEEK) - java.util.Calendar.MONDAY + 7) % 7
+                "${daysFromMonday + 1}d"
+            } else null
+
+            /** Value for [base] at the active suffix, falling back to the rolling field when absent. */
+            fun Map<String, Any>.window(base: String): Number? =
+                (this["$base$suffix"] as? Number)
+                    ?: fallbackSuffix?.let { this["$base$it"] as? Number }
 
             val snapshot = firestore.collection("leaderboard").get().await()
 
@@ -334,30 +363,21 @@ class LeaderboardService {
                     chunk.map { doc ->
                         async {
                             val d = doc.data ?: return@async LeaderboardEntry(userId = doc.id)
-                            val distKey = "totalDistance$suffix"
-                            val sessionsKey = "totalSessions$suffix"
-                            val co2Key = "co2Conserved$suffix"
-                            val emitKey = "co2Emissions$suffix"
-                            val scoreKey = "score$suffix"
-                            val topSpeedKey = "topSpeedMps$suffix"
-                            val walkKey = "distanceWalking$suffix"
-                            val runKey = "distanceRunning$suffix"
-                            val cycleKey = "distanceCycling$suffix"
                             val reactions = fetchReactionsForEntry(doc.id)
                             LeaderboardEntry(
                                 userId = doc.id,
                                 displayName = d["displayName"] as? String,
                                 photoUrl = d["photoUrl"] as? String,
-                                totalDistance = (d[distKey] as? Number)?.toDouble() ?: 0.0,
-                                totalSessions = (d[sessionsKey] as? Number)?.toInt() ?: 0,
-                                co2Conserved = (d[co2Key] as? Number)?.toDouble() ?: 0.0,
-                                co2Emissions = (d[emitKey] as? Number)?.toDouble() ?: 0.0,
-                                score = (d[scoreKey] as? Number)?.toDouble() ?: 0.0,
+                                totalDistance = d.window("totalDistance")?.toDouble() ?: 0.0,
+                                totalSessions = d.window("totalSessions")?.toInt() ?: 0,
+                                co2Conserved = d.window("co2Conserved")?.toDouble() ?: 0.0,
+                                co2Emissions = d.window("co2Emissions")?.toDouble() ?: 0.0,
+                                score = d.window("score")?.toDouble() ?: 0.0,
                                 rank = 0,
-                                topSpeedMps = (d[topSpeedKey] as? Number)?.toDouble() ?: 0.0,
-                                distanceWalking = (d[walkKey] as? Number)?.toDouble() ?: 0.0,
-                                distanceRunning = (d[runKey] as? Number)?.toDouble() ?: 0.0,
-                                distanceCycling = (d[cycleKey] as? Number)?.toDouble() ?: 0.0,
+                                topSpeedMps = d.window("topSpeedMps")?.toDouble() ?: 0.0,
+                                distanceWalking = d.window("distanceWalking")?.toDouble() ?: 0.0,
+                                distanceRunning = d.window("distanceRunning")?.toDouble() ?: 0.0,
+                                distanceCycling = d.window("distanceCycling")?.toDouble() ?: 0.0,
                                 reactions = reactions
                             )
                         }

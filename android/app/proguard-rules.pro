@@ -1,41 +1,72 @@
-# Add project specific ProGuard rules here.
-# You can control the set of applied configuration files using the
-# proguardFiles setting in build.gradle.
+# ============================================================================
+# R8 / ProGuard rules for Kinetic Eco Tracker (release shrinking + optimization)
+# ============================================================================
+# Enabled with isMinifyEnabled=true (see app/build.gradle.kts). R8 renames and
+# removes members it thinks are unused; anything touched by REFLECTION or by
+# NAME-BASED (de)serialization must be kept, or it breaks silently at runtime.
 #
-# For more details, see
-#   http://developer.android.com/guide/developing/tools/proguard.html
+# This app's reflection surface:
+#   - Gson serializes model classes by field name (Room JSON columns + caches).
+#   - Enums are persisted by .name / read back via valueOf() (Firestore, prefs).
+#   - Firestore itself uses MANUAL maps (string-literal keys), so it needs no
+#     model keeps — but the enums and Gson models it round-trips still do.
+# Existing users already have data on disk written with the REAL field/enum
+# names (current shipping build is un-minified), so renaming these would make
+# that data unreadable after an R8 release. Keeping the data package verbatim
+# guarantees forward/backward compatibility.
 
-# If your project uses WebView with JS, uncomment the following
-# and specify the fully qualified class name to the JavaScript interface
-# class:
-#-keepclassmembers class fqcn.of.javascript.interface.for.webview {
-#   public *;
-#}
+# --- Attributes ---------------------------------------------------------------
+# Signature: required for Gson TypeToken<...> generic resolution.
+# *Annotation*/Inner/Enclosing: keep annotations & nested-class metadata.
+# SourceFile/LineNumberTable: readable crash stack traces (Crashlytics uploads
+#   the mapping file via its Gradle plugin, but keeping line numbers is belt-and-braces).
+-keepattributes Signature,*Annotation*,EnclosingMethod,InnerClasses,SourceFile,LineNumberTable
+-renamesourcefileattribute SourceFile
 
-# Uncomment this to preserve the line number information for
-# debugging stack traces.
-#-keepattributes SourceFile,LineNumberTable
+# --- App data models & enums (name-based (de)serialization) -------------------
+# Keep classes AND members verbatim so Gson field names and enum constant names
+# never change. Covers KmMilestone, ActivitySegment, RoutePoint, SessionEntity,
+# ActivityBreakdownEntity, and enums ActivityType / Gender / UnitSystem /
+# LeaderboardCategory (persisted via valueOf).
+-keep class Kinetic_Eco.Tracker.data.** { *; }
 
-# If you keep the line number information, uncomment this to
-# hide the original source file name.
-#-renamesourcefileattribute SourceFile
+# Defensive: keep every enum's values()/valueOf() app-wide (used with runtime strings).
+-keepclassmembers enum * {
+    public static **[] values();
+    public static ** valueOf(java.lang.String);
+    <fields>;
+}
 
-# Firebase
+# Honour androidx @Keep anywhere it's used.
+-keep,allowobfuscation @interface androidx.annotation.Keep
+-keep @androidx.annotation.Keep class * { *; }
+-keepclassmembers class * {
+    @androidx.annotation.Keep *;
+}
+
+# --- Gson --------------------------------------------------------------------
+# Official Gson R8 rules: keep its reflective internals and TypeToken machinery.
+-keep class com.google.gson.reflect.TypeToken { *; }
+-keep class * extends com.google.gson.reflect.TypeToken
+-keep public class com.google.gson.** { *; }
+-dontwarn com.google.gson.**
+# Prevent R8 from stripping fields of any @SerializedName-annotated class.
+-keepclassmembers,allowobfuscation class * {
+    @com.google.gson.annotations.SerializedName <fields>;
+}
+
+# --- Firebase / Google Play services -----------------------------------------
+# Broad keep (already present pre-R8). Safe; the SDKs also ship consumer rules.
 -keep class com.google.firebase.** { *; }
 -keep class com.google.android.gms.** { *; }
 -dontwarn com.google.firebase.**
 -dontwarn com.google.android.gms.**
 
+# --- osmdroid (maps) ----------------------------------------------------------
+# osmdroid touches resources/config reflectively in places; keep it whole to be safe.
+-keep class org.osmdroid.** { *; }
+-dontwarn org.osmdroid.**
 
-
-
-
-
-
-
-
-
-
-
-
-
+# --- Kotlin coroutines --------------------------------------------------------
+-keepclassmembers class kotlinx.coroutines.** { volatile <fields>; }
+-dontwarn kotlinx.coroutines.**

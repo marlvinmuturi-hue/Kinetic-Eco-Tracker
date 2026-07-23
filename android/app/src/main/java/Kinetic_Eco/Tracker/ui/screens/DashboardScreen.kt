@@ -81,11 +81,18 @@ import kotlin.math.abs
 import kotlin.math.max
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.style.TextOverflow
 import Kinetic_Eco.Tracker.data.AchievementBadge
 import Kinetic_Eco.Tracker.data.BadgeTier
 import Kinetic_Eco.Tracker.util.AchievementComputer
+import Kinetic_Eco.Tracker.ui.components.BadgeDetailDialog
+import Kinetic_Eco.Tracker.ui.components.badgeArtworkDrawableRes
+import Kinetic_Eco.Tracker.ui.components.badgeFmtVal
+import Kinetic_Eco.Tracker.ui.components.badgeTierColor
 
 private val EMOJI_REACTIONS = listOf(
     "fire" to "🔥",
@@ -236,6 +243,42 @@ fun DashboardScreen(
         AchievementComputer.compute(weekSessions, allSessions, greenStreakDays)
     }
 
+    // Badge that the user tapped to magnify/share (null = none open).
+    var selectedBadge by remember { mutableStateOf<AchievementBadge?>(null) }
+    // Newly-earned badges awaiting their "Achievement Unlocked!" pop-up, best tier first.
+    val celebrationQueue = remember { mutableStateListOf<AchievementBadge>() }
+
+    // One-time baseline: silently record the badges an existing user has *already* earned so the
+    // feature's first run doesn't pop up every historical achievement at once. It runs off a short
+    // delay and reads the latest achievements so it settles against loaded session data, not the
+    // empty first frame (otherwise a pre-earned badge would look freshly unlocked once data arrives).
+    val latestAchievements by rememberUpdatedState(achievements)
+    LaunchedEffect(Unit) {
+        if (userPrefsManager.isBadgeCelebrationBaselineDone()) return@LaunchedEffect
+        kotlinx.coroutines.delay(1200)
+        latestAchievements.filter { it.isEarned }.forEach {
+            userPrefsManager.setCelebratedBadgeTier(it.id, it.tier.ordinal)
+        }
+        userPrefsManager.setBadgeCelebrationBaselineDone()
+    }
+
+    // Detect freshly-earned tiers and enqueue a celebration. Gated on the baseline so it stays quiet
+    // until the historical state is recorded; after that a badge is celebrated only when it reaches a
+    // tier above its stored high-water mark (so re-earning the same tier next week doesn't nag —
+    // matches the app's minimal-intrusion tone).
+    LaunchedEffect(achievements) {
+        if (!userPrefsManager.isBadgeCelebrationBaselineDone()) return@LaunchedEffect
+        val newlyEarned = achievements
+            .filter { it.isEarned && it.tier.ordinal > userPrefsManager.getCelebratedBadgeTier(it.id) }
+            .sortedByDescending { it.tier.ordinal }
+        newlyEarned.forEach { badge ->
+            userPrefsManager.setCelebratedBadgeTier(badge.id, badge.tier.ordinal)
+            if (celebrationQueue.none { it.id == badge.id && it.tier == badge.tier }) {
+                celebrationQueue.add(badge)
+            }
+        }
+    }
+
     // Profile + leaderboard
     val profile by profileViewModel.profile.collectAsStateWithLifecycle()
     val leaderboardEntries by profileViewModel.leaderboardEntries.collectAsStateWithLifecycle()
@@ -245,8 +288,10 @@ fun DashboardScreen(
         if (userId.isNotEmpty()) {
             profileViewModel.loadProfile(userId)
             // Category is fixed (CO₂ saved) — no setLeaderboardCategory call needed.
-            profileViewModel.setLeaderboardPeriod(LeaderboardPeriod.Rolling(7))
-            // refresh own entry if opted in (so co2Conserved7d reflects the latest
+            // ThisWeek, not Rolling(7): the Weekly Report card above resets each Monday, so a
+            // rolling 7-day leaderboard would silently count days the card excludes.
+            profileViewModel.setLeaderboardPeriod(LeaderboardPeriod.ThisWeek)
+            // refresh own entry if opted in (so co2ConservedThisWeek reflects the latest
             // synced sessions), then reload the list. This is the safety net for
             // users who opted in before sessions had a chance to sync to Firestore.
             profileViewModel.refreshLeaderboardIfOptedIn(userId)
@@ -414,10 +459,30 @@ fun DashboardScreen(
 
         // ── Achievement badges ────────────────────────────────────────────────
         item {
-            AchievementBadgesCard(achievements = achievements)
+            AchievementBadgesCard(
+                achievements = achievements,
+                onBadgeClick = { selectedBadge = it }
+            )
         }
 
         item { Spacer(Modifier.height(80.dp)) }
+    }
+
+    // ── Achievement badge dialog (magnify + share) ──────────────────────────
+    // A queued milestone celebration takes priority over a tapped badge. Both
+    // reuse BadgeDetailDialog; celebration = true adds the "unlocked" header.
+    val celebrating = celebrationQueue.firstOrNull()
+    when {
+        celebrating != null -> BadgeDetailDialog(
+            badge = celebrating,
+            celebration = true,
+            onDismiss = { celebrationQueue.removeAt(0) }
+        )
+        selectedBadge != null -> BadgeDetailDialog(
+            badge = selectedBadge!!,
+            celebration = false,
+            onDismiss = { selectedBadge = null }
+        )
     }
 
     // ── Weekly goal dialog ──────────────────────────────────────────────────
@@ -1514,7 +1579,10 @@ private fun ReactionStrip(
 // ── Achievement badges card ──────────────────────────────────────────────────
 
 @Composable
-private fun AchievementBadgesCard(achievements: List<AchievementBadge>) {
+private fun AchievementBadgesCard(
+    achievements: List<AchievementBadge>,
+    onBadgeClick: (AchievementBadge) -> Unit
+) {
     val colorScheme = MaterialTheme.colorScheme
     Card(
         modifier = Modifier.fillMaxWidth(),
@@ -1551,7 +1619,7 @@ private fun AchievementBadgesCard(achievements: List<AchievementBadge>) {
                 contentPadding = PaddingValues(horizontal = 2.dp)
             ) {
                 items(achievements) { badge ->
-                    AchievementBadgeChip(badge = badge)
+                    AchievementBadgeChip(badge = badge, onClick = { onBadgeClick(badge) })
                 }
             }
         }
@@ -1559,12 +1627,15 @@ private fun AchievementBadgesCard(achievements: List<AchievementBadge>) {
 }
 
 @Composable
-private fun AchievementBadgeChip(badge: AchievementBadge) {
+private fun AchievementBadgeChip(badge: AchievementBadge, onClick: () -> Unit) {
     val colorScheme = MaterialTheme.colorScheme
     val tColor = badgeTierColor(badge.tier)
 
     Card(
-        modifier = Modifier.width(108.dp),
+        // Only earned badges open the magnified/shareable view; locked ones stay inert.
+        modifier = Modifier
+            .width(108.dp)
+            .then(if (badge.isEarned) Modifier.clickable(onClick = onClick) else Modifier),
         colors = CardDefaults.cardColors(
             containerColor = if (badge.isEarned) tColor.copy(alpha = 0.10f) else colorScheme.surface
         ),
@@ -1580,21 +1651,43 @@ private fun AchievementBadgeChip(badge: AchievementBadge) {
                 .padding(10.dp),
             horizontalAlignment = Alignment.CenterHorizontally
         ) {
-            // Emoji circle — padlock when not yet earned
-            Box(
-                modifier = Modifier
-                    .size(48.dp)
-                    .clip(CircleShape)
-                    .background(
-                        if (badge.isEarned) tColor.copy(alpha = 0.18f)
-                        else colorScheme.outline.copy(alpha = 0.08f)
-                    ),
-                contentAlignment = Alignment.Center
-            ) {
-                Text(
-                    text = if (badge.isEarned) badge.emoji else "🔒",
-                    fontSize = 22.sp
-                )
+            // Each badge category with dedicated tier artwork renders it here;
+            // categories without custom art keep the emoji circle. Padlock
+            // when not yet earned.
+            val customDrawable = if (badge.isEarned) badgeArtworkDrawableRes(badge.id, badge.tier) else null
+            if (customDrawable != null) {
+                Box(
+                    modifier = Modifier
+                        .size(56.dp)
+                        .clip(RoundedCornerShape(12.dp))
+                        .background(tColor.copy(alpha = 0.12f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Image(
+                        painter = painterResource(customDrawable),
+                        contentDescription = "${badge.tier.label} ${badge.title}",
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(3.dp)
+                    )
+                }
+            } else {
+                Box(
+                    modifier = Modifier
+                        .size(48.dp)
+                        .clip(CircleShape)
+                        .background(
+                            if (badge.isEarned) tColor.copy(alpha = 0.18f)
+                            else colorScheme.outline.copy(alpha = 0.08f)
+                        ),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = if (badge.isEarned) badge.emoji else "🔒",
+                        fontSize = 22.sp
+                    )
+                }
             }
 
             Spacer(Modifier.height(6.dp))
@@ -1647,18 +1740,6 @@ private fun AchievementBadgeChip(badge: AchievementBadge) {
             }
         }
     }
-}
-
-private fun badgeTierColor(tier: BadgeTier): Color = when (tier) {
-    BadgeTier.BRONZE  -> Color(0xFFCD7F32)
-    BadgeTier.SILVER  -> Color(0xFFB0B8C1)
-    BadgeTier.GOLD    -> Color(0xFFFFD700)
-    BadgeTier.DIAMOND -> Color(0xFF62EFFF)
-}
-
-private fun badgeFmtVal(value: Double, unit: String): String = when (unit) {
-    "days", "kcal", "m" -> value.toInt().toString()
-    else                 -> "%.1f".format(value)
 }
 
 // ── Recent session row ───────────────────────────────────────────────────────

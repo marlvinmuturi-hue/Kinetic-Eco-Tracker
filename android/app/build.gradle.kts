@@ -16,7 +16,7 @@ plugins {
 
 android {
     namespace = "Kinetic_Eco.Tracker"
-    compileSdk = 35
+    compileSdk = 36
 
     lint {
         // Compose's runtime lint detectors crash on this project because the Kotlin compiler is newer
@@ -34,9 +34,9 @@ android {
     defaultConfig {
         applicationId = "com.kineticecotracker"
         minSdk = 24
-        targetSdk = 35
-        versionCode = 12
-        versionName = "V1.9.0"
+        targetSdk = 36
+        versionCode = 17
+        versionName = "V1.9.4"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "FUNCTIONS_BASE_URL", "\"https://us-central1-gen-lang-client-0114974661.cloudfunctions.net\"")
@@ -55,7 +55,11 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // R8 code shrinking + optimization + obfuscation (proguard-android-optimize.txt).
+            // Keep rules for reflection/serialization live in proguard-rules.pro. Resource
+            // shrinking is intentionally left off for this first R8 release to minimize risk;
+            // it can be enabled later (isShrinkResources = true) once R8 is validated on device.
+            isMinifyEnabled = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
@@ -116,6 +120,8 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-runtime-compose:2.7.0")
     implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
     implementation("androidx.lifecycle:lifecycle-service:2.7.0")
+    // ProcessLifecycleOwner — App Open ads observe app foreground/background (AppOpenAdManager)
+    implementation("androidx.lifecycle:lifecycle-process:2.7.0")
 
     // WorkManager — durable, retryable background sync of un-synced sessions to Firestore
     implementation("androidx.work:work-runtime-ktx:2.9.1")
@@ -129,6 +135,13 @@ dependencies {
     implementation("com.google.firebase:firebase-storage")
     implementation("com.google.firebase:firebase-functions")
     implementation("com.google.firebase:firebase-messaging")
+    // App Check — attests that requests come from this genuine app. Storage enforcement is
+    // currently UNENFORCED; it can only be turned back on once enough users run a build with
+    // this SDK, otherwise their uploads fail with a misleading "User is not authenticated".
+    implementation("com.google.firebase:firebase-appcheck-playintegrity")
+    // Debug builds can't pass Play Integrity (emulators/unsigned APKs), so they send a debug
+    // token instead — it must be registered in the console per machine. Debug-only: never ships.
+    debugImplementation("com.google.firebase:firebase-appcheck-debug")
     implementation("com.google.android.gms:play-services-auth:20.7.0")
     
     // Google Play Services Location

@@ -37,6 +37,7 @@ import Kinetic_Eco.Tracker.data.ActivityColors
 import Kinetic_Eco.Tracker.data.ActivitySegment
 import Kinetic_Eco.Tracker.data.ActivityType
 import Kinetic_Eco.Tracker.util.ActivityReclassification
+import Kinetic_Eco.Tracker.util.SegmentReconstruction
 import Kinetic_Eco.Tracker.data.SessionStats
 import Kinetic_Eco.Tracker.data.UnitSystem
 import Kinetic_Eco.Tracker.ui.components.ActivityDonutChart
@@ -75,10 +76,28 @@ fun SessionDetailScreen(
     val context = LocalContext.current
     val locales = LocalConfiguration.current.locales
     val locale = if (locales.isEmpty) Locale.getDefault() else (locales.get(0) ?: Locale.getDefault())
-    val displayStats = session ?: aggregateSessions(allSessions)
     val isIndividualSession = session != null
+    // Sessions saved before the idle-auto-stop segment fix have an empty segment list but still
+    // carry per-point activity in routePath. Reconstruct a Mode timeline from that geometry so the
+    // card (and its tap-to-edit) works for that history. Only for individual sessions — the
+    // aggregate view concatenates many routes and has no single meaningful timeline.
+    val displayStats = remember(session) {
+        val base = session ?: return@remember null
+        if (base.segments.isEmpty() && base.routePath.size >= 2) {
+            val endMs = if (base.sessionEndTimeMs > 0) base.sessionEndTimeMs else base.totalDuration * 1000
+            val startMs = endMs - base.totalDuration * 1000
+            base.copy(segments = SegmentReconstruction.fromRoutePath(base.routePath, startMs, endMs))
+        } else base
+    } ?: aggregateSessions(allSessions)
     var editingSegment by remember { mutableStateOf<ActivitySegment?>(null) }
-    
+    var showRecap by remember { mutableStateOf(false) }
+
+    // Prototype: full-screen celebratory recap + share card, opened from the share action below.
+    if (showRecap) {
+        SessionRecapScreen(stats = displayStats, unitSystem = unitSystem, onClose = { showRecap = false })
+        return
+    }
+
     Column(
         modifier = Modifier
             .fillMaxSize()
@@ -103,7 +122,8 @@ fun SessionDetailScreen(
                     RouteMapView(
                         routePath = displayStats.routePath,
                         modifier = Modifier.fillMaxWidth(),
-                        heightDp = 160
+                        heightDp = 160,
+                        showElevationProfile = false
                     )
                 }
             }
@@ -136,12 +156,7 @@ fun SessionDetailScreen(
                     )
                     if (isIndividualSession) {
                         IconButton(
-                            onClick = {
-                                ShareUtils.launchShareSheet(
-                                    context,
-                                    ShareUtils.buildSessionShareText(displayStats, unitSystem)
-                                )
-                            }
+                            onClick = { showRecap = true }
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Share,

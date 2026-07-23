@@ -356,7 +356,14 @@ class SessionManager(private val context: Context) {
                     
                     val date = dateFormat.format(Date(doc.timestamp))
                     val kmMilestonesJson = com.google.gson.Gson().toJson(doc.kmMilestones)
-                    
+                    // Segments drive the post-session Mode-timeline (reclassify a segment). Use Firestore's
+                    // when present; otherwise keep any local segments (e.g. user edits) rather than wiping them.
+                    val segmentsJson = if (doc.segments.isNotEmpty()) {
+                        com.google.gson.Gson().toJson(doc.segments)
+                    } else {
+                        existing?.segmentsJson ?: "[]"
+                    }
+
                     // Use routePath from Firestore when available; otherwise preserve local
                     val routePath = doc.routePath.ifEmpty { existing?.routePath ?: emptyList() }
                     val entity = SessionEntity(
@@ -377,6 +384,7 @@ class SessionManager(private val context: Context) {
                         maxAltitude = doc.maxAltitude,
                         topSpeedMps = doc.topSpeedMps,
                         kmMilestonesJson = kmMilestonesJson,
+                        segmentsJson = segmentsJson,
                         routePath = routePath,
                         // Real session time (doc.timestamp), NOT the Firestore write-time (createdAtMs).
                         // This self-heals histories whose createdAt was corrupted by a past re-upload.
@@ -532,12 +540,18 @@ class SessionManager(private val context: Context) {
         val entity = sessionDao.getSessionById(sessionId)
             ?: return Result.failure(Exception("Session $sessionId not found"))
 
-        val allSegments = try {
+        val storedSegments = try {
             com.google.gson.Gson().fromJson<List<ActivitySegment>>(
                 entity.segmentsJson,
                 object : TypeToken<List<ActivitySegment>>() {}.type
             ) ?: emptyList()
         } catch (_: Exception) { emptyList() }
+
+        // Pre-fix sessions have no stored segments. The caller (SessionDetailScreen) reconstructs
+        // them from routePath for display and passes the full reconstructed list back on edit, so
+        // adopt it as the base here — this backfills the session on first edit instead of merging
+        // into an empty list and zeroing every recomputed total.
+        val allSegments = storedSegments.ifEmpty { updatedSegments }
 
         // Merge: only the segments the caller edited (matched by startTime); others unchanged.
         val editedByStart = updatedSegments.associateBy { it.startTime }

@@ -21,6 +21,7 @@ import Kinetic_Eco.Tracker.R
 import Kinetic_Eco.Tracker.MainActivity
 import Kinetic_Eco.Tracker.filters.KalmanFilter
 import Kinetic_Eco.Tracker.filters.FlightTracker
+import Kinetic_Eco.Tracker.filters.AltitudeFilter
 import Kinetic_Eco.Tracker.data.*
 import Kinetic_Eco.Tracker.data.RoutePoint
 import Kinetic_Eco.Tracker.util.adjustStatsForSimplifiedPath
@@ -31,12 +32,16 @@ class TrackingService : LifecycleService() {
     private lateinit var sensorService: SensorService
     private lateinit var sessionManager: SessionManager
     private lateinit var userPrefsManager: UserPreferencesManager
+    /** Ellipsoidal→MSL altitude correction (no-op until the EGM96 grid asset is present). */
+    private lateinit var geoidService: GeoidService
     private var userPhysicalProfile: UserPhysicalProfile? = null
     private var vehicleProfile: VehicleProfile = VehicleProfile.DEFAULT
     
     // Advanced filtering and flight tracking
     private val kalmanFilter = KalmanFilter()
     private val flightTracker = FlightTracker()
+    /** Spike-rejecting, smoothed altitude used for session summary, route elevation, and gain/loss. */
+    private val altitudeFilter = AltitudeFilter()
 
     // Tracking state
     private val _isTracking = MutableStateFlow(false)
@@ -86,8 +91,12 @@ class TrackingService : LifecycleService() {
 
     private var lastPosition: GeoPosition? = null
     private var previousAltitude: Double = 0.0
+    /** Previous *smoothed* altitude, used for elevation gain/loss with a deadband (noise-free). */
+    private var previousSmoothedAltitude: Double? = null
     private var lastUpdateTime: Long = 0
     private var smoothedSpeed: Float = 0f
+    /** Rolling (timestampMs, cumulative step count) samples for instantaneous walking cadence. */
+    private val cadenceSamples = ArrayDeque<Pair<Long, Int>>()
     // Counts consecutive ticks where the new reading was rejected as an outlier vs.
     // smoothedSpeed. A single spike is fully damped, but if the EMA itself is the
     // poisoned value (e.g. inflated during an indoor multipath stretch), this lets
@@ -303,6 +312,10 @@ class TrackingService : LifecycleService() {
         sensorService = SensorService(this)
         sessionManager = SessionManager(this)
         userPrefsManager = UserPreferencesManager(this)
+        geoidService = GeoidService(this)
+        // Pre-load the geoid grid off the main thread so the first altitude fix doesn't pay the
+        // ~2 MB asset read (and so a missing grid is a one-time no-op, not a per-fix check).
+        lifecycleScope.launch(Dispatchers.IO) { geoidService.ensureLoaded() }
         
         // Load user's physical profile for accurate calorie calculations
         userPhysicalProfile = userPrefsManager.loadPhysicalProfile()
@@ -519,6 +532,9 @@ class TrackingService : LifecycleService() {
         // Reset filters and trackers (do NOT reset pattern analyzer here - preserve warm-up data)
         kalmanFilter.reset()
         flightTracker.reset()
+        altitudeFilter.reset()
+        previousSmoothedAltitude = null
+        cadenceSamples.clear()
         sensorService.resetBarometerCalibration()
         
         // Reset activity persistence tracking
@@ -695,13 +711,23 @@ class TrackingService : LifecycleService() {
         val startMs = sessionStartTimeMs
         val routePath = getRoutePath()
         val accelSamples = getAccelerometerSamples()
+        // Capture segments BEFORE stopTracking() resets the segment state (segmentStartTimeMs → 0).
+        // Without this, idle auto-stopped sessions persist with an empty segment list and the
+        // post-session Mode timeline never appears — unlike the manual Stop paths, which already do this.
+        val segments = getFinalSegments()
         val adjustedStats = adjustStatsForSimplifiedPath(stats, routePath)
-        val statsWithRoute = adjustedStats.copy(routePath = routePath)
+        val statsWithRoute = adjustedStats.copy(routePath = routePath, segments = segments)
         val app = applicationContext as KineticEcoApplication
         val appCtx = app.applicationContext
 
         userPrefsManager.setPendingResumeAfterIdleAutoStop(true)
         stopTracking()
+        // Clear the finished session's live metrics so duration/distance/steps return to zero, matching
+        // both manual-stop paths (which call resetSession()). Without this the Tracker screen keeps
+        // showing the last duration after an idle auto-stop until a new session starts. Safe here because
+        // everything the async save needs (stats, startMs, routePath, segments, accelSamples) was already
+        // copied into locals above before stopTracking().
+        resetSession()
 
         try {
             AutoStartMonitorService.start(appCtx)
@@ -828,6 +854,9 @@ class TrackingService : LifecycleService() {
         lastAccelSampleTimeMs = 0
         kalmanFilter.reset()
         flightTracker.reset()
+        altitudeFilter.reset()
+        previousSmoothedAltitude = null
+        cadenceSamples.clear()
 
         pocketLeanEstimator.reset()
         leanMotorPromoSinceMs = 0L
@@ -1050,6 +1079,29 @@ class TrackingService : LifecycleService() {
      * shielded by the run-cap (4.2 m/s) — high enough to still be reclassified
      * as RUNNING and one tick later as DRIVING.
      */
+    /**
+     * Record a (timestamp, cumulative-step-count) sample and drop those older than
+     * [CADENCE_WINDOW_MS], so [recentCadenceSpm] can read an *instantaneous* cadence. Session-average
+     * cadence is dragged down by idle periods and understates the current pace; a short rolling
+     * window reflects what the user is doing right now, which is what a speed ceiling needs.
+     */
+    private fun recordCadenceSample(now: Long) {
+        cadenceSamples.addLast(now to _sessionSteps.value)
+        while (cadenceSamples.size > 1 && now - cadenceSamples.first().first > CADENCE_WINDOW_MS) {
+            cadenceSamples.removeFirst()
+        }
+    }
+
+    /** Instantaneous cadence in steps/min over the rolling window, or null if not enough data. */
+    private fun recentCadenceSpm(now: Long): Float? {
+        val oldest = cadenceSamples.firstOrNull() ?: return null
+        val spanMs = now - oldest.first
+        if (spanMs < 2_000L) return null  // need a couple of seconds to be meaningful
+        val stepDelta = _sessionSteps.value - oldest.second
+        if (stepDelta < CADENCE_MIN_STEPS) return null
+        return stepDelta / (spanMs / 60_000f)
+    }
+
     private fun applyPedestrianGpsSanityCap(
         speed: Float,
         now: Long,
@@ -1098,6 +1150,29 @@ class TrackingService : LifecycleService() {
         // either). At ≥130 spm we treat the user as running.
         val likelyRunning = sessionSpm >= 130f
         val cap = if (likelyRunning) runCap else walkCap
+
+        // Cadence-derived walking ceiling: catches GPS speed inflated *within* the walking band
+        // (e.g. a true 3 km/h read as 6 km/h) that the absolute cap below never sees, because such
+        // a reading is under RUNNING_MIN. Uses instantaneous cadence × stride with generous headroom
+        // (stride varies with pace), floored so a low session pace can't clip a normal walk. Distance
+        // is unaffected — it's step-capped separately downstream — so this only corrects the shown
+        // speed and speed-based classification.
+        if (!likelyRunning) {
+            val cadenceSpm = recentCadenceSpm(now)
+            if (cadenceSpm != null) {
+                val cadenceSpeed = (cadenceSpm / 60f) * STEP_LENGTH_WALKING.toFloat()
+                val cadenceCeiling = (cadenceSpeed * CADENCE_SPEED_HEADROOM)
+                    .coerceAtLeast(CADENCE_CEILING_FLOOR_MPS)
+                if (speed > cadenceCeiling) {
+                    android.util.Log.d(
+                        "TrackingService",
+                        "Pedestrian cadence cap: cadence=${cadenceSpm.toInt()} spm → " +
+                            "~${cadenceSpeed * 3.6f} km/h, ceiling ${cadenceCeiling * 3.6f} km/h vs GPS ${speed * 3.6f} km/h"
+                    )
+                    return cadenceCeiling
+                }
+            }
+        }
 
         if (speed >= SpeedThresholds.RUNNING_MIN.toFloat() && speed > cap) {
             android.util.Log.d(
@@ -1772,26 +1847,43 @@ class TrackingService : LifecycleService() {
 
         val timeDelta = if (lastUpdateTime > 0) (now - lastUpdateTime) / 1000.0 else 0.0
 
-        // Get altitude: GPS first, barometric fallback when GPS altitude missing or poor (e.g. flying)
-        val gpsAltitude = position.altitude
+        // Get altitude: GPS first, barometric fallback when GPS altitude missing or poor (e.g. flying).
+        // GPS altitude is ellipsoidal (WGS84) per the Android contract — convert to mean-sea-level via
+        // the geoid separation so summary/route altitudes match maps. No-op until the EGM96 grid asset
+        // is present. Applied here at the source so currentAltitude, the barometer calibration, and the
+        // AltitudeFilter are all consistently in MSL. (A constant offset, so elevation gain/loss is
+        // unaffected.)
+        val gpsAltitude = position.altitude?.let {
+            geoidService.toMeanSeaLevel(it, position.latitude, position.longitude)
+        }
         val currentAltitude = when {
             gpsAltitude != null && gpsAltitude.isFinite() -> gpsAltitude
             sensorService.hasBarometer() -> sensorService.getBarometricAltitude(gpsAltitude)
             else -> 0.0
         }
-        /** Only for route points — omit when neither GPS nor baro gives a usable value (avoid storing 0 as fake altitude). */
-        val routeAltitudeMeters: Double? = when {
-            gpsAltitude != null && gpsAltitude.isFinite() -> gpsAltitude
-            sensorService.hasBarometer() -> sensorService.getBarometricAltitude(gpsAltitude).takeIf { it.isFinite() }
-            else -> null
+
+        // Spike-rejected, smoothed altitude for everything the user sees (summary, route, elevation).
+        // Feeds the raw GPS altitude (with its vertical accuracy) through AltitudeFilter; when GPS
+        // altitude is absent the barometric fallback is passed with no vertical-accuracy claim so the
+        // filter gates it on horizontal accuracy. currentAltitude (raw) is kept for flight-phase logic.
+        val smoothedAltitude: Double? = if (gpsAltitude != null && gpsAltitude.isFinite()) {
+            altitudeFilter.update(gpsAltitude, position.verticalAccuracy, position.accuracy)
+        } else if (sensorService.hasBarometer()) {
+            val baro = sensorService.getBarometricAltitude(gpsAltitude)
+            if (baro.isFinite()) altitudeFilter.update(baro, null, position.accuracy) else altitudeFilter.current
+        } else {
+            altitudeFilter.current
         }
-        
-        // Track starting/stopping/min/max altitude for session summary (GPS or barometric)
-        if (currentAltitude.isFinite()) {
-            if (startingAltitude == null) startingAltitude = currentAltitude
-            stoppingAltitude = currentAltitude
-            minAltitude = if (minAltitude == null) currentAltitude else minOf(minAltitude!!, currentAltitude)
-            maxAltitude = if (maxAltitude == null) currentAltitude else maxOf(maxAltitude!!, currentAltitude)
+        /** Only for route points — omit when the filter has no trustworthy value yet (avoid storing fake altitude). */
+        val routeAltitudeMeters: Double? = smoothedAltitude?.takeIf { it.isFinite() }
+
+        // Track starting/stopping/min/max altitude for session summary from the SMOOTHED value, so a
+        // single bad fix can never become the recorded min/max (the old "65 m instead of 1 m" bug).
+        if (smoothedAltitude != null && smoothedAltitude.isFinite()) {
+            if (startingAltitude == null) startingAltitude = smoothedAltitude
+            stoppingAltitude = smoothedAltitude
+            minAltitude = if (minAltitude == null) smoothedAltitude else minOf(minAltitude!!, smoothedAltitude)
+            maxAltitude = if (maxAltitude == null) smoothedAltitude else maxOf(maxAltitude!!, smoothedAltitude)
         }
         
         // === STEP 2: Update Flight Tracker ===
@@ -1908,6 +2000,7 @@ class TrackingService : LifecycleService() {
             speed = 0f
         }
 
+        recordCadenceSample(now)
         speed = applyPedestrianGpsSanityCap(
             speed = speed,
             now = now,
@@ -2070,17 +2163,28 @@ class TrackingService : LifecycleService() {
         if (lastPosition != null) {
             // distanceDelta already computed above for speed fallback
             
-            // Elevation: do not treat cabin/cruise GPS altitude drift as "climbing" — that inflated calorie burn on flights.
+            // Elevation: use the SMOOTHED altitude and a deadband so per-fix GPS altitude noise
+            // (±several m each fix) no longer accumulates as phantom climb/descent. Only count a
+            // change once it exceeds ELEVATION_MIN_DELTA_M, and re-baseline from the smoothed series.
+            // Also: do not treat cabin/cruise GPS altitude drift as "climbing" (inflated flight calories).
             var elevationGainDelta = 0.0
             var elevationLossDelta = 0.0
-            if (refinedActivity != ActivityType.FLYING) {
-                val elevationDelta = currentAltitude - previousAltitude
-                if (elevationDelta > 0) {
-                    elevationGainDelta = elevationDelta
-                    totalElevationGain += elevationDelta
-                } else if (elevationDelta < 0) {
-                    elevationLossDelta = Math.abs(elevationDelta)
-                    totalElevationLoss += Math.abs(elevationDelta)
+            if (refinedActivity != ActivityType.FLYING && smoothedAltitude != null && smoothedAltitude.isFinite()) {
+                val prevSmoothed = previousSmoothedAltitude
+                if (prevSmoothed != null) {
+                    val elevationDelta = smoothedAltitude - prevSmoothed
+                    if (elevationDelta >= ELEVATION_MIN_DELTA_M) {
+                        elevationGainDelta = elevationDelta
+                        totalElevationGain += elevationDelta
+                        previousSmoothedAltitude = smoothedAltitude
+                    } else if (elevationDelta <= -ELEVATION_MIN_DELTA_M) {
+                        elevationLossDelta = Math.abs(elevationDelta)
+                        totalElevationLoss += Math.abs(elevationDelta)
+                        previousSmoothedAltitude = smoothedAltitude
+                    }
+                    // Within the deadband: hold the baseline so small oscillations don't accumulate.
+                } else {
+                    previousSmoothedAltitude = smoothedAltitude
                 }
             }
             
@@ -2148,7 +2252,10 @@ class TrackingService : LifecycleService() {
         
         lastPosition = position.copy(
             latitude = filtered.latitude,
-            longitude = filtered.longitude
+            longitude = filtered.longitude,
+            // Carry the smoothed MSL altitude (not the raw ellipsoidal position.altitude) so the
+            // trailing point appended in getRoutePath() is consistent with the rest of the route.
+            altitude = smoothedAltitude
         )
         previousAltitude = currentAltitude
         lastUpdateTime = now
@@ -2392,16 +2499,19 @@ class TrackingService : LifecycleService() {
                 (currentActivity == ActivityType.MOTORCYCLE && mostCommon == ActivityType.DRIVING) ||
                 (currentActivity == ActivityType.ELECTRIC_VEHICLE && mostCommon == ActivityType.MOTORCYCLE) ||
                 (currentActivity == ActivityType.MOTORCYCLE && mostCommon == ActivityType.ELECTRIC_VEHICLE)
+            // requiredConsistency ≈ seconds of delay before a switch commits (GPS votes ~1/s). Trimmed
+            // by one across the common cases for snappier activity changes; the incompatible-transition
+            // (5) and pedestrian→motor promotion gates upstream still guard against noisy-GPS false flips.
             var requiredConsistency = when {
                 isStartupPhase -> 1          // First 10s: fast convergence
                 mostCommon == ActivityType.IDLE -> 1  // Below 0.5 km/h → IDLE immediately
-                isAdjacentTransition -> 2    // WALKING↔RUNNING, RUNNING↔DRIVING: 2/5
+                isAdjacentTransition -> 2    // WALKING↔RUNNING, RUNNING↔DRIVING: ~2s
                 activityDurationSeconds > 120 -> {
                     android.util.Log.d("TrackingService",
-                        "Activity persistence: $currentActivity for ${activityDurationSeconds}s — requiring 4/5")
-                    4
+                        "Activity persistence: $currentActivity for ${activityDurationSeconds}s — requiring 3")
+                    3
                 }
-                else -> if (isSignificantChange) 3 else 4
+                else -> if (isSignificantChange) 2 else 3
             }
 
             // Incompatible transitions require full agreement
@@ -2990,6 +3100,20 @@ class TrackingService : LifecycleService() {
         private const val GPS_SCALE_WALKING = 0.78
         private const val GPS_SCALE_CYCLING = 0.88
         private const val GPS_SCALE_DRIVING = 0.88
+
+        /** Elevation gain/loss deadband (m): change must exceed this before it counts, so per-fix
+         *  altitude noise stops accumulating as phantom climb/descent. */
+        private const val ELEVATION_MIN_DELTA_M = 1.0
+
+        /** Rolling window over which instantaneous walking cadence is measured (ms). */
+        private const val CADENCE_WINDOW_MS = 6_000L
+        /** Minimum steps within [CADENCE_WINDOW_MS] before the cadence-derived speed ceiling is trusted. */
+        private const val CADENCE_MIN_STEPS = 5
+        /** Headroom on the cadence-implied walking speed before GPS is considered inflated. Stride
+         *  length varies with pace, so leave slack — this catches ~2× inflation, not small errors. */
+        private const val CADENCE_SPEED_HEADROOM = 1.4f
+        /** Never cap walking speed below this (m/s ≈ 5 km/h) even if cadence average is dragged down. */
+        private const val CADENCE_CEILING_FLOOR_MPS = 1.4f
 
         /** Window after an IN_VEHICLE cold-start during which the promotion latency is halved. */
         private const val COLD_START_VEHICLE_WINDOW_MS = 25_000L

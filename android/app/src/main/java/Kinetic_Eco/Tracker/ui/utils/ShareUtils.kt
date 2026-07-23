@@ -2,10 +2,17 @@ package Kinetic_Eco.Tracker.ui.utils
 
 import android.content.Context
 import android.content.Intent
+import android.graphics.Bitmap
+import androidx.core.content.FileProvider
 import Kinetic_Eco.Tracker.BuildConfig
+import Kinetic_Eco.Tracker.data.AchievementBadge
+import Kinetic_Eco.Tracker.ui.components.AppOpenAdManager
+import Kinetic_Eco.Tracker.ui.components.badgeFmtVal
 import Kinetic_Eco.Tracker.data.ActivityType
 import Kinetic_Eco.Tracker.data.SessionStats
 import Kinetic_Eco.Tracker.data.UnitSystem
+import java.io.File
+import java.io.FileOutputStream
 import java.util.concurrent.TimeUnit
 
 object ShareUtils {
@@ -88,6 +95,15 @@ object ShareUtils {
         }
     }
 
+    fun buildBadgeShareText(badge: AchievementBadge): String = buildString {
+        appendLine("🏅 New badge on Kinetic Eco: ${badge.tier.label} ${badge.title}!")
+        appendLine("• ${badge.description}: ${badgeFmtVal(badge.currentValue, badge.unit)} ${badge.unit}")
+        appendLine()
+        appendLine("Track your real eco impact with Kinetic Eco 🌱")
+        appendLine(PLAY_STORE_URL)
+        append("#KineticEco #GreenCommute")
+    }
+
     fun buildInviteText(): String = buildString {
         appendLine("🌱 I've been using Kinetic Eco to track my commutes and see my real CO₂ impact.")
         appendLine("It auto-detects walking, cycling, driving, and more — and shows you how much CO₂ you're saving.")
@@ -97,9 +113,32 @@ object ShareUtils {
     }
 
     fun launchShareSheet(context: Context, text: String) {
+        // Returning from the share sheet is an app-initiated external return — don't fire an App Open ad.
+        AppOpenAdManager.suppressNextForegroundAd()
         val intent = Intent(Intent.ACTION_SEND).apply {
             type = "text/plain"
             putExtra(Intent.EXTRA_TEXT, text)
+        }
+        context.startActivity(Intent.createChooser(intent, "Share via"))
+    }
+
+    /**
+     * Shares [bitmap] as a PNG (plus an optional [caption]) via the system share sheet. Writes to the
+     * app cache and exposes it through the existing FileProvider (authority `${applicationId}.fileprovider`,
+     * whose file_paths maps the whole cache dir).
+     */
+    fun shareImage(context: Context, bitmap: Bitmap, caption: String) {
+        val dir = File(context.cacheDir, "share").apply { mkdirs() }
+        val file = File(dir, "kinetic_recap_${System.currentTimeMillis()}.png")
+        FileOutputStream(file).use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        val uri = FileProvider.getUriForFile(context, "${BuildConfig.APPLICATION_ID}.fileprovider", file)
+        // Returning from the share sheet is an app-initiated external return — don't fire an App Open ad.
+        AppOpenAdManager.suppressNextForegroundAd()
+        val intent = Intent(Intent.ACTION_SEND).apply {
+            type = "image/png"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            putExtra(Intent.EXTRA_TEXT, caption)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
         }
         context.startActivity(Intent.createChooser(intent, "Share via"))
     }

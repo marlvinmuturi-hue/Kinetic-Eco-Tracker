@@ -76,6 +76,12 @@ class TrackerViewModel(application: Application) : AndroidViewModel(application)
             _manualActivityMode.value = null
             _leanActivityHint.value = null
             _evConfirmPrompt.value = false
+            // Also zero the finished session's live metrics; otherwise a duration/distance from before
+            // the disconnect lingers on the Tracker screen after an idle auto-stop destroys the service.
+            _sessionDuration.value = 0L
+            _sessionDistance.value = 0.0
+            _sessionSteps.value = 0
+            _sessionStats.value = SessionStats()
         }
     }
 

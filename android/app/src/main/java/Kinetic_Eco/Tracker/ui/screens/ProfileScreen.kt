@@ -41,6 +41,7 @@ import com.google.firebase.auth.FirebaseUser
 import Kinetic_Eco.Tracker.R
 import Kinetic_Eco.Tracker.data.UnitSystem
 import Kinetic_Eco.Tracker.ui.utils.usesMetricDistance
+import Kinetic_Eco.Tracker.ui.components.AppOpenAdManager
 import Kinetic_Eco.Tracker.ui.components.StatCard
 import Kinetic_Eco.Tracker.ui.components.StatCardCompact
 import Kinetic_Eco.Tracker.data.TravelRecap
@@ -451,6 +452,8 @@ fun ProfileScreen(
                     TextButton(
                         onClick = {
                             showPhotoSourceDialog = false
+                            // App-initiated external picker — don't let an App Open ad cover the return.
+                            AppOpenAdManager.suppressNextForegroundAd()
                             galleryPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly))
                         },
                         modifier = Modifier.fillMaxWidth()
@@ -465,6 +468,8 @@ fun ProfileScreen(
                             val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
                             tempCameraUri = uri
                             showPhotoSourceDialog = false
+                            // App-initiated external camera — don't let an App Open ad cover the return.
+                            AppOpenAdManager.suppressNextForegroundAd()
                             takePictureLauncher.launch(uri)
                         },
                         modifier = Modifier.fillMaxWidth()

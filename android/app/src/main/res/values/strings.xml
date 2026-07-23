@@ -4,11 +4,23 @@
 
     <!-- AdMob: App ID (~) is app-level; ad unit ID (/) is per placement.
          WARNING: These IDs are compiled into the APK. If this repo goes public,
-         rotate both IDs in the AdMob console to prevent ad fraud. -->
-    <string name="admob_application_id" translatable="false">ca-app-pub-1244317007978137~1123649010</string>
-    <string name="admob_banner_unit_id" translatable="false">ca-app-pub-1244317007978137/6172262886</string>
-    <!-- Real interstitial unit. Debug builds still use Google's test interstitial
-         (see InterstitialAdManager.TEST_INTERSTITIAL_UNIT_ID); this serves in release. -->
+         rotate them in the AdMob console to prevent ad fraud.
+
+         ACCOUNT MIGRATION: the app runs under publisher pub-7162678830027767 (the new account).
+         An app can carry only ONE app ID / account, so the app ID, App Open unit, and banner unit
+         below are all on the NEW account. The INTERSTITIAL unit is still the OLD account
+         (pub-1244317007978137) and will NOT fill under the new app ID — re-create it under
+         pub-7162678830027767 and swap the value in. -->
+    <string name="admob_application_id" translatable="false">ca-app-pub-7162678830027767~9313577336</string>
+    <!-- App Open ad — shown when the app is brought to the foreground (see AppOpenAdManager).
+         Debug builds use Google's test app-open unit (AppOpenAdManager.TEST_APP_OPEN_UNIT_ID). -->
+    <string name="admob_app_open_unit_id" translatable="false">ca-app-pub-7162678830027767/1599221348</string>
+    <!-- Banner ad (NEW account) — inline adaptive banner pinned at the top of the main tabs
+         (see AdMobBanner.kt). Debug builds use Google's test banner (AdMobBanner.TEST_BANNER_UNIT_ID). -->
+    <string name="admob_banner_unit_id" translatable="false">ca-app-pub-7162678830027767/1218770366</string>
+    <!-- LEGACY interstitial (old account pub-1244317007978137) — will NOT fill under the new app ID.
+         Re-create under pub-7162678830027767 and swap in. Debug builds still use Google's test
+         interstitial (see InterstitialAdManager.TEST_INTERSTITIAL_UNIT_ID). -->
     <string name="admob_interstitial_unit_id" translatable="false">ca-app-pub-1244317007978137/1954237731</string>
     <string name="nav_dashboard">Dashboard</string>
     <string name="nav_tracker">Tracker</string>

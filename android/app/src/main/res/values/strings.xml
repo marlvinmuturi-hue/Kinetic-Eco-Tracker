@@ -147,7 +147,7 @@
     <string name="notifications_daily_digest_desc">Receive an evening recap of today\'s eco impact (only sent on active days)</string>
     <string name="settings_ev_activity_selector_prompt">Using an EV, tap to update vehicle type</string>
     <string name="notification_sounds">Notification sounds</string>
-    <string name="notification_sounds_desc">Play sound for tracking start/stop and session summary. Respects Do Not Disturb.</string>
+    <string name="notification_sounds_desc">Play sound for session summaries and activity suggestions. Tracking notifications are always silent. Respects Do Not Disturb.</string>
     <string name="auto_start_walk">Auto-Start on movement</string>
     <string name="auto_start_walk_desc">Automatically start tracking when movement is detected (works in background)</string>
     <string name="auto_start_battery_warning">Battery optimization may stop auto-start when the app is closed</string>

@@ -90,7 +90,7 @@
     <string name="notifications_section_title">Notifications</string>
     <string name="notifications_section_subtitle">Sons et résumé hebdomadaire</string>
     <string name="notification_sounds">Sons de notification</string>
-    <string name="notification_sounds_desc">Son pour les étapes, début/fin de suivi et résumé. Respecte Ne pas déranger.</string>
+    <string name="notification_sounds_desc">Son pour les résumés de session et les suggestions d\'activité. Les notifications de suivi sont toujours silencieuses. Respecte Ne pas déranger.</string>
     <string name="auto_start_walk">Démarrage auto au mouvement</string>
     <string name="auto_start_walk_desc">Démarrer automatiquement le suivi quand un mouvement est détecté (fonctionne en arrière-plan)</string>
     <string name="idle_stop">Arrêt auto en inactivité</string>

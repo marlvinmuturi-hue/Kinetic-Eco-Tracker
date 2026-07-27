@@ -2658,13 +2658,18 @@ class TrackingService : LifecycleService() {
      *
      *  Importance is **always** [NotificationManager.IMPORTANCE_DEFAULT] so the
      *  shade renders the full layout with the Save / Discard action row inline.
-     *  When the user has notification sounds disabled we suppress sound +
-     *  vibration at the channel level (and `setSilent(true)` on the builder)
-     *  rather than dropping the channel to LOW, because LOW collapses the
-     *  notification and forces the user to expand it just to see the actions. */
+     *  Silence is applied at the channel level (and via `setSilent(true)` on the
+     *  builder) rather than by dropping the channel to LOW, because LOW collapses
+     *  the notification and forces the user to expand it just to see the actions.
+     *
+     *  This channel is **unconditionally silent**. Starting a session and waiting
+     *  for a GPS lock are things the user just did on purpose — they don't need to
+     *  be announced, and the notification is ongoing for the whole session. The
+     *  "Notification sounds" setting deliberately does not apply here; it still
+     *  governs the notifications the user didn't ask for (session summary,
+     *  activity-switch hint). */
     private fun ensureTrackingChannel() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
-        val soundsEnabled = userPrefsManager.getNotificationSoundsEnabled()
         val channel = NotificationChannel(
             TRACKING_CHANNEL_ID,
             "Kinetic Tracking",
@@ -2672,14 +2677,15 @@ class TrackingService : LifecycleService() {
         ).apply {
             description = "Shows real-time tracking status"
             setShowBadge(false)
-            enableVibration(soundsEnabled)
-            setSound(
-                if (soundsEnabled) android.provider.Settings.System.DEFAULT_NOTIFICATION_URI else null,
-                null
-            )
+            enableVibration(false)
+            setSound(null, null)
         }
         val manager = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         manager.createNotificationChannel(channel)
+        // Retire the superseded IDs. Without this the user's notification settings
+        // list keeps showing a "Kinetic Tracking" row per generation, all but the
+        // newest of them dead. Deleting an ID that was never created is a no-op.
+        LEGACY_TRACKING_CHANNEL_IDS.forEach { manager.deleteNotificationChannel(it) }
     }
 
     /**
@@ -2695,7 +2701,6 @@ class TrackingService : LifecycleService() {
      *    stops tracking without writing anything to Firestore.
      */
     private fun buildTrackingNotification(contentText: String): Notification {
-        val soundsEnabled = userPrefsManager.getNotificationSoundsEnabled()
         val pendingFlags = PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT
 
         val openAppPi = PendingIntent.getActivity(
@@ -2743,9 +2748,10 @@ class TrackingService : LifecycleService() {
             // moment tracking starts.
             builder.setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
         }
-        if (!soundsEnabled) {
-            builder.setSilent(true)
-        }
+        // Always silent — see [ensureTrackingChannel]. Belt-and-braces alongside the
+        // channel's setSound(null): pre-O devices have no channels at all, and this
+        // also covers the per-post alert on updateNotification() refreshes.
+        builder.setSilent(true)
         return builder.build()
     }
 
@@ -3026,6 +3032,10 @@ class TrackingService : LifecycleService() {
 
         /** Channel ID for the persistent foreground tracking notification.
          *
+         *  Android freezes a channel's sound, vibration and importance at
+         *  creation — later edits are ignored for anyone who already has the
+         *  channel — so each behaviour change needs a fresh ID.
+         *
          *  v2 bump: the original `tracking_channel` was created with
          *  IMPORTANCE_LOW whenever the user disabled notification sounds,
          *  which makes Android render the shade entry in a compact form
@@ -3033,8 +3043,18 @@ class TrackingService : LifecycleService() {
          *  channels can't have their importance raised programmatically,
          *  so the only way to give every user a default-importance shade
          *  entry (Save / Discard visible inline) is to migrate to a fresh
-         *  channel ID. */
-        private const val TRACKING_CHANNEL_ID = "tracking_channel_v2"
+         *  channel ID.
+         *
+         *  v3 bump: the channel is now unconditionally silent (see
+         *  [ensureTrackingChannel]). Users who installed before this change
+         *  already have v2 with a sound attached, and lowering it in place is
+         *  not permitted, so they need the new ID to actually get silence. */
+        private const val TRACKING_CHANNEL_ID = "tracking_channel_v3"
+
+        /** Superseded tracking-channel IDs, deleted on channel setup so they stop
+         *  cluttering the user's per-channel notification settings. */
+        private val LEGACY_TRACKING_CHANNEL_IDS =
+            listOf("tracking_channel", "tracking_channel_v2")
 
         /** Auto-dismiss the "Session discarded" notification after ~4 s. */
         private const val DISCARD_NOTIFICATION_TIMEOUT_MS = 4_000L

@@ -90,7 +90,7 @@
     <string name="notifications_section_title">通知</string>
     <string name="notifications_section_subtitle">声音与每周摘要</string>
     <string name="notification_sounds">通知声音</string>
-    <string name="notification_sounds_desc">里程碑、开始/停止和摘要时播放声音。遵循勿扰模式。</string>
+    <string name="notification_sounds_desc">会话摘要和活动建议时播放声音。跟踪通知始终静音。遵循勿扰模式。</string>
     <string name="auto_start_walk">检测到运动时自动开始</string>
     <string name="auto_start_walk_desc">检测到运动时自动开始追踪（后台运行）</string>
     <string name="idle_stop">空闲时自动停止</string>

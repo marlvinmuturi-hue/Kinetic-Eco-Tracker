@@ -90,7 +90,7 @@
     <string name="notifications_section_title">Benachrichtigungen</string>
     <string name="notifications_section_subtitle">Töne und wöchentliche Zusammenfassung</string>
     <string name="notification_sounds">Benachrichtigungssounds</string>
-    <string name="notification_sounds_desc">Sound bei Meilensteinen, Start/Stopp und Zusammenfassung. Respektiert „Bitte nicht stören”.</string>
+    <string name="notification_sounds_desc">Sound bei Zusammenfassungen und Aktivitätsvorschlägen. Tracking-Benachrichtigungen sind immer stumm. Respektiert „Bitte nicht stören”.</string>
     <string name="auto_start_walk">Auto-Start bei Bewegung</string>
     <string name="auto_start_walk_desc">Automatisch aufzeichnen, wenn Bewegung erkannt wird (läuft im Hintergrund)</string>
     <string name="idle_stop">Auto-Stopp bei Inaktivität</string>

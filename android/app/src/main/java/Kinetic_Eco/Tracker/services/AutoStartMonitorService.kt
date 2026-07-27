@@ -560,6 +560,12 @@ class AutoStartMonitorService : LifecycleService() {
             ).apply {
                 description = getString(R.string.auto_start_channel_desc)
                 setShowBadge(false)
+                // IMPORTANCE_LOW is already silent, so these are redundant today.
+                // They're here so that raising the importance later — to surface
+                // this notification rather than bury it — can't quietly hand the
+                // background location watcher a sound it is never meant to have.
+                setSound(null, null)
+                enableVibration(false)
             }
             (getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager)
                 .createNotificationChannel(channel)

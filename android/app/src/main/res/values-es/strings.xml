@@ -90,7 +90,7 @@
     <string name="notifications_section_title">Notificaciones</string>
     <string name="notifications_section_subtitle">Sonidos y resumen semanal</string>
     <string name="notification_sounds">Sonidos de notificación</string>
-    <string name="notification_sounds_desc">Sonido para hitos, inicio/fin y resumen. Respeta No molestar.</string>
+    <string name="notification_sounds_desc">Sonido para resúmenes de sesión y sugerencias de actividad. Las notificaciones de seguimiento siempre son silenciosas. Respeta No molestar.</string>
     <string name="auto_start_walk">Inicio automático al movimiento</string>
     <string name="auto_start_walk_desc">Iniciar seguimiento automáticamente cuando se detecte movimiento (funciona en segundo plano)</string>
     <string name="idle_stop">Detención automática en inactividad</string>

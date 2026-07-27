@@ -60,6 +60,10 @@ import Kinetic_Eco.Tracker.ui.utils.formatSpeedMax
 import Kinetic_Eco.Tracker.ui.utils.formatTime
 import Kinetic_Eco.Tracker.ui.utils.usesMetricDistance
 import Kinetic_Eco.Tracker.viewmodel.TrackerViewModel
+import kotlinx.coroutines.delay
+
+/** How long the "Electric vehicle?" prompt stays on screen before dismissing itself. */
+private const val EV_CONFIRM_PROMPT_TIMEOUT_MS = 60_000L
 
 private fun ActivityType.toActivityStringResId(): Int = when (this) {
     ActivityType.IDLE -> R.string.activity_idle
@@ -421,6 +425,15 @@ fun TrackerScreen(
     }
 
     if (showEvConfirmPrompt && !isSavingSession) {
+        // Auto-dismiss so the prompt never sits waiting for an answer the user isn't going to give.
+        // The effect is scoped to the same `if` as the dialog, so the minute is counted from when the
+        // dialog actually reaches the screen — not from when TrackingService raised the flag, which
+        // can happen while the app is backgrounded and the phone is in a pocket. Leaving composition
+        // (either button, a tap-outside, or a save starting) cancels it.
+        LaunchedEffect(Unit) {
+            delay(EV_CONFIRM_PROMPT_TIMEOUT_MS)
+            viewModel.dismissEvConfirmPrompt()
+        }
         AlertDialog(
             onDismissRequest = { viewModel.dismissEvConfirmPrompt() },
             title = { Text("Electric vehicle?") },

@@ -69,4 +69,17 @@
 
 # --- Kotlin coroutines --------------------------------------------------------
 -keepclassmembers class kotlinx.coroutines.** { volatile <fields>; }
+
+# --- Repackaging --------------------------------------------------------------
+# Move every obfuscated class into the root package. Shortens the type names in the
+# dex string pool (a small size win) and flattens the package tree, which makes the
+# output harder to read. Only affects classes that are already being renamed — the
+# -keep rules above (data models, Gson, Firebase, GMS, osmdroid) pin their own names
+# and are left where they are, so no name-based (de)serialization is at risk.
+# proguard-android-optimize.txt already supplies -allowaccessmodification, which is
+# what lets repackaging across the old package boundaries actually pay off.
+# Crash reports stay readable: the AAB embeds the R8 mapping at
+# BUNDLE-METADATA/com.android.tools.build.obfuscation/proguard.map, so Play
+# deobfuscates automatically.
+-repackageclasses
 -dontwarn kotlinx.coroutines.**

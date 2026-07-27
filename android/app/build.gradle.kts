@@ -56,10 +56,16 @@ android {
     buildTypes {
         release {
             // R8 code shrinking + optimization + obfuscation (proguard-android-optimize.txt).
-            // Keep rules for reflection/serialization live in proguard-rules.pro. Resource
-            // shrinking is intentionally left off for this first R8 release to minimize risk;
-            // it can be enabled later (isShrinkResources = true) once R8 is validated on device.
+            // Keep rules for reflection/serialization live in proguard-rules.pro.
+            //
+            // Resource shrinking was deferred through the first R8 release (V1.9.4 / versionCode
+            // 17) and enabled once R8 was validated on device. It strips resources no longer
+            // referenced after code shrinking. Resources looked up reflectively — via
+            // Resources.getIdentifier() rather than an R.* constant — are invisible to the
+            // shrinker and must be listed in res/raw/keep.xml, or they vanish and surface as a
+            // runtime Resources$NotFoundException. Verify on a device before shipping.
             isMinifyEnabled = true
+            isShrinkResources = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

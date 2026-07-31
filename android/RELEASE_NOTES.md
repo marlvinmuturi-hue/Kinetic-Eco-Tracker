@@ -1,8 +1,12 @@
-# Release Notes — V1.9.6 (versionCode 19)
+# Release Notes — V1.9.7 (versionCode 20)
 
-> Covers everything since **versionCode 17 (V1.9.4)**, the last version known to
-> be live on Play. versionCode 18 was built but is not known to have been
-> published; if it was, its entries below were already delivered.
+> **versionCode 20 is a rebuild of 19 with no functional change** — no app code
+> differs between them, only the version number.
+>
+> Contents below cover everything since **versionCode 17 (V1.9.4)**, the last
+> version known to be live on Play. versionCodes 18 and 19 were built but are not
+> known to have been published; if either was, those entries were already
+> delivered.
 
 ## Play Store "What's new" (en-US)
 
@@ -94,6 +98,6 @@
 
 ---
 
-_Build: versionName `V1.9.6`, versionCode `19`, targetSdk 36, minSdk 24. Signed
+_Build: versionName `V1.9.7`, versionCode `20`, targetSdk 36, minSdk 24. Signed
 with the Kinetic Eco Tracker upload key. Artifact:
 `app/build/outputs/bundle/release/app-release.aab`._

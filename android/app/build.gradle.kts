@@ -159,9 +159,11 @@ dependencies {
     implementation("com.google.android.ump:user-messaging-platform:4.0.0")
     
     // Room Database
-    implementation("androidx.room:room-runtime:2.6.1")
-    implementation("androidx.room:room-ktx:2.6.1")
-    ksp("androidx.room:room-compiler:2.6.1")
+    // 2.7.0 is the first release whose compiler works under KSP2; 2.6.1 predates
+    // KSP2 entirely and was what forced ksp.useKSP2=false in gradle.properties.
+    implementation("androidx.room:room-runtime:2.8.3")
+    implementation("androidx.room:room-ktx:2.8.3")
+    ksp("androidx.room:room-compiler:2.8.3")
     
     // Gson for JSON serialization
     implementation("com.google.code.gson:gson:2.10.1")

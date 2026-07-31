@@ -54,6 +54,7 @@ import Kinetic_Eco.Tracker.viewmodel.AnalyticsViewModel
 import Kinetic_Eco.Tracker.viewmodel.AuthViewModel
 import Kinetic_Eco.Tracker.viewmodel.ProfileViewModel
 import Kinetic_Eco.Tracker.viewmodel.TrackerViewModel
+import Kinetic_Eco.Tracker.services.SessionRecovery
 import Kinetic_Eco.Tracker.services.SessionSyncWorker
 import Kinetic_Eco.Tracker.services.UserPreferencesManager
 import Kinetic_Eco.Tracker.util.BatteryOptimizationHelper
@@ -366,6 +367,26 @@ class MainActivity : AppCompatActivity() {
                     }
                     if (showReliabilityDialog) {
                         BatteryReliabilityDialog(onDismiss = { showReliabilityDialog = false })
+                    }
+
+                    // ── Orphaned-session recovery ─────────────────────────────────
+                    //
+                    // TrackingService checkpoints an in-flight trip to disk. A sticky
+                    // restart resumes it directly, but if the process stayed dead —
+                    // reboot, or an OEM battery manager holding the service down — no
+                    // one ever picks the snapshot up. Salvage it here, on the first
+                    // launch after the kill, so the trip is saved rather than lost.
+                    //
+                    // Guarded on not-currently-tracking: while a session is live the
+                    // checkpoint belongs to it, and salvaging would duplicate the trip.
+                    var recoveryChecked by remember { mutableStateOf(false) }
+                    val trackingActive by trackerViewModel.isTracking.collectAsStateWithLifecycle()
+                    LaunchedEffect(currentUser, trackingActive) {
+                        if (recoveryChecked) return@LaunchedEffect
+                        if (currentUser == null) return@LaunchedEffect
+                        if (trackingActive) return@LaunchedEffect
+                        recoveryChecked = true
+                        SessionRecovery.salvage(applicationContext)
                     }
 
                     val nestedScrollConnection = remember {

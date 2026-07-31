@@ -147,6 +147,11 @@ class TrackingService : LifecycleService() {
     // Session start time - when user clicked Start (used for correct session date)
     private var sessionStartTimeMs: Long = 0
 
+    /** Disk snapshot of the in-flight session, so a kill mid-trip is recoverable. */
+    private val checkpointStore by lazy { SessionCheckpointStore(applicationContext) }
+    /** Timer ticks since the last snapshot; see [SessionCheckpointStore.CHECKPOINT_INTERVAL_SECONDS]. */
+    private var ticksSinceCheckpoint = 0
+
     // Sensor data for hybrid
     private var currentAcceleration = 0f
     private var currentRotationRate = 0f
@@ -347,9 +352,41 @@ class TrackingService : LifecycleService() {
                 // -1 = dismissed; auto-switch timer still runs toward 2-minute mark
                 manualMismatchNotifiedAtMs = -1L
             }
-            null -> { /* system restart; tracking state is false until user starts again */ }
+            // START_STICKY restart after the process was killed. Every accumulator
+            // is back at zero here, so without this the trip in progress is simply
+            // gone — no crash, no log, nothing for the user to notice until they
+            // look for a session that never appeared.
+            null -> resumeFromCheckpointIfAny()
         }
         return Service.START_STICKY
+    }
+
+    /**
+     * Recover an in-flight session after a sticky restart.
+     *
+     * A recent snapshot is resumed — tracking continues with the banked distance,
+     * route and segments intact, losing only whatever accrued since the last
+     * write. An older one is treated as an abandoned trip: the user has long
+     * since walked away, so resuming would splice two unrelated journeys
+     * together. Those are handed to [SessionRecovery] to be saved as a completed
+     * session instead of resumed.
+     */
+    private fun resumeFromCheckpointIfAny() {
+        if (_isTracking.value) return
+        lifecycleScope.launch {
+            val checkpoint = checkpointStore.read() ?: return@launch
+            val age = System.currentTimeMillis() - checkpoint.savedAtMs
+            if (age > SessionCheckpointStore.RESUME_MAX_AGE_MS) {
+                android.util.Log.w(
+                    "TrackingService",
+                    "Checkpoint is ${age / 60_000}min old — salvaging as a finished session rather than resuming"
+                )
+                SessionRecovery.salvage(applicationContext)
+                return@launch
+            }
+            restoreFromCheckpoint(checkpoint)
+            startTracking(resuming = true)
+        }
     }
 
     /**
@@ -426,7 +463,14 @@ class TrackingService : LifecycleService() {
         stopTracking()
     }
 
-    private fun startTracking() {
+    /**
+     * @param resuming true when continuing a session recovered from a checkpoint
+     *   after the service was killed. Detector state is still cold-started — that
+     *   is wanted — but the session accumulators (start time, route, segments,
+     *   altitudes, top speed) are left alone instead of being zeroed, because
+     *   [restoreFromCheckpoint] has just populated them.
+     */
+    private fun startTracking(resuming: Boolean = false) {
         if (_isTracking.value) return
         userPrefsManager.setPendingResumeAfterIdleAutoStop(false)
 
@@ -541,21 +585,23 @@ class TrackingService : LifecycleService() {
         activityStartTime = System.currentTimeMillis()
         activityDurationSeconds = 0
 
-        // Record session start for correct date when saving (e.g. session started at 11pm, saved at 12am next day)
-        sessionStartTimeMs = System.currentTimeMillis()
-
-        sessionTopSpeedMps = 0.0
-        pathPoints.clear()
         lastPathRecordTime = 0
         lastRefinedActivity = ActivityType.IDLE
-        segmentList.clear()
-        segmentActivity = ActivityType.IDLE
-        segmentStartTimeMs = System.currentTimeMillis()
-        segmentStartDistanceM = 0.0
-        startingAltitude = null
-        stoppingAltitude = null
-        minAltitude = null
-        maxAltitude = null
+        if (!resuming) {
+            // Record session start for correct date when saving (e.g. session started at 11pm, saved at 12am next day)
+            sessionStartTimeMs = System.currentTimeMillis()
+
+            sessionTopSpeedMps = 0.0
+            pathPoints.clear()
+            segmentList.clear()
+            segmentActivity = ActivityType.IDLE
+            segmentStartTimeMs = System.currentTimeMillis()
+            segmentStartDistanceM = 0.0
+            startingAltitude = null
+            stoppingAltitude = null
+            minAltitude = null
+            maxAltitude = null
+        }
         deadReckonStartMs = 0
         lastGpsDistanceUpdateMs = 0
 
@@ -640,6 +686,16 @@ class TrackingService : LifecycleService() {
     }
 
     fun stopTracking() {
+        // Drop the checkpoint here rather than in resetSession(), because this is
+        // the one choke point every stop path passes through — the two notification
+        // actions (stop-and-save, discard) never call resetSession(). Leaving it
+        // would let SessionRecovery re-save the trip on next launch: a duplicate
+        // after a save, and a resurrection of a session the user deliberately
+        // discarded. The interactive paths persist from locals captured before
+        // this call, so clearing now does not endanger the save in flight.
+        ticksSinceCheckpoint = 0
+        lifecycleScope.launch { checkpointStore.clear() }
+
         // If this is a manual stop (NOT an idle-timeout auto-stop), record the timestamp so
         // AutoStartMonitorService can suppress auto-restart for 30 seconds.
         if (!userPrefsManager.getPendingResumeAfterIdleAutoStop()) {
@@ -798,7 +854,75 @@ class TrackingService : LifecycleService() {
         android.util.Log.d("TrackingService", "Vehicle profile reloaded: $vehicleProfile")
     }
 
+    /**
+     * Snapshot the accumulators for [SessionCheckpoint].
+     *
+     * Must be called from the same dispatcher that mutates the session lists (the
+     * timer's main dispatcher). The `toList()` copies are what make the write
+     * safe to hand to an IO thread afterwards — serialising the live mutable
+     * lists off-thread would race with location updates appending to them.
+     */
+    private fun captureCheckpoint(): SessionCheckpoint = SessionCheckpoint(
+        sessionStartTimeMs = sessionStartTimeMs,
+        savedAtMs = System.currentTimeMillis(),
+        stats = _sessionStats.value,
+        routePath = pathPoints.toList(),
+        segments = segmentList.toList(),
+        openSegmentActivity = segmentActivity,
+        openSegmentStartTimeMs = segmentStartTimeMs,
+        openSegmentStartDistanceM = segmentStartDistanceM
+    )
+
+    /** Capture now on the caller's thread, then persist off it. */
+    private fun writeCheckpoint() {
+        if (!_isTracking.value) return
+        val snapshot = captureCheckpoint()
+        ticksSinceCheckpoint = 0
+        lifecycleScope.launch { checkpointStore.write(snapshot) }
+    }
+
+    /**
+     * Restore a snapshot into the live accumulators after the service was killed
+     * and restarted by START_STICKY.
+     *
+     * Detector state is intentionally not restored — see [SessionCheckpoint].
+     * Classification warms up again from scratch while the banked distance,
+     * steps, route and segments carry on from where they were.
+     */
+    private fun restoreFromCheckpoint(checkpoint: SessionCheckpoint) {
+        sessionStartTimeMs = checkpoint.sessionStartTimeMs
+        _sessionStats.value = checkpoint.stats
+        _sessionDuration.value = checkpoint.stats.totalDuration
+        _sessionDistance.value = checkpoint.stats.totalDistance
+        _sessionSteps.value = checkpoint.stats.totalSteps
+
+        pathPoints.clear()
+        pathPoints.addAll(checkpoint.routePath)
+        segmentList.clear()
+        segmentList.addAll(checkpoint.segments)
+        segmentActivity = checkpoint.openSegmentActivity
+        segmentStartTimeMs = checkpoint.openSegmentStartTimeMs
+        segmentStartDistanceM = checkpoint.openSegmentStartDistanceM
+
+        totalElevationGain = checkpoint.stats.elevationGain
+        totalElevationLoss = checkpoint.stats.elevationLoss
+        startingAltitude = checkpoint.stats.startingAltitude
+        minAltitude = checkpoint.stats.minAltitude
+        maxAltitude = checkpoint.stats.maxAltitude
+        sessionTopSpeedMps = checkpoint.stats.topSpeedMps
+
+        val lostSeconds = (System.currentTimeMillis() - checkpoint.savedAtMs) / 1000
+        android.util.Log.w(
+            "TrackingService",
+            "Recovered session from checkpoint: ${checkpoint.distanceMeters}m banked, " +
+                "~${lostSeconds}s lost since last snapshot"
+        )
+    }
+
     fun resetSession() {
+        // The session is over — whatever happens next must not inherit its state.
+        ticksSinceCheckpoint = 0
+        lifecycleScope.launch { checkpointStore.clear() }
         _sessionDuration.value = 0L
         _sessionDistance.value = 0.0
         _sessionSteps.value = 0
@@ -2619,6 +2743,9 @@ class TrackingService : LifecycleService() {
                         segmentActivity = activity
                         segmentStartTimeMs = tickNow
                         segmentStartDistanceM = _sessionDistance.value
+                        // A closed segment is a natural checkpoint boundary — snapshot
+                        // here so a kill can't lose a whole leg of the journey.
+                        writeCheckpoint()
                     }
 
                     val breakdown = currentStats.breakdown.toMutableMap()
@@ -2642,6 +2769,12 @@ class TrackingService : LifecycleService() {
                         caloriesBurned = currentStats.caloriesBurned + caloriesDelta,
                         breakdown = breakdown
                     ))
+
+                    // Periodic snapshot. Placed last so it captures this tick's
+                    // stats rather than the previous one's.
+                    if (++ticksSinceCheckpoint >= SessionCheckpointStore.CHECKPOINT_INTERVAL_SECONDS) {
+                        writeCheckpoint()
+                    }
                 }
             }
         }

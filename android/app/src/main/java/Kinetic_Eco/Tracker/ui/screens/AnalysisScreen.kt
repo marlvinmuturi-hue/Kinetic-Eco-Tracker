@@ -45,10 +45,15 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import Kinetic_Eco.Tracker.R
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import Kinetic_Eco.Tracker.data.ActivityType
 import Kinetic_Eco.Tracker.data.SessionStats
 import Kinetic_Eco.Tracker.data.UnitSystem
 import Kinetic_Eco.Tracker.services.Co2EquivalencyService
+import Kinetic_Eco.Tracker.services.UserPreferencesManager
+import Kinetic_Eco.Tracker.ui.components.Co2CalculatorCard
 import Kinetic_Eco.Tracker.ui.components.RouteMapMultiSessionView
 import Kinetic_Eco.Tracker.ui.theme.Green500
 import Kinetic_Eco.Tracker.ui.utils.format
@@ -84,6 +89,23 @@ fun AnalysisScreen(
 ) {
     val colorScheme = MaterialTheme.colorScheme
     val scroll = rememberScrollState()
+
+    // Vehicle profile for the manual calculator. Reloaded on every resume rather
+    // than remembered once, because the user edits it over in Settings and would
+    // otherwise come back to a card still quoting their old vehicle's factor.
+    val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val userPrefsManager = remember(context) { UserPreferencesManager(context.applicationContext) }
+    var vehicleProfile by remember { mutableStateOf(userPrefsManager.loadVehicleProfile()) }
+    DisposableEffect(lifecycleOwner, userPrefsManager) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                vehicleProfile = userPrefsManager.loadVehicleProfile()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     val allSessions by analyticsViewModel.getAllSessions(userId)
         .collectAsStateWithLifecycle(initialValue = emptyList())
@@ -173,6 +195,15 @@ fun AnalysisScreen(
             data = weeklyReport,
             weekStartMs = thisWeekCutoff,
             unitSystem = unitSystem
+        )
+
+        // ── Manual CO₂ calculator ─────────────────────────────────────────────
+        // Sits directly under the weekly report so the "what did I do?" figure is
+        // immediately followed by "what would I do?". Purely local — see
+        // [Co2Calculator]; nothing entered here is persisted.
+        Co2CalculatorCard(
+            unitSystem = unitSystem,
+            vehicleProfile = vehicleProfile
         )
 
         // ── AI Analysis section (reuses existing AnalyticsScreen helpers) ─────

@@ -416,23 +416,21 @@ class SessionManager(private val context: Context) {
         }
     }
     
+    /**
+     * @param distance metres travelled
+     * @return (emitted kg, conserved kg) — exactly one is non-zero
+     *
+     * Delegates to [Co2Calculator] rather than doing the arithmetic here. The
+     * manual calculator on the Analysis tab calls the same object, which is what
+     * stops a hand-entered 12 km drive from disagreeing with a tracked one.
+     */
     fun calculateCO2(
         distance: Double,
         activity: ActivityType,
         vehicleProfile: VehicleProfile = VehicleProfile.DEFAULT
     ): Pair<Double, Double> {
-        val co2Factor = CO2Factors.getFactor(activity, vehicleProfile)
-        val co2Impact = co2Factor * (distance / 1000.0) // Convert meters to km
-        
-        return if (co2Impact > 0) {
-            // Emissions
-            Pair(co2Impact, 0.0)
-        } else if (co2Impact < 0) {
-            // Conservation
-            Pair(0.0, Math.abs(co2Impact))
-        } else {
-            Pair(0.0, 0.0)
-        }
+        val estimate = Co2Calculator.estimateFromMeters(distance, activity, vehicleProfile)
+        return Pair(estimate.emittedKg, estimate.savedKg)
     }
     
     /**

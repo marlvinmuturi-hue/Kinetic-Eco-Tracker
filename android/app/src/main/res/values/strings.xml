@@ -604,6 +604,26 @@
     <!-- Analysis screen — tab title, headers, labels -->
     <string name="analysis_tab_title">Analysis</string>
     <string name="analysis_tab_subtitle">AI insights &amp; carbon footprint</string>
+
+    <!-- Manual CO₂ calculator (Analysis tab) -->
+    <string name="co2_calc_title">CO₂ calculator</string>
+    <string name="co2_calc_subtitle">Work out a trip you haven\'t tracked</string>
+    <string name="co2_calc_mode_label">Mode</string>
+    <string name="co2_calc_distance_label">Distance (%1$s)</string>
+    <string name="co2_calc_prompt">Pick a mode and enter a distance to see the estimate.</string>
+    <string name="co2_calc_emits">Emits</string>
+    <string name="co2_calc_saves">Saves</string>
+    <string name="co2_calc_neutral">No CO₂ either way.</string>
+    <string name="co2_calc_rate">%1$s per %2$s</string>
+    <string name="co2_calc_profile_note">Uses your vehicle profile, so this matches a tracked trip.</string>
+    <string name="co2_calc_profile_note_custom">Using the vehicle set below, not your saved profile.</string>
+    <string name="co2_calc_not_saved">Estimates only — nothing here is added to your sessions or totals.</string>
+    <string name="co2_calc_clear">Clear</string>
+    <string name="co2_calc_customise_vehicle">Change vehicle</string>
+    <string name="co2_calc_reset_vehicle">Use my profile</string>
+    <string name="co2_calc_energy_label">Energy used</string>
+    <string name="co2_calc_energy_fuel_note">Fuel energy — a combustion engine turns roughly a quarter of it into motion.</string>
+    <string name="co2_calc_energy_battery_note">Drawn from the battery.</string>
     <string name="analysis_ai_card_title">AI activity analysis</string>
     <string name="analysis_co2_this_week">CO₂ this week</string>
     <string name="analysis_legend_saved">Saved (%1$.2f kg)</string>

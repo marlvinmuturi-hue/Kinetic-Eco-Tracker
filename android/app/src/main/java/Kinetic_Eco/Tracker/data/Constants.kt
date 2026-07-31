@@ -66,6 +66,64 @@ object CO2Factors {
     }
 }
 
+/**
+ * Energy the **vehicle** consumes per km, in watt-hours.
+ *
+ * Deliberately separate from [CalorieFactorsPerHour], which is energy the
+ * *person* spends. A 40 km drive burns a few hundred calories of human effort
+ * and tens of kWh of fuel; conflating the two would be meaningless.
+ *
+ * Two properties that differ from [CO2Factors] and matter to callers:
+ *  - **Always unsigned.** CO₂ factors go negative to encode "saved versus the
+ *    car trip you didn't take"; energy has no such convention. A train ride
+ *    consumes energy even though it saves CO₂.
+ *  - **Zero for human-powered modes**, rather than a saving. Walking has no
+ *    vehicle to consume anything. The calories the walker burns live in
+ *    [CalorieFactorsPerHour].
+ *
+ * Figures are illustrative reference values in the same spirit as [CO2Factors]
+ * — good enough to rank modes against each other, not a certified LCA.
+ */
+object EnergyFactors {
+
+    /** Wh per km consumed by [activity], given the user's [profile]. */
+    fun getWhPerKm(activity: ActivityType, profile: VehicleProfile = VehicleProfile.DEFAULT): Double {
+        return when (activity) {
+            ActivityType.DRIVING -> IceFuel.energyWhFromCcBandAndBody(
+                ccBand = profile.drivingCcBand,
+                bodyType = profile.bodyType,
+                fuel = profile.iceFuel
+            )
+            ActivityType.ELECTRIC_VEHICLE ->
+                profile.electricVehicleClass.baseWhPerKm * profile.electricMotorPower.multiplier
+            ActivityType.TRAIN -> profile.trainPropulsion.whPerKm
+            ActivityType.FLYING -> profile.aircraftCategory.whPerKm
+            // Mirrors the MOTORCYCLE branch in CO2Factors.getFactor: electric
+            // reads the two-wheeler base, combustion is a hatchback scaled by
+            // MOTORCYCLE_VS_CAR. Kept in step with that function by hand.
+            ActivityType.MOTORCYCLE -> when (profile.primaryFuelType) {
+                PrimaryFuelType.ELECTRIC ->
+                    ElectricVehicleClass.TWO_WHEELER.baseWhPerKm * profile.electricMotorPower.multiplier
+                PrimaryFuelType.PETROL, PrimaryFuelType.DIESEL ->
+                    IceFuel.energyWhFromCcBandAndBody(
+                        profile.drivingCcBand,
+                        VehicleBodyType.HATCHBACK,
+                        profile.iceFuel
+                    ) * MOTORCYCLE_VS_CAR
+            }
+            // Human-powered or stationary — no vehicle energy.
+            ActivityType.IDLE,
+            ActivityType.WALKING,
+            ActivityType.RUNNING,
+            ActivityType.CYCLING -> 0.0
+        }
+    }
+
+    /** Share of an equivalent car's consumption a motorcycle uses. Matches the
+     *  0.42 factor applied to the MOTORCYCLE CO₂ branch. */
+    private const val MOTORCYCLE_VS_CAR = 0.42
+}
+
 // Calories burned per hour (approximate average person)
 object CalorieFactorsPerHour {
     const val IDLE = 60

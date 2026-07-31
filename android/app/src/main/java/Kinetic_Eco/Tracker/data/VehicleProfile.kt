@@ -49,12 +49,21 @@ enum class PrimaryFuelType {
     }
 }
 
-enum class DrivingEngineCcBand(val co2KgPerKm: Double) {
-    UP_TO_1000(0.13),
-    CC_1001_1400(0.15),
-    CC_1401_1800(0.17),
-    CC_1801_2500(0.21),   // Standard car reference (IPCC/EEA 0.21 kg CO₂/km)
-    OVER_2500(0.26);
+/**
+ * @param co2KgPerKm tailpipe CO₂ for a petrol sedan in this displacement band.
+ * @param whPerKm **fuel** energy consumed, not electrical — the chemical energy
+ *   in the petrol burned. Sized from the band's own CO₂ figure at design time
+ *   (petrol ≈ 2.31 kg CO₂/L and ≈ 9.7 kWh/L), then rounded. Stated here rather
+ *   than computed at runtime so the two numbers can be tuned independently.
+ *   Expect it to dwarf an EV's figure: a combustion engine wastes roughly
+ *   three-quarters of it as heat.
+ */
+enum class DrivingEngineCcBand(val co2KgPerKm: Double, val whPerKm: Double) {
+    UP_TO_1000(0.13, 545.0),
+    CC_1001_1400(0.15, 630.0),
+    CC_1401_1800(0.17, 715.0),
+    CC_1801_2500(0.21, 880.0),   // Standard car reference (IPCC/EEA 0.21 kg CO₂/km)
+    OVER_2500(0.26, 1090.0);
 
     companion object {
         fun fromStoredName(name: String?): DrivingEngineCcBand {
@@ -108,6 +117,15 @@ enum class IceFuel {
     companion object {
         private const val DIESEL_VS_PETROL_SAME_CC = 1.10
 
+        /**
+         * Diesel's **energy** premium over petrol at the same displacement and
+         * body — deliberately smaller than [DIESEL_VS_PETROL_SAME_CC]. Diesel
+         * carries more carbon *and* more energy per litre (≈2.68 kg CO₂/L and
+         * ≈10.7 kWh/L against petrol's 2.31 and 9.7), so the same +10 % CO₂
+         * works out to only about +5 % energy.
+         */
+        private const val DIESEL_ENERGY_VS_PETROL_SAME_CC = 1.05
+
         fun fromStoredName(name: String?): IceFuel {
             if (name.isNullOrBlank()) return DEFAULT
             return try {
@@ -143,6 +161,26 @@ enum class IceFuel {
          *  body-type aware estimates yet. Treats the vehicle as a sedan. */
         fun co2FromCcBand(ccBand: DrivingEngineCcBand, fuel: IceFuel): Double =
             co2FromCcBandAndBody(ccBand, VehicleBodyType.SEDAN, fuel)
+
+        /**
+         * Fuel energy in Wh/km, mirroring [co2FromCcBandAndBody].
+         *
+         * Reuses [VehicleBodyType.co2Multiplier] deliberately: the physical
+         * drivers of the body-type penalty are mass and drag, and those raise
+         * fuel burn and CO₂ by the same proportion. A separate energy
+         * multiplier would just be the same numbers twice, free to drift apart.
+         */
+        fun energyWhFromCcBandAndBody(
+            ccBand: DrivingEngineCcBand,
+            bodyType: VehicleBodyType,
+            fuel: IceFuel
+        ): Double {
+            val base = ccBand.whPerKm * bodyType.co2Multiplier
+            return when (fuel) {
+                PETROL -> base
+                DIESEL -> base * DIESEL_ENERGY_VS_PETROL_SAME_CC
+            }
+        }
     }
 }
 
@@ -161,10 +199,17 @@ enum class IceFuel {
  * The numbers are reference values for an **average** motor in each class;
  * the actual per-km factor combines them with [ElectricMotorPowerBand].
  */
-enum class ElectricVehicleClass(val baseCo2KgPerKm: Double) {
-    TWO_WHEELER(0.018),
-    THREE_WHEELER(0.035),
-    CAR(0.053);
+/**
+ * @param baseCo2KgPerKm well-to-wheel CO₂ for an average motor in this class.
+ * @param baseWhPerKm energy drawn **from the battery** per km, for an average
+ *   motor in this class. These are independent real-world reference figures,
+ *   not a back-calculation of [baseCo2KgPerKm] — so dividing one by the other
+ *   will not yield a clean grid-intensity number, by design.
+ */
+enum class ElectricVehicleClass(val baseCo2KgPerKm: Double, val baseWhPerKm: Double) {
+    TWO_WHEELER(0.018, 30.0),
+    THREE_WHEELER(0.035, 60.0),
+    CAR(0.053, 165.0);
 
     companion object {
         val DEFAULT = CAR
@@ -236,9 +281,16 @@ enum class ElectricMotorPowerBand(val multiplier: Double) {
  *  Electric rail:       0.04 kg/km direct → saves 0.21 − 0.04 = 0.17 kg/km
  *  Diesel-electric:    0.078 kg/km direct → saves 0.21 − 0.078 = 0.132 kg/km
  */
-enum class TrainPropulsion(val co2KgPerKm: Double) {
-    ELECTRIC(-0.17),
-    DIESEL_ELECTRIC(-0.132);
+/**
+ * @param co2KgPerKm **signed** — negative, because rail is scored as a saving
+ *   against the car trip it replaced (see the class doc above).
+ * @param whPerKm **unsigned** energy actually consumed per passenger-km. Energy
+ *   is never a saving: riding a train burns energy even when it avoids CO₂.
+ *   Electric figures are traction electricity; diesel-electric is fuel energy.
+ */
+enum class TrainPropulsion(val co2KgPerKm: Double, val whPerKm: Double) {
+    ELECTRIC(-0.17, 55.0),
+    DIESEL_ELECTRIC(-0.132, 105.0);
 
     companion object {
         fun fromStoredName(name: String?): TrainPropulsion {
@@ -257,10 +309,15 @@ enum class TrainPropulsion(val co2KgPerKm: Double) {
 /**
  * Aircraft category (typical jet/turboprop mix — not electric propulsion, which is still uncommon).
  */
-enum class AircraftCategory(val co2KgPerKm: Double) {
-    REGIONAL_TURBOPROP(0.16),
-    NARROW_BODY_JET(0.255),
-    WIDE_BODY_LONG_HAUL(0.31);
+/**
+ * @param co2KgPerKm per passenger-km.
+ * @param whPerKm jet-fuel energy per passenger-km, sized from the same CO₂
+ *   figure at design time (jet fuel ≈ 2.5 kg CO₂/L and ≈ 9.6 kWh/L).
+ */
+enum class AircraftCategory(val co2KgPerKm: Double, val whPerKm: Double) {
+    REGIONAL_TURBOPROP(0.16, 615.0),
+    NARROW_BODY_JET(0.255, 980.0),
+    WIDE_BODY_LONG_HAUL(0.31, 1190.0);
 
     companion object {
         fun fromStoredName(name: String?): AircraftCategory {

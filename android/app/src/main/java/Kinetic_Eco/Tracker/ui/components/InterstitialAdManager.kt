@@ -11,6 +11,7 @@ import com.google.android.gms.ads.LoadAdError
 import com.google.android.gms.ads.interstitial.InterstitialAd
 import com.google.android.gms.ads.interstitial.InterstitialAdLoadCallback
 import Kinetic_Eco.Tracker.R
+import Kinetic_Eco.Tracker.services.EntitlementRepository
 
 private const val TAG = "InterstitialAdManager"
 
@@ -50,6 +51,10 @@ internal object InterstitialAdManager {
      * loading, or if the session cap has been reached.
      */
     fun preload(context: Context) {
+        // Premium users never see an interstitial, so never fetch one. Checked
+        // before the request rather than at show time: a downloaded-then-discarded
+        // ad still costs the subscriber bandwidth and battery.
+        if (EntitlementRepository.isPremiumNow()) return
         // Do not request ads before UMP consent permits it (GDPR/EEA/UK).
         if (!ConsentManager.canRequestAds.value) return
         if (shownThisSession || loading || pending != null) return
@@ -81,6 +86,9 @@ internal object InterstitialAdManager {
      * (session cap reached, cooldown active, or no ad ready).
      */
     fun showIfReady(activity: Activity): Boolean {
+        // Belt and braces alongside the preload guard: entitlement can flip to
+        // premium between an ad being cached and the moment it would be shown.
+        if (EntitlementRepository.isPremiumNow()) return false
         if (shownThisSession) return false
         val now = System.currentTimeMillis()
         if (now - lastShownMs < COOLDOWN_MS) return false

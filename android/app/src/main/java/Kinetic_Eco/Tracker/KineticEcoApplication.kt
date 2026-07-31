@@ -5,6 +5,7 @@ import android.util.Log
 import Kinetic_Eco.Tracker.ui.components.AppOpenAdManager
 import com.google.firebase.FirebaseApp
 import com.google.firebase.appcheck.AppCheckProviderFactory
+import Kinetic_Eco.Tracker.services.EntitlementRepository
 import com.google.firebase.appcheck.FirebaseAppCheck
 import com.google.firebase.appcheck.playintegrity.PlayIntegrityAppCheckProviderFactory
 import kotlinx.coroutines.CoroutineScope
@@ -33,6 +34,12 @@ class KineticEcoApplication : Application() {
         // This only wires ProcessLifecycleOwner/ActivityLifecycleCallbacks observers
         // and a consent watcher — it does not request any ad until consent permits.
         AppOpenAdManager.register(this, applicationScope)
+
+        // Entitlement must be resolved before anything asks whether to show an ad.
+        // Started here so the cached value is applied on the very first frame —
+        // a subscriber seeing a banner flash while Firestore connects reads as the
+        // app forgetting they paid.
+        EntitlementRepository.start(this)
     }
 
     /**

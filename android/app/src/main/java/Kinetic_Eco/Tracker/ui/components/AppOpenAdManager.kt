@@ -15,6 +15,7 @@ import com.google.android.gms.ads.FullScreenContentCallback
 import com.google.android.gms.ads.LoadAdError
 import com.google.android.gms.ads.appopen.AppOpenAd
 import Kinetic_Eco.Tracker.R
+import Kinetic_Eco.Tracker.services.EntitlementRepository
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -133,6 +134,8 @@ object AppOpenAdManager : DefaultLifecycleObserver, Application.ActivityLifecycl
 
     private fun loadAd() {
         val ctx = appContext ?: return
+        // Premium users never see an app-open ad, so never fetch one.
+        if (EntitlementRepository.isPremiumNow()) return
         if (!ConsentManager.canRequestAds.value) return
         if (loading || isAdAvailable()) return
         loading = true
@@ -160,6 +163,9 @@ object AppOpenAdManager : DefaultLifecycleObserver, Application.ActivityLifecycl
 
     private fun showAdIfAvailable() {
         if (showing) return
+        // Independent of [gateOpen], which tracks where the user is in the app.
+        // Entitlement is a separate axis and must not be folded into it.
+        if (EntitlementRepository.isPremiumNow()) return
         if (!gateOpen) return
         if (!ConsentManager.canRequestAds.value) return
         val now = System.currentTimeMillis()

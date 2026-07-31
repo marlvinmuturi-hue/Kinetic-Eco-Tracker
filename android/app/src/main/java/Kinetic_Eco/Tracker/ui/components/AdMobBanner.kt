@@ -46,6 +46,7 @@ import com.google.android.gms.ads.AdView
 import com.google.android.gms.ads.LoadAdError
 import com.google.android.gms.ads.MobileAds
 import Kinetic_Eco.Tracker.R
+import Kinetic_Eco.Tracker.services.EntitlementRepository
 import kotlin.coroutines.resume
 import kotlin.coroutines.suspendCoroutine
 import kotlin.math.min
@@ -110,12 +111,19 @@ fun AdMobBanner(
 ) {
     val context = LocalContext.current
     val configuration = LocalConfiguration.current
+    // Premium removes the banner entirely. Handled in the if/else chain below rather
+    // than by an early return, per this function's slot-order convention.
+    // Guarded here rather than only at the call site so a future caller cannot
+    // reintroduce ads for subscribers by forgetting the check.
+    val isPremium by EntitlementRepository.isPremium.collectAsStateWithLifecycle()
     // Gate on UMP consent — do not load until ConsentManager permits ad requests.
     val canRequestAds by ConsentManager.canRequestAds.collectAsStateWithLifecycle()
     var sdkReady by remember { mutableStateOf(false) }
     var dismissed by rememberSaveable { mutableStateOf(false) }
-    LaunchedEffect(canRequestAds) {
-        if (canRequestAds) {
+    LaunchedEffect(canRequestAds, isPremium) {
+        // Keyed on isPremium so the Mobile Ads SDK is never even initialised for a
+        // subscriber — initialising it starts network activity of its own.
+        if (canRequestAds && !isPremium) {
             awaitMobileAdsInit(context.applicationContext)
             sdkReady = true
         }
@@ -124,7 +132,11 @@ fun AdMobBanner(
         dismissed = false
     }
 
-    if (dismissed) {
+    if (isPremium) {
+        // No AdView is constructed and no request is made. Merely hiding a loaded
+        // banner would still spend the subscriber's data fetching an ad they never see.
+        Spacer(Modifier.height(0.dp))
+    } else if (dismissed) {
         Spacer(Modifier.height(0.dp))
     } else if (!canRequestAds || !sdkReady) {
         Spacer(Modifier.height(0.dp))

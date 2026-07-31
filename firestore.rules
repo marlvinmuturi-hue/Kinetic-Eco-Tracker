@@ -23,6 +23,15 @@ service cloud.firestore {
       match /fcmTokens/{tokenId} {
         allow read, write, delete: if request.auth != null && request.auth.uid == userId;
       }
+
+      // Premium entitlement: the owner may read their own, and no client may
+      // write one. Purchases are verified server-side against the Play Developer
+      // API and written with the Admin SDK, which bypasses these rules entirely.
+      // A client that can write its own entitlement has no paywall at all.
+      match /entitlements/{entitlementId} {
+        allow read: if request.auth != null && request.auth.uid == userId;
+        allow write: if false;
+      }
     }
 
     // ── Top-level sessions (legacy / backward-compat) ────────────────────────

@@ -146,3 +146,22 @@ test('any authenticated user may create feedback but cannot read it back', async
   await seed('feedback/f2', { text: 'x' });
   await assertFails(getDoc(doc(db(ALICE), 'feedback', 'f2')));
 });
+
+// ── Premium entitlements & Play purchase index ───────────────────────────────
+// The paywall is only as strong as these two rules: a client that can write its
+// own entitlement, or claim someone else's purchase token, has no paywall at all.
+
+test('owner may read their entitlement but nobody may write one', async () => {
+  await seed(`users/${ALICE}/entitlements/premium`, { active: true, expiryMs: 4102444800000 });
+  await assertSucceeds(getDoc(doc(db(ALICE), 'users', ALICE, 'entitlements', 'premium')));
+  await assertFails(getDoc(doc(db(BOB), 'users', ALICE, 'entitlements', 'premium')));
+  await assertFails(
+    setDoc(doc(db(ALICE), 'users', ALICE, 'entitlements', 'premium'), { active: true }),
+  );
+});
+
+test('the Play purchase index is invisible and unwritable to clients', async () => {
+  await seed('playPurchases/token-123', { uid: ALICE });
+  await assertFails(getDoc(doc(db(ALICE), 'playPurchases', 'token-123')));
+  await assertFails(setDoc(doc(db(BOB), 'playPurchases', 'token-123'), { uid: BOB }));
+});

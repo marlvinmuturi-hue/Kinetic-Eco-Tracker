@@ -108,5 +108,14 @@ service cloud.firestore {
     match /analysisRateLimit/{userId} {
       allow read, write: if false;
     }
+
+    // ── Play purchase index (purchaseToken → uid) ───────────────────────────
+    // Written by verifyPlayPurchase so a real-time developer notification, which
+    // identifies a purchase but not a user, can find whose entitlement to update.
+    // Client-readable it would leak purchase tokens; client-writable it would let
+    // anyone claim someone else's purchase. Cloud Functions bypass these rules.
+    match /playPurchases/{purchaseToken} {
+      allow read, write: if false;
+    }
   }
 }

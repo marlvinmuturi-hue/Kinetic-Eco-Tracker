@@ -1307,3 +1307,12 @@ exports.healthCheck = functions.https.onRequest((req, res) => {
     message: 'Kinetic Eco API is running'
   });
 });
+
+// ── Google Play subscriptions ────────────────────────────────────────────────
+// Required after admin.initializeApp() above: playBilling.js resolves Firestore
+// lazily, but keeping the require here makes the ordering dependency obvious.
+// See playBilling.js for the Play Console / IAM setup these functions assume.
+const playBilling = require('./playBilling');
+
+exports.verifyPlayPurchase = playBilling.verifyPlayPurchase;
+exports.playBillingRtdn = playBilling.playBillingRtdn;

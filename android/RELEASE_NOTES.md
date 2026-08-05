@@ -1,4 +1,20 @@
-# Release Notes — V1.9.14 (versionCode 27)
+# Release Notes — V1.9.15 (versionCode 28)
+
+> **28 is the single release that carries everything. Production is on versionCode
+> 20**, so users jump 20 → 28 in one step: Play Billing, the paywall, the
+> week-window fix, the calculator changes, recurring-trip mining, Room schema v9 and
+> kotlinx-serialization 1.8.1. versionCodes 21–27 were build/test iterations and
+> none of them should be promoted — the notes below record why each was superseded.
+>
+> ⚠️ **The Room v8 → v9 migration makes this hard to reverse.** `AppDatabase` has no
+> `fallbackToDestructiveMigrationOnDowngrade`, so once a device is on v9 an older
+> build cannot open its database. Halting the rollout protects users who have not
+> updated; it does not rescue those who have. **Ship internal first, then production
+> as a staged rollout** — the percentage dial is the only brake available.
+>
+> Two things are untested at runtime: saving a newly tracked session (the emulator
+> cannot supply GPS velocity, so no session ever completed), and this build on
+> physical hardware updating in place from Play.
 
 > ✅ **Purchases work end to end as of versionCode 26** — a real purchase completed on
 > a Play-installed build, `verifyPlayPurchase` wrote the entitlement, and `isPremium`

@@ -35,8 +35,8 @@ android {
         applicationId = "com.kineticecotracker"
         minSdk = 24
         targetSdk = 36
-        versionCode = 20
-        versionName = "V1.9.7"
+        versionCode = 27
+        versionName = "V1.9.14"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "FUNCTIONS_BASE_URL", "\"https://us-central1-gen-lang-client-0114974661.cloudfunctions.net\"")
@@ -93,10 +93,37 @@ android {
         buildConfig = true
     }
 
+    // Ship the exported Room schemas into the androidTest APK so MigrationTestHelper
+    // can load them. Without this the migration tests fail with a FileNotFoundException
+    // for `<db class>/N.json` — the schemas exist on disk, they just aren't packaged.
+    sourceSets {
+        getByName("androidTest").assets.srcDirs("$projectDir/schemas")
+    }
+
 }
 
 ksp {
     arg("room.schemaLocation", "$projectDir/schemas")
+}
+
+// room-testing 2.8.3's schema-bundle serializers are compiled against
+// kotlinx-serialization 1.8.1, but `kotlinx-serialization-bom:1.7.3` arrives
+// transitively and pins it `strictly 1.7.3`.
+//
+// Applied to ALL configurations, not just androidTest: the test APK shares a
+// classloader with the app APK, so forcing it on the test classpath alone left the
+// app's 1.7.3 classes winning at runtime and MigrationTestHelper still died with
+// AbstractMethodError on GeneratedSerializer.typeParametersSerializers().
+//
+// This therefore changes what the shipped app resolves. 1.7.3 → 1.8.1 is a minor bump
+// and nothing in this codebase uses kotlinx-serialization directly — it arrives only
+// transitively (Firebase) — but the app's Firebase paths should be smoke-tested after
+// any change here, not just the unit suite.
+configurations.configureEach {
+    resolutionStrategy {
+        force("org.jetbrains.kotlinx:kotlinx-serialization-json:1.8.1")
+        force("org.jetbrains.kotlinx:kotlinx-serialization-core:1.8.1")
+    }
 }
 
 dependencies {
@@ -153,6 +180,11 @@ dependencies {
     // Google Play Services Location
     implementation("com.google.android.gms:play-services-location:21.2.0")
 
+    // Google Play Billing — the purchase flow only. Whether a purchase is real,
+    // and whether it is still valid, is decided by the verifyPlayPurchase Cloud
+    // Function against the Play Developer API; this SDK just reports tokens up.
+    implementation("com.android.billingclient:billing-ktx:9.1.0")
+
     // AdMob (banner)
     implementation("com.google.android.gms:play-services-ads:25.4.0")
     // User Messaging Platform (UMP) — GDPR/consent gathering before requesting ads
@@ -184,6 +216,10 @@ dependencies {
     // Testing
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
+    // MigrationTestHelper — replays a real v8 database through the v8→v9 migration.
+    // A failed Room migration on a user's device is a data-loss event, and the only
+    // honest way to test one is against the exported schemas in app/schemas.
+    androidTestImplementation("androidx.room:room-testing:2.8.3")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
     androidTestImplementation(platform("androidx.compose:compose-bom:2024.02.00"))
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")

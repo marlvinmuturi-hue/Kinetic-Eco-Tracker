@@ -7,7 +7,7 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [SessionEntity::class], version = 8, exportSchema = true)
+@Database(entities = [SessionEntity::class], version = 9, exportSchema = true)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun sessionDao(): SessionDao
 
@@ -20,9 +20,28 @@ abstract class AppDatabase : RoomDatabase() {
          * existing local session is treated as un-synced and re-uploaded once (idempotent — the upload
          * reuses the session id as the Firestore doc id, so it overwrites rather than duplicates).
          */
-        private val MIGRATION_7_8 = object : Migration(7, 8) {
+        /** Internal, not private: `SessionMigrationTest` replays these against a real fixture. */
+        internal val MIGRATION_7_8 = object : Migration(7, 8) {
             override fun migrate(db: SupportSQLiteDatabase) {
                 db.execSQL("ALTER TABLE sessions ADD COLUMN synced INTEGER NOT NULL DEFAULT 0")
+            }
+        }
+
+        /**
+         * v8 → v9: denormalise each session's first/last GPS fix into four columns.
+         *
+         * Nullable with no default: existing rows are left NULL and backfilled in
+         * bounded batches by [SessionRepository.backfillRouteEndpoints], one session's
+         * geometry at a time. Filling them during migration would mean parsing every
+         * stored route in a single transaction — precisely the all-routes-in-memory
+         * read that already OOMs this app on large histories.
+         */
+        internal val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("ALTER TABLE sessions ADD COLUMN startLat REAL")
+                db.execSQL("ALTER TABLE sessions ADD COLUMN startLng REAL")
+                db.execSQL("ALTER TABLE sessions ADD COLUMN endLat REAL")
+                db.execSQL("ALTER TABLE sessions ADD COLUMN endLng REAL")
             }
         }
 
@@ -33,7 +52,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "kinetic_eco_database"
                 )
-                .addMigrations(MIGRATION_7_8)
+                .addMigrations(MIGRATION_7_8, MIGRATION_8_9)
                 .build()
                 INSTANCE = instance
                 instance

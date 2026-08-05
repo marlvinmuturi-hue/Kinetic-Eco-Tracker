@@ -1,18 +1,23 @@
 package Kinetic_Eco.Tracker.ui.components
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Calculate
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Circle
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -176,6 +181,14 @@ fun Co2CalculatorCard(
                 )
             } else {
                 EstimateResult(estimate = estimate, distanceUnit = distanceUnit)
+
+                Spacer(Modifier.height(12.dp))
+                ModeComparison(
+                    distanceKm = estimate.distanceKm,
+                    profile = effectiveProfile,
+                    selected = selectedActivity,
+                    onSelect = { selectedActivity = it }
+                )
             }
 
             Spacer(Modifier.height(12.dp))
@@ -344,13 +357,22 @@ private fun <T> EnumChipRow(
     }
 }
 
-/** Horizontally wrapping chip row of every trackable mode. */
-@OptIn(ExperimentalLayoutApi::class)
+/**
+ * Mode picker as a single dropdown row.
+ *
+ * Was a wrapping chip row over every trackable mode, which ran to three lines on a
+ * narrow screen and pushed the distance field and result below the fold. A dropdown
+ * costs one tap to change a value that most users set once per estimate, and gives the
+ * rest of the card its vertical space back.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ModeSelector(
     selected: ActivityType,
     onSelect: (ActivityType) -> Unit
 ) {
+    var expanded by remember { mutableStateOf(false) }
+
     Column {
         Text(
             text = stringResource(R.string.co2_calc_mode_label),
@@ -358,16 +380,208 @@ private fun ModeSelector(
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Spacer(Modifier.height(6.dp))
-        FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            CALCULATOR_MODES.forEach { activity ->
-                val isSelected = activity == selected
-                FilterChip(
-                    selected = isSelected,
-                    onClick = { onSelect(activity) },
-                    label = { Text(stringResource(activity.labelResId())) },
-                    leadingIcon = if (isSelected) {
-                        { Icon(Icons.Default.Check, contentDescription = null) }
-                    } else null
+        ExposedDropdownMenuBox(
+            expanded = expanded,
+            onExpandedChange = { expanded = it }
+        ) {
+            OutlinedTextField(
+                value = stringResource(selected.labelResId()),
+                onValueChange = {},
+                readOnly = true,
+                singleLine = true,
+                leadingIcon = {
+                    Icon(
+                        imageVector = Icons.Default.Circle,
+                        contentDescription = null,
+                        tint = ActivityColors.getColor(selected),
+                        modifier = Modifier.size(12.dp)
+                    )
+                },
+                trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+                colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
+                modifier = Modifier
+                    .menuAnchor()
+                    .fillMaxWidth()
+            )
+            ExposedDropdownMenu(
+                expanded = expanded,
+                onDismissRequest = { expanded = false }
+            ) {
+                CALCULATOR_MODES.forEach { activity ->
+                    DropdownMenuItem(
+                        text = { Text(stringResource(activity.labelResId())) },
+                        onClick = {
+                            onSelect(activity)
+                            expanded = false
+                        },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Default.Circle,
+                                contentDescription = null,
+                                tint = ActivityColors.getColor(activity),
+                                modifier = Modifier.size(12.dp)
+                            )
+                        },
+                        trailingIcon = if (activity == selected) {
+                            { Icon(Icons.Default.Check, contentDescription = null) }
+                        } else null
+                    )
+                }
+            }
+        }
+    }
+}
+
+/**
+ * The same distance costed across every mode, best first.
+ *
+ * Turns the card from a lookup ("what does 12 km by car cost?") into a decision
+ * ("what should I have done?"). Everything here is derived from
+ * [Co2Calculator.compareModes] against the *same* vehicle profile as the headline
+ * estimate, so the comparison can never disagree with the number above it.
+ *
+ * Collapsed by default — eight rows would push the result off screen — but the header
+ * names the winning mode, so the answer is visible without expanding.
+ */
+@Composable
+private fun ModeComparison(
+    distanceKm: Double,
+    profile: VehicleProfile,
+    selected: ActivityType,
+    onSelect: (ActivityType) -> Unit
+) {
+    val colorScheme = MaterialTheme.colorScheme
+    var expanded by rememberSaveable { mutableStateOf(false) }
+
+    val estimates = remember(distanceKm, profile) {
+        Co2Calculator.compareModes(distanceKm, profile, CALCULATOR_MODES)
+    }
+    val best = estimates.firstOrNull() ?: return
+    // Deltas are measured against the user's current pick, so every row answers
+    // "compared to what I chose" rather than against an arbitrary baseline.
+    val selectedNet = estimates.firstOrNull { it.activity == selected }?.netKg ?: 0.0
+
+    Column {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier
+                .fillMaxWidth()
+                .clickable { expanded = !expanded }
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = stringResource(R.string.co2_calc_compare_title),
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = colorScheme.onSurface
+                )
+                if (!expanded) {
+                    Text(
+                        text = stringResource(
+                            R.string.co2_calc_compare_best,
+                            stringResource(best.activity.labelResId())
+                        ),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            Icon(
+                imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                contentDescription = stringResource(
+                    if (expanded) R.string.co2_calc_compare_collapse
+                    else R.string.co2_calc_compare_expand
+                ),
+                tint = colorScheme.onSurfaceVariant
+            )
+        }
+
+        AnimatedVisibility(visible = expanded) {
+            Column(modifier = Modifier.padding(top = 8.dp)) {
+                estimates.forEach { item ->
+                    ModeComparisonRow(
+                        estimate = item,
+                        isSelected = item.activity == selected,
+                        deltaVsSelected = item.netKg - selectedNet,
+                        onClick = { onSelect(item.activity) }
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ModeComparisonRow(
+    estimate: Co2Estimate,
+    isSelected: Boolean,
+    deltaVsSelected: Double,
+    onClick: () -> Unit
+) {
+    val colorScheme = MaterialTheme.colorScheme
+    val saving = Color(0xFF43A047)
+    val emitting = Color(0xFFE53935)
+
+    Surface(
+        onClick = onClick,
+        shape = RoundedCornerShape(10.dp),
+        color = if (isSelected) {
+            colorScheme.primary.copy(alpha = 0.10f)
+        } else {
+            Color.Transparent
+        },
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(vertical = 2.dp)
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)
+        ) {
+            Icon(
+                imageVector = Icons.Default.Circle,
+                contentDescription = null,
+                tint = ActivityColors.getColor(estimate.activity),
+                modifier = Modifier.size(10.dp)
+            )
+            Spacer(Modifier.width(10.dp))
+            Text(
+                text = stringResource(estimate.activity.labelResId()),
+                style = MaterialTheme.typography.bodyMedium,
+                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                color = colorScheme.onSurface,
+                modifier = Modifier.weight(1f)
+            )
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    text = if (estimate.magnitudeKg <= 0.0) {
+                        stringResource(R.string.co2_calc_compare_neutral)
+                    } else {
+                        formatKg(estimate.magnitudeKg)
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = if (estimate.isSaving) saving else colorScheme.onSurface
+                )
+                Text(
+                    text = if (isSelected) {
+                        stringResource(R.string.co2_calc_compare_selected)
+                    } else {
+                        stringResource(
+                            R.string.co2_calc_compare_delta,
+                            // Explicit sign: a bare "1.40" next to another number is
+                            // ambiguous about which direction it moves the user.
+                            (if (deltaVsSelected > 0) "+" else "−") +
+                                formatKg(abs(deltaVsSelected))
+                        )
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = when {
+                        isSelected -> colorScheme.onSurfaceVariant
+                        deltaVsSelected < 0 -> saving
+                        deltaVsSelected > 0 -> emitting
+                        else -> colorScheme.onSurfaceVariant
+                    }
                 )
             }
         }

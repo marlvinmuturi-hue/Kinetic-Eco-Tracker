@@ -27,6 +27,12 @@ class AnalyticsViewModel(application: Application) : AndroidViewModel(applicatio
     private val aiAnalysisService = AIAnalysisService.getInstance()
     private val userPrefsManager = UserPreferencesManager(application)
     private val routeIntelligenceService = RouteIntelligenceService(sessionManager)
+
+    /**
+     * Backfill batches per [loadRouteClusters] call. 8 × 25 = 200 sessions, enough to
+     * catch up a typical history in a few visits while keeping any single load short.
+     */
+    private val MAX_BACKFILL_PASSES_PER_LOAD = 8
     
     // Travel recap: geocoded cities/countries + personal bests
     private val _travelRecap = MutableStateFlow<TravelRecap?>(null)
@@ -220,10 +226,29 @@ class AnalyticsViewModel(application: Application) : AndroidViewModel(applicatio
      * Call this lazily (e.g. when the user opens a "commute insights" section)
      * rather than on every session load.
      */
-    fun loadRouteClusters(userId: String, lookbackDays: Int = 90) {
+    fun loadRouteClusters(
+        userId: String,
+        lookbackDays: Int = 90,
+        profile: Kinetic_Eco.Tracker.data.VehicleProfile =
+            Kinetic_Eco.Tracker.data.VehicleProfile.DEFAULT
+    ) {
         viewModelScope.launch(Dispatchers.IO) {
             _routeClustersLoading.value = true
-            _routeClusters.value = routeIntelligenceService.getRouteClusters(userId, lookbackDays)
+            // Sessions saved before schema v9 have no denormalised endpoints and are
+            // invisible to the clustering query. Backfill in bounded batches first —
+            // one route in memory at a time — so an existing history is not silently
+            // excluded, then cluster. Each pass shrinks the queue; the loop stops when
+            // there is nothing left or the budget is spent, so opening this section can
+            // never block on thousands of rows.
+            var passes = 0
+            while (passes < MAX_BACKFILL_PASSES_PER_LOAD) {
+                val filled = runCatching { sessionManager.backfillRouteEndpoints(userId) }
+                    .getOrDefault(0)
+                if (filled == 0) break
+                passes++
+            }
+            _routeClusters.value =
+                routeIntelligenceService.getRouteClusters(userId, lookbackDays, profile)
             _routeClustersLoading.value = false
         }
     }

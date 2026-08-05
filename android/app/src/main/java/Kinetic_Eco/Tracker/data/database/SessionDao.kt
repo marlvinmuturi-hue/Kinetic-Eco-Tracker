@@ -104,4 +104,98 @@ interface SessionDao {
         fromDate: String,
         toDate: String
     ): List<SessionEntity>
+
+    // ── Route endpoints (recurring-trip detection) ───────────────────────────
+
+    /**
+     * Start/end coordinates for sessions that have them, newest first.
+     *
+     * **Deliberately a projection, not `SELECT *`.** Selecting the entity pulls
+     * `routePathJson` through `Converters.toRoutePath`, Gson-parsing every GPS point
+     * of every session into memory — the documented OOM on this app's Room path. This
+     * query reads four doubles and a timestamp per row instead, so it stays flat
+     * regardless of how long the routes are.
+     *
+     * Rows whose endpoints are still NULL (pre-v9, not yet backfilled) are excluded
+     * rather than defaulted, because 0,0 is a real coordinate and would cluster
+     * unrelated indoor sessions together off the coast of Africa. The latitude range
+     * check additionally filters the out-of-range sentinel written by
+     * [markEndpointsUnavailable].
+     */
+    @Query("""
+        SELECT id, date, startLat, startLng, endLat, endLng,
+               totalDistance, totalDuration, co2Conserved, co2Emissions,
+               createdAt, breakdown
+        FROM sessions
+        WHERE userId = :userId
+          AND createdAt >= :sinceMs
+          AND startLat IS NOT NULL AND startLng IS NOT NULL
+          AND endLat IS NOT NULL AND endLng IS NOT NULL
+          AND startLat BETWEEN -90.0 AND 90.0
+          AND endLat BETWEEN -90.0 AND 90.0
+        ORDER BY createdAt DESC
+    """)
+    suspend fun getTripEndpoints(userId: String, sinceMs: Long): List<TripEndpointRow>
+
+    /** Ids still awaiting endpoint backfill. Bounded by [limit] to cap peak memory. */
+    @Query("""
+        SELECT id FROM sessions
+        WHERE userId = :userId AND startLat IS NULL
+        ORDER BY createdAt DESC
+        LIMIT :limit
+    """)
+    suspend fun getSessionIdsMissingEndpoints(userId: String, limit: Int): List<String>
+
+    /**
+     * Write endpoints for one session. Nulls are written as-is so a session with no
+     * GPS is not re-examined forever — see [markEndpointsUnavailable].
+     */
+    @Query("""
+        UPDATE sessions
+        SET startLat = :startLat, startLng = :startLng,
+            endLat = :endLat, endLng = :endLng
+        WHERE id = :sessionId
+    """)
+    suspend fun updateRouteEndpoints(
+        sessionId: String,
+        startLat: Double?,
+        startLng: Double?,
+        endLat: Double?,
+        endLng: Double?
+    )
+
+    /**
+     * Park a route-less session outside the backfill queue.
+     *
+     * Writes an out-of-range latitude sentinel rather than leaving NULL, so "no GPS, we
+     * checked" is distinguishable from "not looked at yet". Without it the backfill
+     * would reload the same geometry-free sessions on every pass forever.
+     * [getTripEndpoints] filters the sentinel out via its latitude range check.
+     */
+    @Query("""
+        UPDATE sessions
+        SET startLat = 999.0, startLng = 999.0, endLat = 999.0, endLng = 999.0
+        WHERE id = :sessionId
+    """)
+    suspend fun markEndpointsUnavailable(sessionId: String)
 }
+
+/**
+ * Endpoint projection of a session — everything recurring-trip detection needs and
+ * nothing it doesn't. Notably absent: `routePathJson`.
+ */
+@TypeConverters(Converters::class)
+data class TripEndpointRow(
+    val id: String,
+    val date: String,
+    val startLat: Double,
+    val startLng: Double,
+    val endLat: Double,
+    val endLng: Double,
+    val totalDistance: Double,
+    val totalDuration: Long,
+    val co2Conserved: Double,
+    val co2Emissions: Double,
+    val createdAt: Long,
+    val breakdown: Map<Kinetic_Eco.Tracker.data.ActivityType, ActivityBreakdownEntity>
+)

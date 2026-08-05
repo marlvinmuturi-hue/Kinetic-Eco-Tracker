@@ -49,18 +49,15 @@ private fun LeaderboardPeriod.fieldSuffix(): String = when (this) {
     LeaderboardPeriod.AllTime -> "AllTime"
 }
 
-/** Local Monday 00:00 of the calendar week containing [now]. Mirrors DashboardScreen's `thisWeekCutoff`. */
-private fun startOfCalendarWeekMs(now: Long): Long {
-    val cal = java.util.Calendar.getInstance()
-    cal.timeInMillis = now
-    cal.set(java.util.Calendar.HOUR_OF_DAY, 0)
-    cal.set(java.util.Calendar.MINUTE, 0)
-    cal.set(java.util.Calendar.SECOND, 0)
-    cal.set(java.util.Calendar.MILLISECOND, 0)
-    val daysFromMonday = (cal.get(java.util.Calendar.DAY_OF_WEEK) - java.util.Calendar.MONDAY + 7) % 7
-    cal.add(java.util.Calendar.DAY_OF_YEAR, -daysFromMonday)
-    return cal.timeInMillis
-}
+/**
+ * Local Monday 00:00 of the calendar week containing [now].
+ *
+ * Delegates to [WeekWindow] rather than keeping its own copy — this function used to
+ * be a hand-maintained duplicate documented as "mirrors DashboardScreen's
+ * `thisWeekCutoff`", and mirrors are exactly what stopped matching.
+ */
+private fun startOfCalendarWeekMs(now: Long): Long =
+    Kinetic_Eco.Tracker.util.WeekWindow.startOfWeekMs(now)
 
 /**
  * Service for leaderboard: opt-in, update entry, fetch ranked list.

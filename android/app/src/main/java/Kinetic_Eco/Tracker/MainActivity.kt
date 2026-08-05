@@ -1,11 +1,9 @@
 package Kinetic_Eco.Tracker
 
 import android.Manifest
-import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.net.Uri
 import android.os.Bundle
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
@@ -457,7 +455,7 @@ class MainActivity : AppCompatActivity() {
                                 currentThemeMode = mode
                                 applyThemeMode(mode)
                             },
-                            onGoPremium = { openPremiumOrStoreListing() },
+                            onGoPremium = { navController.navigate(Screen.Premium.route) },
                             weeklyDigestEnabled = weeklyDigestEnabled,
                             onWeeklyDigestChange = { enabled ->
                                 weeklyDigestEnabled = enabled
@@ -680,25 +678,6 @@ class MainActivity : AppCompatActivity() {
                 // already handles the body-tap path.
             }
             intent.removeExtra(EXTRA_OPEN_ACTIVITY_SELECTOR)
-        }
-    }
-
-    /** Opens Play Store app listing — swap for Play Billing / paywall when ready. */
-    private fun openPremiumOrStoreListing() {
-        // Leaving for the Play Store / web listing is app-initiated — suppress the App Open ad that
-        // would otherwise fire when the user returns.
-        AppOpenAdManager.suppressNextForegroundAd()
-        val pkg = packageName
-        val marketUri = Uri.parse("market://details?id=$pkg")
-        val webUri = Uri.parse("https://play.google.com/store/apps/details?id=$pkg")
-        try {
-            startActivity(Intent(Intent.ACTION_VIEW, marketUri))
-        } catch (_: ActivityNotFoundException) {
-            try {
-                startActivity(Intent(Intent.ACTION_VIEW, webUri))
-            } catch (_: ActivityNotFoundException) {
-                android.util.Log.w("MainActivity", "Could not open Play Store for premium flow")
-            }
         }
     }
 

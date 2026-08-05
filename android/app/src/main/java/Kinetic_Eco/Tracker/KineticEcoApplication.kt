@@ -5,6 +5,7 @@ import android.util.Log
 import Kinetic_Eco.Tracker.ui.components.AppOpenAdManager
 import com.google.firebase.FirebaseApp
 import com.google.firebase.appcheck.AppCheckProviderFactory
+import Kinetic_Eco.Tracker.services.BillingManager
 import Kinetic_Eco.Tracker.services.EntitlementRepository
 import com.google.firebase.appcheck.FirebaseAppCheck
 import com.google.firebase.appcheck.playintegrity.PlayIntegrityAppCheckProviderFactory
@@ -40,6 +41,22 @@ class KineticEcoApplication : Application() {
         // a subscriber seeing a banner flash while Firestore connects reads as the
         // app forgetting they paid.
         EntitlementRepository.start(this)
+
+        // Connects to Play and re-posts any owned subscription for verification.
+        // Started here rather than from the paywall so a reinstall, a new device, or
+        // a purchase that completed while the app was dead restores itself silently
+        // — the user should never have to find a "Restore" button to get what they
+        // already paid for. Started after the repository so the entitlement listener
+        // is already attached when verification writes the document.
+        // Belt and braces: BillingManager guards its own setup, but nothing reached from
+        // Application.onCreate may be allowed to throw. A crash here is a black screen at
+        // launch with no UI and no way for the user to recover — which is exactly what
+        // versionCode 23 shipped.
+        try {
+            BillingManager.start(this, applicationScope)
+        } catch (t: Throwable) {
+            Log.e(TAG, "BillingManager.start failed — premium purchase disabled this run", t)
+        }
     }
 
     /**

@@ -23,6 +23,7 @@ import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -41,6 +42,7 @@ import Kinetic_Eco.Tracker.ui.components.BirthDatePicker
 import Kinetic_Eco.Tracker.ui.components.BatteryReliabilityDialog
 import Kinetic_Eco.Tracker.util.BatteryOptimizationHelper
 import Kinetic_Eco.Tracker.ui.theme.Red500
+import Kinetic_Eco.Tracker.services.EntitlementRepository
 import Kinetic_Eco.Tracker.services.UserPhysicalProfile
 import Kinetic_Eco.Tracker.services.UserPreferencesManager
 import Kinetic_Eco.Tracker.services.Gender
@@ -587,10 +589,20 @@ fun UnitSystemOption(
     )
 }
 
+/**
+ * Settings' premium row: an upsell for everyone else, a status row for subscribers.
+ *
+ * Entitlement is read here rather than passed in, matching [AdMobBanner]'s reasoning —
+ * a caller who forgets the check would go on selling premium to someone who already
+ * bought it, which is the most irritating bug a paying user can be shown. Both states
+ * open the same destination; [PremiumScreen] decides what to render there.
+ */
 @Composable
 fun GoPremiumCard(onClick: () -> Unit) {
     val colorScheme = MaterialTheme.colorScheme
     val gold = Color(0xFFFFB300)
+    val isPremium by EntitlementRepository.isPremium.collectAsStateWithLifecycle()
+
     Card(
         onClick = onClick,
         modifier = Modifier.fillMaxWidth(),
@@ -605,32 +617,45 @@ fun GoPremiumCard(onClick: () -> Unit) {
             horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Icon(
-                imageVector = Icons.Filled.WorkspacePremium,
+                imageVector = if (isPremium) Icons.Filled.Verified else Icons.Filled.WorkspacePremium,
                 contentDescription = null,
                 tint = gold,
                 modifier = Modifier.size(36.dp)
             )
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = stringResource(R.string.go_premium),
+                    text = stringResource(
+                        if (isPremium) R.string.premium_active_title else R.string.go_premium
+                    ),
                     style = MaterialTheme.typography.titleMedium,
                     color = gold
                 )
                 Text(
-                    text = stringResource(R.string.go_premium_desc),
+                    text = stringResource(
+                        if (isPremium) R.string.settings_premium_active_desc
+                        else R.string.go_premium_desc
+                    ),
                     style = MaterialTheme.typography.bodySmall,
                     color = colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = 4.dp)
                 )
             }
-            Button(
-                onClick = onClick,
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = gold,
-                    contentColor = Color(0xFF1A1200)
-                )
-            ) {
-                Text(stringResource(R.string.go_premium_cta))
+            if (isPremium) {
+                // Outlined, not filled: a subscriber has nothing left to buy, so this
+                // is navigation, not a call to action competing for their attention.
+                OutlinedButton(onClick = onClick) {
+                    Text(stringResource(R.string.premium_manage_short), color = gold)
+                }
+            } else {
+                Button(
+                    onClick = onClick,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = gold,
+                        contentColor = Color(0xFF1A1200)
+                    )
+                ) {
+                    Text(stringResource(R.string.go_premium_cta))
+                }
             }
         }
     }

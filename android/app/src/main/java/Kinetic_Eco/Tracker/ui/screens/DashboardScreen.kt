@@ -89,6 +89,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import Kinetic_Eco.Tracker.data.AchievementBadge
 import Kinetic_Eco.Tracker.data.BadgeTier
 import Kinetic_Eco.Tracker.util.AchievementComputer
+import Kinetic_Eco.Tracker.util.WeekWindow
 import Kinetic_Eco.Tracker.ui.components.BadgeDetailDialog
 import Kinetic_Eco.Tracker.ui.components.badgeArtworkDrawableRes
 import Kinetic_Eco.Tracker.ui.components.badgeFmtVal
@@ -137,18 +138,9 @@ fun DashboardScreen(
         java.util.Calendar.getInstance().get(java.util.Calendar.HOUR_OF_DAY)
     }
     val sevenDayMs = TimeUnit.DAYS.toMillis(7)
-    // Cutoff = Monday 00:00:00 of the current calendar week, so "this week" resets each Monday.
-    val thisWeekCutoff = run {
-        val cal = java.util.Calendar.getInstance()
-        cal.timeInMillis = now
-        cal.set(java.util.Calendar.HOUR_OF_DAY, 0)
-        cal.set(java.util.Calendar.MINUTE, 0)
-        cal.set(java.util.Calendar.SECOND, 0)
-        cal.set(java.util.Calendar.MILLISECOND, 0)
-        val daysFromMonday = (cal.get(java.util.Calendar.DAY_OF_WEEK) - java.util.Calendar.MONDAY + 7) % 7
-        cal.add(java.util.Calendar.DAY_OF_YEAR, -daysFromMonday)
-        cal.timeInMillis
-    }
+    // "This week" = local calendar week, Monday 00:00. Single definition in [WeekWindow];
+    // do not reintroduce a local copy — four divergent copies are what broke this screen.
+    val thisWeekCutoff = WeekWindow.startOfWeekMs(now)
     val lastWeekCutoff = thisWeekCutoff - sevenDayMs
 
     val weekSessions = remember(allSessions, thisWeekCutoff) {
@@ -169,9 +161,11 @@ fun DashboardScreen(
     val lastWeekCo2Saved = lastWeekSessions.sumOf { it.co2Conserved }
 
     // Per-day CO2 saved buckets for the mini chart inside the hero card.
-    // Index 0 = 6 days ago, index 6 = today (matches the day-label generator).
-    val dailyCo2Saved = remember(weekSessions, now) {
-        computeDailyCo2Saved(weekSessions, now)
+    // Index 0 = Monday … 6 = Sunday, matching the hero total directly above it.
+    // Previously these were rolling "days ago" buckets fed calendar-week-filtered
+    // sessions, so early in the week most bars could never be anything but zero.
+    val dailyCo2Saved = remember(weekSessions, thisWeekCutoff) {
+        computeDailyCo2Saved(weekSessions, thisWeekCutoff)
     }
 
     // Highlights derived from this week's sessions only. Null fields are hidden
@@ -1028,6 +1022,9 @@ private fun Co2DailyMiniChart(
     val maxScale = max(maxVal, 0.5)
 
     val dayLabels = remember(today) { weekdayLabels(today) }
+    // Today is no longer always the last bar — the chart runs Mon→Sun, so mid-week
+    // it sits somewhere in the middle and the days after it are simply not here yet.
+    val todayIndex = remember(today) { WeekWindow.todayIndex(today) }
 
     Column {
         Canvas(
@@ -1056,7 +1053,10 @@ private fun Co2DailyMiniChart(
                 val left = centerX - barWidth / 2f
                 val top = baseY - barHeight
                 drawRoundRect(
-                    color = barColor,
+                    // Days later in the week haven't happened yet. Drawing their empty
+                    // nub at full strength reads as "you did nothing", which is the
+                    // impression that made the Monday reset look like lost data.
+                    color = if (index > todayIndex) barColor.copy(alpha = 0.25f) else barColor,
                     topLeft = Offset(left, top),
                     size = Size(barWidth, barHeight),
                     cornerRadius = CornerRadius(barWidth / 2.5f, barWidth / 2.5f)
@@ -1072,8 +1072,8 @@ private fun Co2DailyMiniChart(
                     text = label,
                     style = MaterialTheme.typography.labelSmall,
                     fontSize = 10.sp,
-                    fontWeight = if (index == 6) FontWeight.Bold else FontWeight.Normal,
-                    color = if (index == 6) colorScheme.onSurface else labelColor,
+                    fontWeight = if (index == todayIndex) FontWeight.Bold else FontWeight.Normal,
+                    color = if (index == todayIndex) colorScheme.onSurface else labelColor,
                     textAlign = TextAlign.Center,
                     modifier = Modifier.weight(1f)
                 )
@@ -1945,15 +1945,13 @@ private data class WeekHighlights(
  * Index 0 = 6 days ago, index 6 = today (matches [weekdayLabels]).
  * Sessions with no `sessionEndTimeMs` are skipped so we never assign them to "today" by accident.
  */
-private fun computeDailyCo2Saved(sessions: List<SessionStats>, now: Long): List<Double> {
-    val buckets = DoubleArray(7)
-    val dayMs = TimeUnit.DAYS.toMillis(1)
+/** CO₂ saved per day of the calendar week: index 0 = Monday … 6 = Sunday. */
+private fun computeDailyCo2Saved(sessions: List<SessionStats>, weekStartMs: Long): List<Double> {
+    val buckets = DoubleArray(WeekWindow.DAYS)
     sessions.forEach { s ->
         val ts = s.sessionEndTimeMs.takeIf { it > 0 } ?: return@forEach
-        val daysAgo = ((now - ts) / dayMs).toInt()
-        if (daysAgo in 0..6) {
-            buckets[6 - daysAgo] += s.co2Conserved
-        }
+        val idx = WeekWindow.dayIndexInWeek(ts, weekStartMs) ?: return@forEach
+        buckets[idx] += s.co2Conserved
     }
     return buckets.toList()
 }
@@ -2040,15 +2038,9 @@ private fun activityDisplayName(context: Context, a: ActivityType): String = whe
  * Returns a list of 7 short weekday labels (e.g. "Mon", "Tue") with index 0 =
  * 6 days ago and index 6 = today, in the device locale.
  */
-private fun weekdayLabels(now: Long): List<String> {
-    val fmt = SimpleDateFormat("EEE", Locale.getDefault())
-    val cal = Calendar.getInstance()
-    return (6 downTo 0).map { daysAgo ->
-        cal.timeInMillis = now
-        cal.add(Calendar.DAY_OF_YEAR, -daysAgo)
-        fmt.format(cal.time)
-    }
-}
+/** Mon…Sun labels for the hero chart, matching [computeDailyCo2Saved]'s bucket order. */
+private fun weekdayLabels(now: Long): List<String> =
+    WeekWindow.weekdayLabels("EEE", WeekWindow.startOfWeekMs(now))
 
 /**
  * Percentage delta of [current] vs [previous]. Returns null when [previous] is

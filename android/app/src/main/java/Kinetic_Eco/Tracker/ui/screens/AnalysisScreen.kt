@@ -2,6 +2,8 @@ package Kinetic_Eco.Tracker.ui.screens
 
 import android.content.Context
 import android.graphics.Paint as AndroidPaint
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
@@ -20,6 +22,7 @@ import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material.icons.outlined.TwoWheeler
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.rotate
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -51,9 +54,12 @@ import androidx.lifecycle.LifecycleEventObserver
 import Kinetic_Eco.Tracker.data.ActivityType
 import Kinetic_Eco.Tracker.data.SessionStats
 import Kinetic_Eco.Tracker.data.UnitSystem
+import Kinetic_Eco.Tracker.util.WeekWindow
 import Kinetic_Eco.Tracker.services.Co2EquivalencyService
+import Kinetic_Eco.Tracker.services.EntitlementRepository
 import Kinetic_Eco.Tracker.services.UserPreferencesManager
 import Kinetic_Eco.Tracker.ui.components.Co2CalculatorCard
+import Kinetic_Eco.Tracker.ui.components.RecurringTripsCard
 import Kinetic_Eco.Tracker.ui.components.RouteMapMultiSessionView
 import Kinetic_Eco.Tracker.ui.theme.Green500
 import Kinetic_Eco.Tracker.ui.utils.format
@@ -85,7 +91,8 @@ fun AnalysisScreen(
     unitSystem: UnitSystem,
     onSettingsClick: () -> Unit,
     onSessionClick: ((SessionStats) -> Unit)? = null,
-    onViewWeekSessions: () -> Unit = {}
+    onViewWeekSessions: () -> Unit = {},
+    onGoPremium: () -> Unit = {}
 ) {
     val colorScheme = MaterialTheme.colorScheme
     val scroll = rememberScrollState()
@@ -110,47 +117,44 @@ fun AnalysisScreen(
     val allSessions by analyticsViewModel.getAllSessions(userId)
         .collectAsStateWithLifecycle(initialValue = emptyList())
 
-    // Last-7-day aggregates
-    val sevenDayMs = TimeUnit.DAYS.toMillis(7)
-    val cutoff = System.currentTimeMillis() - sevenDayMs
-    val weekSessions = remember(allSessions, cutoff) {
-        allSessions.filter { (it.sessionEndTimeMs.takeIf { t -> t > 0 } ?: 0L) >= cutoff }
-    }
-    val weekCo2Saved = weekSessions.sumOf { it.co2Conserved }
-    val weekCo2Emit  = weekSessions.sumOf { it.co2Emissions }
-
-    // 7-day daily buckets for chart (today is index 6, oldest is 0)
-    val perDay = remember(allSessions) { computeWeeklyCo2Buckets(allSessions) }
-
-    val hasGpsInRollingWeek = remember(weekSessions) {
-        weekSessions.any { it.routePath.size >= 2 }
-    }
-
-    val thisWeekCutoff = remember {
-        val cal = Calendar.getInstance()
-        val dow = cal.get(Calendar.DAY_OF_WEEK)
-        val daysFromMonday = (dow - Calendar.MONDAY + 7) % 7
-        cal.add(Calendar.DAY_OF_YEAR, -daysFromMonday)
-        cal.set(Calendar.HOUR_OF_DAY, 0)
-        cal.set(Calendar.MINUTE, 0)
-        cal.set(Calendar.SECOND, 0)
-        cal.set(Calendar.MILLISECOND, 0)
-        cal.timeInMillis
-    }
+    // "This week" is the local calendar week everywhere in the app — see [WeekWindow].
+    // This screen previously headlined a rolling 7-day total while the Dashboard showed
+    // a calendar-week one, so on a Monday the two disagreed with no label explaining why.
+    val thisWeekCutoff = remember { WeekWindow.startOfWeekMs() }
     val calWeekSessions = remember(allSessions, thisWeekCutoff) {
         allSessions.filter { (it.sessionEndTimeMs.takeIf { t -> t > 0 } ?: 0L) >= thisWeekCutoff }
     }
+
+    val weekCo2Saved = calWeekSessions.sumOf { it.co2Conserved }
+    val weekCo2Emit  = calWeekSessions.sumOf { it.co2Emissions }
+
+    // Mon→Sun buckets for the chart, over the same sessions as the totals above.
+    val perDay = remember(calWeekSessions, thisWeekCutoff) {
+        computeWeeklyCo2Buckets(calWeekSessions, thisWeekCutoff)
+    }
+
+    val hasGpsInRollingWeek = remember(calWeekSessions) {
+        calWeekSessions.any { it.routePath.size >= 2 }
+    }
     val weeklyReport = remember(calWeekSessions) { computeWeeklyReportData(calWeekSessions) }
 
-    // "This week's footprint" reflects the calendar week from the week start
-    // (Monday 00:00), not a rolling 7-day window, so figures reset at the start
-    // of each new week instead of carrying over last week's totals.
-    val calWeekCo2Saved = calWeekSessions.sumOf { it.co2Conserved }
-    val calWeekCo2Emit  = calWeekSessions.sumOf { it.co2Emissions }
-    val net = calWeekCo2Saved - calWeekCo2Emit
+    // Formerly a second, separate pair of calendar-week sums sitting alongside the
+    // rolling ones above — the two coexisting on one screen is how the windows drifted.
+    val net = weekCo2Saved - weekCo2Emit
 
     val recentSessions = remember(allSessions) {
         allSessions.sortedByDescending { it.sessionEndTimeMs }.take(2)
+    }
+
+    // Repeat-journey mining is premium and reads the whole history, so it is loaded
+    // only for subscribers and only once per screen entry — never on every recomposition.
+    val isPremium by EntitlementRepository.isPremium.collectAsStateWithLifecycle()
+    val routeClusters by analyticsViewModel.routeClusters.collectAsStateWithLifecycle()
+    val routeClustersLoading by analyticsViewModel.routeClustersLoading.collectAsStateWithLifecycle()
+    LaunchedEffect(userId, isPremium, vehicleProfile) {
+        if (isPremium && userId.isNotBlank()) {
+            analyticsViewModel.loadRouteClusters(userId, profile = vehicleProfile)
+        }
     }
 
     Column(
@@ -197,6 +201,18 @@ fun AnalysisScreen(
             unitSystem = unitSystem
         )
 
+        // ── Repeat journeys (premium) ─────────────────────────────────────────
+        // Sits above the calculator: this answers "what do you actually do?" from
+        // tracked history, which is strictly more useful than the hypothetical the
+        // calculator answers — and it is the feature the paywall promises.
+        RecurringTripsCard(
+            clusters = routeClusters,
+            loading = routeClustersLoading,
+            isPremium = isPremium,
+            unitSystem = unitSystem,
+            onGoPremium = onGoPremium
+        )
+
         // ── Manual CO₂ calculator ─────────────────────────────────────────────
         // Sits directly under the weekly report so the "what did I do?" figure is
         // immediately followed by "what would I do?". Purely local — see
@@ -238,7 +254,7 @@ fun AnalysisScreen(
         // skipped via `latestRouteSession` so we never render an empty map.
         if (hasGpsInRollingWeek) {
             WeeklyRouteMapCard(
-                weekSessions = weekSessions,
+                weekSessions = calWeekSessions,
                 unitSystem = unitSystem,
                 onSessionClick = onSessionClick
             )
@@ -396,12 +412,15 @@ fun AnalysisScreen(
 
 private data class DailyCo2(val savedKg: Double, val emittedKg: Double)
 
-private fun computeWeeklyCo2Buckets(sessions: List<SessionStats>): List<DailyCo2> {
-    val buckets = MutableList(7) { DailyCo2(0.0, 0.0) }
-    val now = System.currentTimeMillis()
+/** CO₂ saved/emitted per day of the calendar week: index 0 = Monday … 6 = Sunday. */
+private fun computeWeeklyCo2Buckets(
+    sessions: List<SessionStats>,
+    weekStartMs: Long
+): List<DailyCo2> {
+    val buckets = MutableList(WeekWindow.DAYS) { DailyCo2(0.0, 0.0) }
     sessions.forEach { s ->
         val ts = s.sessionEndTimeMs.takeIf { it > 0 } ?: return@forEach
-        val idx = rollingWeekDayIndex(ts, now) ?: return@forEach
+        val idx = WeekWindow.dayIndexInWeek(ts, weekStartMs) ?: return@forEach
         val cur = buckets[idx]
         buckets[idx] = DailyCo2(
             savedKg = cur.savedKg + s.co2Conserved,
@@ -422,22 +441,8 @@ private fun Co2WeeklyChart(
     val niceMaxSaved = niceChartMax(max(daily.maxOfOrNull { it.savedKg } ?: 0.0, 0.5))
     val niceMaxEmit  = niceChartMax(max(daily.maxOfOrNull { it.emittedKg } ?: 0.0, 0.5))
 
-    // Day letters for each bar: index 0 = 6 days ago, index 6 = today
-    val dayLabels = remember {
-        (0..6).map { i ->
-            val cal = Calendar.getInstance()
-            cal.add(Calendar.DAY_OF_YEAR, -(6 - i))
-            when (cal.get(Calendar.DAY_OF_WEEK)) {
-                Calendar.MONDAY    -> "M"
-                Calendar.TUESDAY   -> "T"
-                Calendar.WEDNESDAY -> "W"
-                Calendar.THURSDAY  -> "T"
-                Calendar.FRIDAY    -> "F"
-                Calendar.SATURDAY  -> "S"
-                else               -> "S" // SUNDAY
-            }
-        }
-    }
+    // Day letters for each bar: index 0 = Monday … 6 = Sunday, matching the buckets.
+    val dayLabels = remember { WeekWindow.weekdayLabels("EEEEE") }
 
     Canvas(
         modifier = Modifier
@@ -762,21 +767,6 @@ private fun LegendDot(color: Color, label: AnnotatedString) {
 
 // ── Weekly route map ─────────────────────────────────────────────────────────
 
-/**
- * Day index 0 = six calendar days ago, 6 = today (device local timezone) — aligned with
- * [computeWeeklyCo2Buckets] bar order.
- */
-private fun rollingWeekDayIndex(sessionEndTimeMs: Long, now: Long): Int? {
-    if (sessionEndTimeMs <= 0) return null
-    val zone = ZoneId.systemDefault()
-    val sessionDate = Instant.ofEpochMilli(sessionEndTimeMs).atZone(zone).toLocalDate()
-    val todayDate = Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
-    val daysBetweenSessionAndToday =
-        ChronoUnit.DAYS.between(sessionDate, todayDate).toInt()
-    if (daysBetweenSessionAndToday !in 0..6) return null
-    return 6 - daysBetweenSessionAndToday
-}
-
 @Composable
 private fun WeeklyRouteMapCard(
     weekSessions: List<SessionStats>,
@@ -1024,13 +1014,28 @@ private fun WeeklyReportCard(
         "${fmt.format(startCal.time)} – ${fmt.format(endCal.time)}"
     }
 
+    // Collapsed by default: the card is seven tiles tall and sits above everything
+    // else on the tab, so expanded-by-default pushed the calculator and chart off
+    // screen. The header keeps the headline CO₂ figure visible while collapsed, so
+    // folding it away costs no information at a glance.
+    var expanded by rememberSaveable { mutableStateOf(false) }
+    val chevronRotation by animateFloatAsState(
+        targetValue = if (expanded) 180f else 0f,
+        label = "weeklyReportChevron"
+    )
+
     Card(
         modifier = Modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(containerColor = colorScheme.surfaceVariant),
         shape = RoundedCornerShape(16.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { expanded = !expanded }
+            ) {
                 Icon(
                     imageVector = Icons.Default.DateRange,
                     contentDescription = null,
@@ -1045,7 +1050,16 @@ private fun WeeklyReportCard(
                         color = colorScheme.onSurface
                     )
                     Text(
-                        text = weekLabel,
+                        text = if (expanded || data.sessionCount == 0) {
+                            weekLabel
+                        } else {
+                            // Collapsed summary: the one number worth seeing without opening.
+                            stringResource(
+                                R.string.analysis_weekly_collapsed_summary,
+                                weekLabel,
+                                data.co2Saved.format(2)
+                            )
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = colorScheme.onSurfaceVariant
                     )
@@ -1061,8 +1075,21 @@ private fun WeeklyReportCard(
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                     )
                 }
+                Icon(
+                    imageVector = Icons.Default.ExpandMore,
+                    contentDescription = stringResource(
+                        if (expanded) R.string.analysis_weekly_collapse
+                        else R.string.analysis_weekly_expand
+                    ),
+                    tint = colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .padding(start = 4.dp)
+                        .rotate(chevronRotation)
+                )
             }
 
+            AnimatedVisibility(visible = expanded) {
+              Column {
             if (data.sessionCount == 0) {
                 Spacer(Modifier.height(16.dp))
                 Text(
@@ -1132,6 +1159,8 @@ private fun WeeklyReportCard(
                         modifier = Modifier.fillMaxWidth()
                     )
                 }
+            }
+              }
             }
         }
     }

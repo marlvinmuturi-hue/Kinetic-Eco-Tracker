@@ -101,6 +101,26 @@ object Co2Calculator {
     }
 
     /**
+     * Estimate the same [distanceKm] across every mode in [modes], best first.
+     *
+     * "Best" is ascending [Co2Estimate.netKg] — the largest saver leads, the largest
+     * emitter trails — so the ordering answers "what should I have done?" without the
+     * caller re-deriving the sign convention. Ties keep [modes] order, which keeps the
+     * list stable for human-powered modes that share a factor.
+     *
+     * Every mode is costed against the *same* [profile], because the question this
+     * answers is "this trip, my vehicle, a different way" — swapping in a generic car
+     * for the comparison would flatter or punish the user's actual vehicle at random.
+     */
+    fun compareModes(
+        distanceKm: Double,
+        profile: VehicleProfile = VehicleProfile.DEFAULT,
+        modes: List<ActivityType>
+    ): List<Co2Estimate> =
+        modes.map { estimate(it, distanceKm, profile) }
+            .sortedBy { it.netKg }
+
+    /**
      * Metres-based variant matching the tracker's internal units.
      *
      * [SessionManager.calculateCO2] delegates here, which is what keeps the

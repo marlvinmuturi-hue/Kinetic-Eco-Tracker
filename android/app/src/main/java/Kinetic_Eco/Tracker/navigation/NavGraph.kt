@@ -43,6 +43,7 @@ import androidx.navigation.compose.NavHost
 import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import com.google.firebase.auth.FirebaseUser
+import Kinetic_Eco.Tracker.BuildConfig
 import Kinetic_Eco.Tracker.data.UnitSystem
 import Kinetic_Eco.Tracker.data.VehicleProfile
 import Kinetic_Eco.Tracker.data.PrimaryFuelType
@@ -96,6 +97,8 @@ sealed class Screen(val route: String) {
     object Profile : Screen("profile")
     object Settings : Screen("settings")
     object Feedback : Screen("feedback")
+    /** Paywall (reached via the Settings upsell card). */
+    object Premium : Screen("premium")
     object SessionsList : Screen("sessions_list")
     object WeekSessions : Screen("sessions_week")
     object SessionDetail : Screen("session_detail")
@@ -322,7 +325,10 @@ fun AppNavGraph(
                         popUpTo(0) { inclusive = true }
                     }
                 },
-                appVersion = "V1.5.0",
+                // Read from the build rather than hardcoded — the literal that used to
+                // live here said "V1.5.0" for every release since, which made the
+                // Settings screen useless for the one thing it was there to answer.
+                appVersion = BuildConfig.VERSION_NAME,
                 leaderboardOptIn = leaderboardOptedIn ?: false,
                 onLeaderboardOptInChange = { enabled ->
                     currentUser?.uid?.let { profileViewModel.setLeaderboardOptIn(it, enabled) }
@@ -341,6 +347,11 @@ fun AppNavGraph(
                 onFeedbackClick = { navController.navigate(Screen.Feedback.route) },
                 onBack = { navController.popBackStack() }
             )
+        }
+
+        // ── Paywall (reached via the Settings "Go Premium" card) ───────────────
+        fadeComposable(Screen.Premium.route) {
+            PremiumScreen(onBack = { navController.popBackStack() })
         }
 
         // ── Profile (reached via Settings → Profile) ───────────────────────────

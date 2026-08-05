@@ -19,7 +19,7 @@ data class Entitlement(
      * subscriber is still entitled until their paid period runs out.
      */
     val active: Boolean = false,
-    /** Play product id that granted this, e.g. "premium". Null when never subscribed. */
+    /** Play product id that granted this, e.g. "premiumv2". Null when never subscribed. */
     val productId: String? = null,
     /** End of the paid period in epoch millis. This is what actually grants access. */
     val expiryMs: Long = 0L,

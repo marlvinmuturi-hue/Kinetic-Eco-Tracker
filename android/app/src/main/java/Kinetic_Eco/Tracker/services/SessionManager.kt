@@ -88,7 +88,14 @@ class SessionManager(private val context: Context) {
             // Real session time (matches `date`), not save-time — createdAt is used downstream as the
             // session's effective time for date grouping, and as the incremental-sync watermark.
             createdAt = if (sessionStartTimeMs > 0) sessionStartTimeMs else System.currentTimeMillis(),
-            breakdown = breakdownEntity
+            breakdown = breakdownEntity,
+            // Denormalised now, while the route is already in hand. Recurring-trip
+            // clustering reads these four columns instead of re-parsing every stored
+            // route — see SessionDao.getTripEndpoints.
+            startLat = stats.routePath.firstOrNull()?.latitude,
+            startLng = stats.routePath.firstOrNull()?.longitude,
+            endLat = stats.routePath.lastOrNull()?.latitude,
+            endLng = stats.routePath.lastOrNull()?.longitude
         )
         
         Log.d(TAG, "💾 Saving to Room database...")
@@ -291,6 +298,50 @@ class SessionManager(private val context: Context) {
             .filter { it.routePath.isNotEmpty() }
             .map { it.toSessionStats() }
 
+    /**
+     * Endpoint rows for recurring-trip clustering — no route geometry loaded.
+     *
+     * Prefer this over [getSessionsWithRoutes] for anything that only needs where a
+     * trip started and finished. The latter materialises every GPS point of every
+     * session in the range, which is the documented Room OOM path.
+     */
+    suspend fun getTripEndpoints(userId: String, sinceMs: Long) =
+        sessionDao.getTripEndpoints(userId, sinceMs)
+
+    /**
+     * Fill in route endpoints for sessions saved before schema v9.
+     *
+     * Processes at most [batchSize] sessions per call and loads them **one at a time**,
+     * so peak memory is one route rather than the whole history — the same history that
+     * already OOMs when loaded in bulk. Safe to call repeatedly; each pass shrinks the
+     * remaining queue, and sessions with no GPS are parked with an out-of-range
+     * sentinel so they are not retried forever.
+     *
+     * @return how many rows were updated, so a caller can loop until it returns 0.
+     */
+    suspend fun backfillRouteEndpoints(userId: String, batchSize: Int = 25): Int {
+        val ids = sessionDao.getSessionIdsMissingEndpoints(userId, batchSize)
+        var updated = 0
+        for (id in ids) {
+            val session = sessionDao.getSessionById(id) ?: continue
+            val first = session.routePath.firstOrNull()
+            val last = session.routePath.lastOrNull()
+            if (first == null || last == null) {
+                sessionDao.markEndpointsUnavailable(id)
+            } else {
+                sessionDao.updateRouteEndpoints(
+                    sessionId = id,
+                    startLat = first.latitude,
+                    startLng = first.longitude,
+                    endLat = last.latitude,
+                    endLng = last.longitude
+                )
+            }
+            updated++
+        }
+        return updated
+    }
+
     private fun offsetDate(days: Int): String =
         dateFormat.format(Date(System.currentTimeMillis() + days * 86_400_000L))
 
@@ -389,9 +440,19 @@ class SessionManager(private val context: Context) {
                         // Real session time (doc.timestamp), NOT the Firestore write-time (createdAtMs).
                         // This self-heals histories whose createdAt was corrupted by a past re-upload.
                         createdAt = doc.timestamp,
-                        breakdown = breakdownEntity
+                        breakdown = breakdownEntity,
+                        // Populated here as well as at save time, because the route is
+                        // already in hand at this exact moment. Leaving these null would
+                        // make every restored session invisible to recurring-trip
+                        // clustering until the backfill happened to reach it — so a user
+                        // who reinstalls would see no repeat journeys for several visits,
+                        // despite the app having just downloaded their whole history.
+                        startLat = routePath.firstOrNull()?.latitude,
+                        startLng = routePath.firstOrNull()?.longitude,
+                        endLat = routePath.lastOrNull()?.latitude,
+                        endLng = routePath.lastOrNull()?.longitude
                     )
-                    
+
                     sessionDao.insertSession(entity)
                     restored++
                 } catch (e: Exception) {

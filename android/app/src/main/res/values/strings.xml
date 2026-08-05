@@ -49,6 +49,56 @@
     <string name="go_premium">Go Premium</string>
     <string name="go_premium_desc">Remove ads, unlock more insights, and support development.</string>
     <string name="go_premium_cta">Upgrade</string>
+    <!-- Shown in Settings once the user is a subscriber, replacing the upsell copy -->
+    <string name="settings_premium_active_desc">Thanks for supporting Kinetic. Ads are off across the app.</string>
+    <string name="premium_manage_short">Manage</string>
+
+    <!-- Paywall (PremiumScreen) -->
+    <string name="premium_headline">Track your impact without interruptions</string>
+    <string name="premium_benefit_no_ads">No ads, anywhere in the app</string>
+    <string name="premium_benefit_insights">Deeper AI insights into your commute</string>
+    <string name="premium_benefit_support">Directly supports development</string>
+    <string name="premium_subscribe">Subscribe</string>
+    <string name="premium_restore">Restore purchase</string>
+    <string name="premium_try_again">Try again</string>
+    <string name="premium_connecting">Connecting to Google Play…</string>
+    <string name="premium_unavailable">Premium isn\'t available on this account yet</string>
+    <string name="premium_verifying">Confirming your subscription…</string>
+    <string name="premium_success">You\'re premium. Thank you!</string>
+    <string name="premium_pending">Payment pending. Premium unlocks as soon as it clears.</string>
+    <string name="premium_nothing_to_restore">No subscription found on this Google account</string>
+    <string name="premium_renewal_disclosure">Renews automatically until cancelled. Cancel any time in Google Play.</string>
+    <string name="premium_active_title">Premium is active</string>
+    <!-- %1$s is a formatted date -->
+    <string name="premium_renews_on">Renews on %1$s</string>
+    <string name="premium_ends_on">Access ends on %1$s</string>
+    <string name="premium_manage">Manage subscription</string>
+    <string name="premium_billed_weekly">Billed weekly</string>
+    <string name="premium_billed_monthly">Billed monthly</string>
+    <string name="premium_billed_quarterly">Billed every 3 months</string>
+    <string name="premium_billed_biannually">Billed every 6 months</string>
+    <string name="premium_billed_yearly">Billed yearly</string>
+    <string name="premium_billed_other">Recurring subscription</string>
+    <!-- %1$s is a trial length such as "7 days" -->
+    <string name="premium_trial_prefix">%1$s free, then</string>
+    <string name="premium_trial_generic">Free trial</string>
+
+    <plurals name="premium_trial_days">
+        <item quantity="one">%1$d day</item>
+        <item quantity="other">%1$d days</item>
+    </plurals>
+    <plurals name="premium_trial_weeks">
+        <item quantity="one">%1$d week</item>
+        <item quantity="other">%1$d weeks</item>
+    </plurals>
+    <plurals name="premium_trial_months">
+        <item quantity="one">%1$d month</item>
+        <item quantity="other">%1$d months</item>
+    </plurals>
+    <plurals name="premium_trial_years">
+        <item quantity="one">%1$d year</item>
+        <item quantity="other">%1$d years</item>
+    </plurals>
 
     <!-- Language -->
     <string name="language">Language</string>
@@ -663,4 +713,29 @@
     <string name="co2_saved_by_activity">CO₂ saved by activity</string>
     <string name="co2_pie_empty">Track an eco-friendly session this week and your CO₂ savings will show up here.</string>
     <string name="co2_pie_kg_total">%1$.2f kg total</string>
+    <string name="analysis_weekly_collapsed_summary">%1$s · %2$s kg saved</string>
+    <string name="analysis_weekly_expand">Expand weekly report</string>
+    <string name="analysis_weekly_collapse">Collapse weekly report</string>
+    <!-- CO2 calculator: all-modes comparison -->
+    <string name="co2_calc_compare_title">Compare all modes</string>
+    <!-- %1$s is a mode name, e.g. "Cycling" -->
+    <string name="co2_calc_compare_best">%1$s is best for this trip</string>
+    <string name="co2_calc_compare_selected">Your pick</string>
+    <!-- %1$s is a signed number, e.g. "-1.40" -->
+    <string name="co2_calc_compare_delta">%1$s kg</string>
+    <string name="co2_calc_compare_expand">Show all modes</string>
+    <string name="co2_calc_compare_collapse">Hide all modes</string>
+    <string name="co2_calc_compare_neutral">No CO2</string>
+    <!-- Recurring trips (premium) -->
+    <string name="recurring_trips_title">Your repeat journeys</string>
+    <string name="recurring_trips_locked_subtitle">Premium finds trips you make often and what switching would save.</string>
+    <string name="recurring_trips_unlock">Unlock with Premium</string>
+    <string name="recurring_trips_loading">Looking at your tracked routes…</string>
+    <string name="recurring_trips_empty">No repeat journeys yet — keep tracking and they will show up here.</string>
+    <!-- %1$d = number of journeys, %2$s = kg saved per year -->
+    <string name="recurring_trips_summary">%1$d repeat journeys · up to %2$s kg/year</string>
+    <!-- %1$d = trip count, %2$s = distance with unit, %3$s = mode -->
+    <string name="recurring_trips_row_headline">%1$d× %2$s by %3$s</string>
+    <!-- %1$s = suggested mode, %2$s = kg saved per year -->
+    <string name="recurring_trips_row_suggestion">Switch to %1$s: save about %2$s kg a year</string>
 </resources>

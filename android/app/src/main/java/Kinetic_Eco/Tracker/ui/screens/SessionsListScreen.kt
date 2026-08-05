@@ -65,12 +65,7 @@ fun SessionsListScreen(
 
     val displayedSessions = remember(allSessions, filterToCurrentWeek) {
         if (!filterToCurrentWeek) return@remember allSessions
-        val cal = Calendar.getInstance()
-        cal.set(Calendar.HOUR_OF_DAY, 0); cal.set(Calendar.MINUTE, 0)
-        cal.set(Calendar.SECOND, 0); cal.set(Calendar.MILLISECOND, 0)
-        val daysFromMonday = (cal.get(Calendar.DAY_OF_WEEK) - Calendar.MONDAY + 7) % 7
-        cal.add(Calendar.DAY_OF_YEAR, -daysFromMonday)
-        val weekStart = cal.timeInMillis
+        val weekStart = Kinetic_Eco.Tracker.util.WeekWindow.startOfWeekMs()
         allSessions.filter { (it.sessionEndTimeMs.takeIf { t -> t > 0 } ?: 0L) >= weekStart }
     }
 

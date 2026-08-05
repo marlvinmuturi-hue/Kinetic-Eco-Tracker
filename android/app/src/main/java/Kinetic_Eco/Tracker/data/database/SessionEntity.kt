@@ -37,7 +37,25 @@ data class SessionEntity(
      * (e.g. the fire-and-forget sync at save time was killed with the process). Defaults to 0 for
      * rows migrated from schema v7, so existing local sessions are (idempotently) re-uploaded.
      */
-    @ColumnInfo(name = "synced", defaultValue = "0") val synced: Boolean = false
+    @ColumnInfo(name = "synced", defaultValue = "0") val synced: Boolean = false,
+
+    // ── Denormalised route endpoints (schema v9) ─────────────────────────────
+    // First and last GPS fix of [routePath], copied out at save time.
+    //
+    // These exist so recurring-trip detection can group thousands of sessions by
+    // where they started and ended **without ever loading `routePathJson`**.
+    // Selecting the entity deserialises every route point through
+    // `Converters.toRoutePath`, which already OOMs on large histories (see
+    // `SessionDao.getTripEndpoints` and the projection it feeds). Four doubles per
+    // row is the difference between a query that scales and one that crashes.
+    //
+    // Null means either no GPS fix was recorded (indoor/flying/permission denied)
+    // or the row predates v9 and has not been backfilled yet — callers must treat
+    // null as "unknown", never as 0,0 (which is a real location in the Atlantic).
+    val startLat: Double? = null,
+    val startLng: Double? = null,
+    val endLat: Double? = null,
+    val endLng: Double? = null
 )
 
 data class ActivityBreakdownEntity(

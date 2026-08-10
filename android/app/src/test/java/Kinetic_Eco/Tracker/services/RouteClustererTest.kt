@@ -287,4 +287,79 @@ class RouteClustererTest {
         )!!.projectedAnnualSavingsCost!!
         assertTrue("a thirstier car should save more by not driving", thirsty > frugal)
     }
+
+    // ── Savings coherence ────────────────────────────────────────────────────
+    //
+    // The CO2 saving and the money saving describe one thing: the driving that no
+    // longer happens. They were allowed to drift apart for months because nothing
+    // compared them, and the discrepancy only became visible when both appeared in
+    // the same sentence of an AI recommendation.
+
+    @Test
+    fun `saving is the emissions avoided, not twice them`() {
+        val avgKm = 3.8
+        val driving = Kinetic_Eco.Tracker.data.Co2Calculator.estimate(
+            ActivityType.DRIVING, avgKm, VehicleProfile.DEFAULT
+        )
+        val alt = RouteClusterer.suggestAlternative(
+            ActivityType.DRIVING, avgKm * 1000, 25, 90, VehicleProfile.DEFAULT, prices
+        )!!
+
+        // Previously this subtracted the alternative's *net* figure, and a human-powered
+        // mode's netKg is negative because its savedKg is the very same avoided
+        // emissions — so the result came out at double.
+        assertEquals(
+            "saving should equal the driving trip's own emissions",
+            driving.emittedKg,
+            alt.estimatedSavingsKgPerTrip,
+            0.0001
+        )
+    }
+
+    @Test
+    fun `the greener alternative emits nothing itself`() {
+        // The invariant the test above leans on: if a candidate ever emitted, the
+        // saving would have to subtract it rather than equal the driving emissions.
+        val cycling = Kinetic_Eco.Tracker.data.Co2Calculator.estimate(
+            ActivityType.CYCLING, 3.8, VehicleProfile.DEFAULT
+        )
+        assertEquals(0.0, cycling.emittedKg, 0.0001)
+    }
+
+    @Test
+    fun `kilograms and money describe the same avoided fuel`() {
+        val avgKm = 3.8
+        val trips = 25
+        val lookback = 90
+        val alt = RouteClusterer.suggestAlternative(
+            ActivityType.DRIVING, avgKm * 1000, trips, lookback, VehicleProfile.DEFAULT, prices
+        )!!
+        val tripsPerYear = trips * (365.0 / lookback)
+
+        // Litres implied by the money, at the petrol price the fixture quotes.
+        val litresFromCost = alt.projectedAnnualSavingsCost!! / prices.petrolPerLitre
+
+        // Litres implied by the energy model, the same path MobilityCostCalculator
+        // takes when no measured or owner-stated economy is available.
+        val energyWh = Kinetic_Eco.Tracker.data.Co2Calculator
+            .estimate(ActivityType.DRIVING, avgKm, VehicleProfile.DEFAULT).energyWh
+        val litresFromEnergy = (energyWh / 1000.0) /
+            Kinetic_Eco.Tracker.data.MobilityCostCalculator.PETROL_KWH_PER_LITRE *
+            tripsPerYear
+
+        assertEquals(
+            "money and CO2 must be derived from the same avoided driving",
+            litresFromEnergy,
+            litresFromCost,
+            0.01
+        )
+
+        // And the annual kg must be the per-trip saving scaled the same way, so the
+        // two projections cannot drift apart even if one of them is later rescaled.
+        assertEquals(
+            alt.estimatedSavingsKgPerTrip * tripsPerYear,
+            alt.projectedAnnualSavingsKg,
+            0.0001
+        )
+    }
 }

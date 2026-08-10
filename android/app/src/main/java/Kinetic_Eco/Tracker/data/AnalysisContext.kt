@@ -27,8 +27,37 @@ data class AnalysisContext(
     /** Weekly CO₂ reduction target in kg, so progress can be spoken to. */
     val weeklyCo2GoalKg: Double,
     val vehicle: Vehicle?,
-    val money: Money?
+    val money: Money?,
+    /**
+     * Journeys the user makes repeatedly, already clustered and costed on the device.
+     *
+     * The deepest thing this app knows about anyone, and the one input that turns
+     * "walk more" into "the 4.2 km run you do three times a week". Sent as conclusions
+     * rather than raw trips: the clustering, the mode suggestion and the annual
+     * projection are all decided by [Kinetic_Eco.Tracker.services.RouteClusterer], so
+     * the model reports them rather than inferring them.
+     */
+    val recurringTrips: List<RecurringTrip> = emptyList()
 ) {
+    /**
+     * One repeat journey, summarised.
+     *
+     * **No coordinates.** The cluster is built from origin/destination pairs, but the
+     * origin of a thrice-weekly commute is somebody's home address, and there is no
+     * reason to hand that to a language model to produce a sentence about cycling.
+     * Trip count, distance and the costed alternative carry the whole argument
+     * without it.
+     */
+    data class RecurringTrip(
+        val tripCount: Int,
+        val currentMode: String,
+        val avgDistanceKm: Double,
+        val suggestedMode: String?,
+        val projectedAnnualSavingsKg: Double?,
+        val projectedAnnualSavingsCost: Double?,
+        val currencyCode: String?
+    )
+
     data class Vehicle(
         val primaryFuel: String,
         val iceFuel: String,

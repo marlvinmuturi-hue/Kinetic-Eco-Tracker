@@ -37,6 +37,9 @@ class AnalyticsViewModel(application: Application) : AndroidViewModel(applicatio
      * catch up a typical history in a few visits while keeping any single load short.
      */
     private val MAX_BACKFILL_PASSES_PER_LOAD = 8
+
+    /** Repeat journeys sent to the AI analysis. Enough to spot a pattern, not a dump. */
+    private val MAX_CLUSTERS_IN_PROMPT = 5
     
     // Travel recap: geocoded cities/countries + personal bests
     private val _travelRecap = MutableStateFlow<TravelRecap?>(null)
@@ -356,6 +359,24 @@ class AnalyticsViewModel(application: Application) : AndroidViewModel(applicatio
                 bodyType = profile.bodyType.name,
                 kmPerLitre = profile.fuelEconomyKmPerL
             ),
+            // Premium-only, because the clustering itself is. Ordered by what the user
+            // stands to save and capped: past the top few the marginal insight is nil,
+            // and the prompt should not grow without bound for someone with a long
+            // history.
+            recurringTrips = _routeClusters.value
+                .sortedByDescending { it.greenerAlternative?.projectedAnnualSavingsKg ?: 0.0 }
+                .take(MAX_CLUSTERS_IN_PROMPT)
+                .map { c ->
+                    AnalysisContext.RecurringTrip(
+                        tripCount = c.tripCount,
+                        currentMode = c.dominantActivity.name,
+                        avgDistanceKm = c.avgDistanceM / 1000.0,
+                        suggestedMode = c.greenerAlternative?.suggestedMode?.name,
+                        projectedAnnualSavingsKg = c.greenerAlternative?.projectedAnnualSavingsKg,
+                        projectedAnnualSavingsCost = c.greenerAlternative?.projectedAnnualSavingsCost,
+                        currencyCode = c.greenerAlternative?.currencyCode
+                    )
+                },
             // Null when the region has no known prices. The prompt then omits money
             // entirely rather than quoting a figure in an unknown currency — the same
             // rule MobilityCostCalculator applies on the device.

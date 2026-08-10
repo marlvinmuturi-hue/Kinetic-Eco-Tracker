@@ -138,6 +138,22 @@ exports.analyzeActivity = functions.runWith({ secrets: ['GEMINI_API_KEY'] }).htt
     // Device-only facts: vehicle, prices, measured economy, goal, timezone. Absent for
     // older clients, in which case the prompt simply omits those sections.
     const userContext = (req.body.data && req.body.data.context) || req.body.context || null;
+
+    // Logged before the cache check, so a cache hit still tells us what the client
+    // sent. Previously the only context logging sat after it, which meant two
+    // consecutive cached runs revealed nothing about whether a fix had landed.
+    if (userContext) {
+      const t = Array.isArray(userContext.recurringTrips) ? userContext.recurringTrips : [];
+      const costed = t.filter((x) => x.projectedAnnualSavingsCost != null).length;
+      console.log(
+        `Context: money=${userContext.money ? 'yes' : 'no'}, ` +
+        `vehicle=${userContext.vehicle ? 'yes' : 'no'}, ` +
+        `trips=${t.length} (${costed} with cost), ` +
+        `measuredEconomy=${userContext.money && userContext.money.measuredLPer100Km ? 'yes' : 'no'}`
+      );
+    } else {
+      console.log('Context: none (legacy client)');
+    }
     // If a valid calendar day is sent, single-day analysis must win (ignore mistaken rolling timeframe from client).
     if (/^\d{4}-\d{2}-\d{2}$/.test(sessionDateKey)) {
       timeframe = '1day';
@@ -605,7 +621,7 @@ function pickBestDay(dailySeries) {
  * text for a full day after deploy — which is how the broken "51.64 kg better than
  * baseline" line would have outlived its own fix.
  */
-const PROMPT_VERSION = 'v4-real-mode-counts';
+const PROMPT_VERSION = 'v5-recurring-trips';
 
 function fingerprintContext(ctx) {
   if (!ctx) return `none-${PROMPT_VERSION}`;
@@ -616,6 +632,16 @@ function fingerprintContext(ctx) {
     m.currencyCode, m.petrolPerLitre, m.dieselPerLitre, m.electricityPerKwh,
     m.measuredLPer100Km, m.region,
     ctx.weeklyCo2GoalKg, ctx.unitSystem, ctx.timeZoneOffsetMinutes,
+    // Includes the savings, not just the shape of each journey. Keyed on
+    // count/mode alone, a cluster that gained a cost figure once prices resolved
+    // produced an identical fingerprint — so the cache kept serving the kg-only
+    // answer and the money never appeared however well the fix worked.
+    (ctx.recurringTrips || [])
+      .map((t) =>
+        `${t.tripCount}:${t.currentMode}:${t.suggestedMode || ''}:` +
+        `${t.projectedAnnualSavingsKg || ''}:${t.projectedAnnualSavingsCost || ''}`
+      )
+      .join(','),
     PROMPT_VERSION
   ].join('|');
   return require('crypto').createHash('sha1').update(parts).digest('hex').slice(0, 12);
@@ -684,6 +710,33 @@ function buildUserContextSection(ctx) {
     lines.push(
       `**Energy Prices**: unknown for this user's region.
 - Do NOT mention money, cost, savings in currency, or fuel spend anywhere in your response.`
+    );
+  }
+
+  const trips = Array.isArray(ctx.recurringTrips) ? ctx.recurringTrips : [];
+  if (trips.length > 0) {
+    // Already clustered, costed and ranked on the device. The model's job is to
+    // report and prioritise these, not to rediscover them — and it could not
+    // rediscover them anyway, since it never sees individual trips.
+    const rows = trips.map((t) => {
+      const dist = Number(t.avgDistanceKm || 0).toFixed(1);
+      if (!t.suggestedMode) {
+        return `- ${t.tripCount}x by ${t.currentMode}, about ${dist} km each — no greener alternative suggested for this one`;
+      }
+      const kg = t.projectedAnnualSavingsKg != null
+        ? `${Number(t.projectedAnnualSavingsKg).toFixed(1)} kg CO2/year`
+        : null;
+      const money = t.projectedAnnualSavingsCost != null && t.currencyCode
+        ? `${t.currencyCode} ${Math.round(t.projectedAnnualSavingsCost).toLocaleString('en-US')}/year`
+        : null;
+      const saving = [kg, money].filter(Boolean).join(' and ');
+      return `- ${t.tripCount}x by ${t.currentMode}, about ${dist} km each — switching to ${t.suggestedMode} would save ${saving || 'an unquantified amount'}`;
+    });
+    lines.push(
+      `**Their Repeat Journeys** (detected from tracked routes; figures already calculated — quote them, do not recompute):
+${rows.join('\n')}
+- These are the most concrete recommendations available. Prefer them over generic advice.
+- Locations are deliberately withheld; refer to a journey by its mode and distance.`
     );
   }
 
@@ -849,6 +902,10 @@ Grounding rules — these override the guidelines above:
 - "Most Active Day" above is ranked by CO2 saved. If you also mention the day with the
   greatest distance, call it the "longest-distance day" so the two do not read as
   contradicting each other.
+- If Repeat Journeys are listed, at least one recommendation must name one of them,
+  using its mode, distance and the supplied saving. A specific journey the user
+  actually makes beats any general suggestion.
+- Never invent or guess where a journey starts or ends. You are not given locations.
 - If you do not have enough data to support a claim, say less rather than guessing.
 - If CO2 conserved is significant, celebrate it!
 - If user is mostly sedentary, gently encourage more activity

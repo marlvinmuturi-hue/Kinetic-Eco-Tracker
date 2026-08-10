@@ -191,8 +191,17 @@ internal object RouteClusterer {
             ActivityType.TRAIN, ActivityType.IDLE, ActivityType.FLYING -> null
         } ?: return null
 
-        val savingsPerTrip = Co2Calculator.estimate(dominant, avgKm, profile).netKg -
-            Co2Calculator.estimate(candidate, avgKm, profile).netKg
+        // Emissions avoided, not the difference of net figures.
+        //
+        // `netKg` is `emittedKg - savedKg`, and a human-powered mode's `savedKg` *is*
+        // the emissions it avoided versus a car baseline. Subtracting one net from the
+        // other therefore counted the same avoided kilograms twice: driving 3.8 km
+        // scored +0.80, cycling it scored -0.80, and the "saving" came out at 1.60 kg
+        // instead of 0.80. Every premium user has been shown roughly double, and the
+        // error was invisible until the figure appeared next to the money — which is
+        // derived from the fuel bill alone and was always right.
+        val savingsPerTrip = Co2Calculator.estimate(dominant, avgKm, profile).emittedKg -
+            Co2Calculator.estimate(candidate, avgKm, profile).emittedKg
 
         // An EV on a short hop can already beat the alternative once the profile is
         // applied. Suggesting a "greener" option that saves nothing is noise.

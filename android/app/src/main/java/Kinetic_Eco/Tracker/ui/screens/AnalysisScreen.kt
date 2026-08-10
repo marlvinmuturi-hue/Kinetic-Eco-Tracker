@@ -56,7 +56,9 @@ import Kinetic_Eco.Tracker.data.SessionStats
 import Kinetic_Eco.Tracker.data.UnitSystem
 import Kinetic_Eco.Tracker.util.WeekWindow
 import Kinetic_Eco.Tracker.services.Co2EquivalencyService
+import Kinetic_Eco.Tracker.services.EnergyPriceRepository
 import Kinetic_Eco.Tracker.services.EntitlementRepository
+import Kinetic_Eco.Tracker.services.FuelLogRepository
 import Kinetic_Eco.Tracker.services.UserPreferencesManager
 import Kinetic_Eco.Tracker.ui.components.Co2CalculatorCard
 import Kinetic_Eco.Tracker.ui.components.RecurringTripsCard
@@ -149,7 +151,16 @@ fun AnalysisScreen(
     val isPremium by EntitlementRepository.isPremium.collectAsStateWithLifecycle()
     val routeClusters by analyticsViewModel.routeClusters.collectAsStateWithLifecycle()
     val routeClustersLoading by analyticsViewModel.routeClustersLoading.collectAsStateWithLifecycle()
-    LaunchedEffect(userId, isPremium, vehicleProfile) {
+    // Keyed on prices and measured economy as well as the profile.
+    //
+    // Both arrive asynchronously — prices from a Firestore fetch on auth change,
+    // economy from the fuel log — and clustering reads them by value. Keyed only on
+    // the profile, this effect reliably won the race and baked in `prices = null`,
+    // so every repeat journey's projectedAnnualSavingsCost stayed null and the money
+    // figure never appeared, however well the prices themselves resolved.
+    val clusterPrices by EnergyPriceRepository.prices.collectAsStateWithLifecycle()
+    val clusterEconomy by FuelLogRepository.economy.collectAsStateWithLifecycle()
+    LaunchedEffect(userId, isPremium, vehicleProfile, clusterPrices, clusterEconomy) {
         if (isPremium && userId.isNotBlank()) {
             analyticsViewModel.loadRouteClusters(userId, profile = vehicleProfile)
         }

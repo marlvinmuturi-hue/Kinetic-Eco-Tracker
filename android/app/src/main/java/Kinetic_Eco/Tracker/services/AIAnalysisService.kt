@@ -12,6 +12,7 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import org.json.JSONArray
 import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
@@ -194,6 +195,21 @@ class AIAnalysisService {
                 put("engineCcBand", v.engineCcBand)
                 put("bodyType", v.bodyType)
                 v.kmPerLitre?.let { put("kmPerLitre", it) }
+            })
+        }
+        if (recurringTrips.isNotEmpty()) {
+            put("recurringTrips", JSONArray().apply {
+                recurringTrips.forEach { t ->
+                    put(JSONObject().apply {
+                        put("tripCount", t.tripCount)
+                        put("currentMode", t.currentMode)
+                        put("avgDistanceKm", t.avgDistanceKm)
+                        t.suggestedMode?.let { put("suggestedMode", it) }
+                        t.projectedAnnualSavingsKg?.let { put("projectedAnnualSavingsKg", it) }
+                        t.projectedAnnualSavingsCost?.let { put("projectedAnnualSavingsCost", it) }
+                        t.currencyCode?.let { put("currencyCode", it) }
+                    })
+                }
             })
         }
         money?.let { m ->

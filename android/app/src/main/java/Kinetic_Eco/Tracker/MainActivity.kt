@@ -95,6 +95,7 @@ class MainActivity : AppCompatActivity() {
     private var idleStopMinutes by mutableStateOf(10)
     private var weeklyDigestEnabled by mutableStateOf(true)
     private var dailyDigestEnabled by mutableStateOf(true)
+    private var monthlyStatementEnabled by mutableStateOf(true)
     /** True while the one-time Auto Detect setup dialog (idle-time picker) is visible. */
     private var showAutoDetectSetupDialog by mutableStateOf(false)
     private var currentRoute by mutableStateOf<String?>(null)
@@ -201,6 +202,7 @@ class MainActivity : AppCompatActivity() {
         idleStopMinutes = try { userPrefsManager.getIdleStopMinutes() } catch (e: Exception) { 10 }
         weeklyDigestEnabled = try { userPrefsManager.isWeeklyDigestEnabled() } catch (e: Exception) { true }
         dailyDigestEnabled = try { userPrefsManager.isDailyDigestEnabled() } catch (e: Exception) { true }
+        monthlyStatementEnabled = try { userPrefsManager.isMonthlyStatementEnabled() } catch (e: Exception) { true }
         
         // Auto-start on walk, or re-arm after idle auto-stop (pending flag)
         if (autoStartOnWalkEnabled || userPrefsManager.getPendingResumeAfterIdleAutoStop()) {
@@ -465,6 +467,11 @@ class MainActivity : AppCompatActivity() {
                             onDailyDigestChange = { enabled ->
                                 dailyDigestEnabled = enabled
                                 userPrefsManager.setDailyDigestEnabled(enabled)
+                            },
+                            monthlyStatementEnabled = monthlyStatementEnabled,
+                            onMonthlyStatementChange = { enabled ->
+                                monthlyStatementEnabled = enabled
+                                userPrefsManager.setMonthlyStatementEnabled(enabled)
                             },
                             autoStartOnWalkEnabled = autoStartOnWalkEnabled,
                             onAutoStartOnWalkChange = { enabled ->

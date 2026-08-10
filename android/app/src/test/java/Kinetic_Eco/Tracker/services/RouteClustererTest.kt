@@ -226,4 +226,65 @@ class RouteClustererTest {
         assertTrue(cluster(emptyList()).isEmpty())
         assertNotNull(cluster(emptyList()))
     }
+
+    // ── Money savings ────────────────────────────────────────────────────────
+
+    private val prices = Kinetic_Eco.Tracker.data.EnergyPrices(
+        currencyCode = "KES",
+        petrolPerLitre = 200.0,
+        dieselPerLitre = 180.0,
+        electricityPerKwh = 25.0,
+        source = Kinetic_Eco.Tracker.data.PriceSource.BUNDLED,
+        effectiveMonth = "2026-08"
+    )
+
+    @Test
+    fun `a money saving is quoted when prices are available`() {
+        val alt = RouteClusterer.suggestAlternative(
+            dominant = ActivityType.DRIVING,
+            avgDistanceM = 6_000.0,
+            tripCount = 12,
+            lookbackDays = 90,
+            profile = VehicleProfile.DEFAULT,
+            prices = prices
+        )!!
+        assertEquals("KES", alt.currencyCode)
+        assertTrue("expected a positive annual cost saving", alt.projectedAnnualSavingsCost!! > 0.0)
+    }
+
+    /** Without a price table there is no honest money figure — carbon still stands. */
+    @Test
+    fun `no prices means no money figure, but the carbon saving survives`() {
+        val alt = RouteClusterer.suggestAlternative(
+            dominant = ActivityType.DRIVING,
+            avgDistanceM = 6_000.0,
+            tripCount = 12,
+            lookbackDays = 90,
+            profile = VehicleProfile.DEFAULT
+        )!!
+        assertNull(alt.projectedAnnualSavingsCost)
+        assertNull(alt.currencyCode)
+        assertTrue(alt.projectedAnnualSavingsKg > 0.0)
+    }
+
+    @Test
+    fun `money saving scales with how often the journey is made`() {
+        fun costFor(trips: Int) = RouteClusterer.suggestAlternative(
+            ActivityType.DRIVING, 6_000.0, trips, 90, VehicleProfile.DEFAULT, prices
+        )!!.projectedAnnualSavingsCost!!
+        assertEquals(costFor(6) * 2, costFor(12), 1e-6)
+    }
+
+    @Test
+    fun `a measured economy changes the money quoted`() {
+        val thirsty = RouteClusterer.suggestAlternative(
+            ActivityType.DRIVING, 6_000.0, 12, 90, VehicleProfile.DEFAULT, prices,
+            Kinetic_Eco.Tracker.data.MeasuredEconomy(15.0, 3, 150.0, 1000.0)
+        )!!.projectedAnnualSavingsCost!!
+        val frugal = RouteClusterer.suggestAlternative(
+            ActivityType.DRIVING, 6_000.0, 12, 90, VehicleProfile.DEFAULT, prices,
+            Kinetic_Eco.Tracker.data.MeasuredEconomy(5.0, 3, 50.0, 1000.0)
+        )!!.projectedAnnualSavingsCost!!
+        assertTrue("a thirstier car should save more by not driving", thirsty > frugal)
+    }
 }

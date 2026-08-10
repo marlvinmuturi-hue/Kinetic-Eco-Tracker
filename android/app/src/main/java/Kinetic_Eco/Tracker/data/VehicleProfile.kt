@@ -353,7 +353,22 @@ data class VehicleProfile(
     val electricVehicleClass: ElectricVehicleClass,
     val electricMotorPower: ElectricMotorPowerBand,
     val trainPropulsion: TrainPropulsion,
-    val aircraftCategory: AircraftCategory
+    val aircraftCategory: AircraftCategory,
+    /**
+     * What this car actually does, in km per litre, as the owner reports it. Null to
+     * fall back to the engine-displacement average.
+     *
+     * Sits between the class average and a measured economy: an engine band is a guess
+     * about cars in general, this is a claim about *this* car, and fill-ups are the
+     * truth. Every driver knows roughly what their car does, so one optional field
+     * captures most of what a make/model/year lookup would — and unlike a lookup it
+     * works for the used Japanese imports that dominate this app's market and appear
+     * in no free dataset.
+     *
+     * Stored in km/L rather than L/100 km because that is the unit people quote here;
+     * converted at the point of use.
+     */
+    val fuelEconomyKmPerL: Double? = null
 ) {
     companion object {
         val DEFAULT = VehicleProfile(

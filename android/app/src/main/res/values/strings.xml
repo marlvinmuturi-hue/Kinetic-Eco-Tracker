@@ -656,7 +656,7 @@
     <string name="analysis_tab_subtitle">AI insights &amp; carbon footprint</string>
 
     <!-- Manual CO₂ calculator (Analysis tab) -->
-    <string name="co2_calc_title">CO₂ calculator</string>
+    <string name="co2_calc_title">Mobility Cost Calculator</string>
     <string name="co2_calc_subtitle">Work out a trip you haven\'t tracked</string>
     <string name="co2_calc_mode_label">Mode</string>
     <string name="co2_calc_distance_label">Distance (%1$s)</string>
@@ -718,8 +718,6 @@
     <string name="analysis_weekly_collapse">Collapse weekly report</string>
     <!-- CO2 calculator: all-modes comparison -->
     <string name="co2_calc_compare_title">Compare all modes</string>
-    <!-- %1$s is a mode name, e.g. "Cycling" -->
-    <string name="co2_calc_compare_best">%1$s is best for this trip</string>
     <string name="co2_calc_compare_selected">Your pick</string>
     <!-- %1$s is a signed number, e.g. "-1.40" -->
     <string name="co2_calc_compare_delta">%1$s kg</string>
@@ -738,4 +736,117 @@
     <string name="recurring_trips_row_headline">%1$d× %2$s by %3$s</string>
     <!-- %1$s = suggested mode, %2$s = kg saved per year -->
     <string name="recurring_trips_row_suggestion">Switch to %1$s: save about %2$s kg a year</string>
+    <!-- CO2 calculator: fuel volume and cost -->
+    <string name="co2_calc_fuel_needed">Fuel needed</string>
+    <string name="co2_calc_energy_needed">Charge needed</string>
+    <string name="co2_calc_litres">%1$s L</string>
+    <string name="co2_calc_kwh">%1$s kWh</string>
+    <string name="co2_calc_cost_label">Cost</string>
+    <string name="co2_calc_per_litre">per litre</string>
+    <string name="co2_calc_per_kwh">per kWh</string>
+    <!-- %1$s = price with currency, %2$s = "per litre"/"per kWh", %3$s = source -->
+    <string name="co2_calc_price_provenance">At %1$s %2$s · %3$s</string>
+    <string name="co2_calc_price_source_user">your price</string>
+    <!-- %1$s = publisher (e.g. EPRA), %2$s = yyyy-MM -->
+    <string name="co2_calc_price_source_remote">%1$s, %2$s</string>
+    <string name="co2_calc_price_source_bundled">%1$s, %2$s (built in)</string>
+    <string name="co2_calc_cost_is_estimate">Estimated from a typical vehicle of your engine size — log a fill-up to make it exact.</string>
+    <string name="co2_calc_use_my_price">Use my price</string>
+    <string name="co2_calc_price_save">Save</string>
+    <string name="co2_calc_price_cancel">Cancel</string>
+    <string name="co2_calc_price_reset">Use published price</string>
+    <!-- %1$s = currency code, %2$s = "per litre"/"per kWh" -->
+    <string name="co2_calc_your_price_label">%1$s %2$s</string>
+    <!-- Fuel log -->
+    <string name="fuel_log_title">Fuel log</string>
+    <string name="fuel_log_add_title">Add a fill-up</string>
+    <string name="fuel_log_litres">Litres</string>
+    <!-- %1$s = currency code -->
+    <string name="fuel_log_amount">Amount (%1$s)</string>
+    <string name="fuel_log_full_tank">Filled to the brim</string>
+    <string name="fuel_log_full_tank_hint">Only brim-to-brim fill-ups can measure economy. Partial fills are still logged.</string>
+    <string name="fuel_log_save">Save fill-up</string>
+    <string name="fuel_log_empty">No fill-ups logged yet.</string>
+    <string name="fuel_log_partial">partial fill</string>
+    <string name="fuel_log_delete">Delete</string>
+    <!-- %1$s = litres, %2$s = currency, %3$s = amount -->
+    <string name="fuel_log_entry_line">%1$s L · %2$s %3$s</string>
+    <string name="fuel_log_not_yet_title">Not enough data yet</string>
+    <string name="fuel_log_not_yet_body">Log two brim-full fill-ups and we will work out the real fuel economy of your car from the distance you have already tracked — no odometer needed.</string>
+    <!-- %1$s = litres per 100 km -->
+    <string name="fuel_log_economy_value">%1$s L/100 km</string>
+    <!-- %1$d = number of fill-up intervals, %2$s = km covered -->
+    <string name="fuel_log_economy_basis">Measured from %1$d fill-ups over %2$s km</string>
+    <string name="fuel_log_economy_early">Based on one tankful so far — it will settle as you log more.</string>
+    <!-- Calculator: measured vs estimated -->
+    <!-- %1$d = number of fill-ups -->
+    <string name="co2_calc_cost_is_measured">Measured from your last %1$d fill-ups.</string>
+    <string name="co2_calc_log_fillup">Log a fill-up</string>
+    <!-- %1$s = price with currency, from the user's own fill-up receipts -->
+    <string name="co2_calc_receipt_price">Your recent receipts average %1$s per litre.</string>
+    <string name="co2_calc_receipt_price_use">Use this</string>
+    <!-- Monthly statement (premium) -->
+    <string name="statement_title">Monthly statement</string>
+    <string name="statement_prev_month">Previous month</string>
+    <string name="statement_next_month">Next month</string>
+    <string name="statement_empty">No trips tracked in this month.</string>
+    <string name="statement_spend">Spent on fuel</string>
+    <string name="statement_spend_so_far">Spent on fuel so far</string>
+    <string name="statement_no_cost_basis">No driving this month</string>
+    <!-- %1$s = litres, %2$s = km -->
+    <string name="statement_litres_over">%1$s L over %2$s km driven</string>
+    <string name="statement_basis_measured">Based on your own fill-ups and receipts.</string>
+    <string name="statement_basis_estimated">Estimated — log a fill-up to make this exact.</string>
+    <string name="statement_trips">Trips</string>
+    <string name="statement_distance">Distance</string>
+    <string name="statement_active">On foot or bike</string>
+    <string name="statement_co2_saved">CO2 saved</string>
+    <string name="statement_short_trips_title">Short drives</string>
+    <!-- %1$d = trips, %2$s = currency, %3$s = amount -->
+    <string name="statement_short_trips_body">%1$d of your drives were under 3 km. Walking or cycling those keeps about %2$s %3$s in your pocket.</string>
+    <string name="statement_locked_title">Monthly statements are a Premium feature</string>
+    <string name="statement_locked_body">See what your driving actually costs each month, measured from your own fill-ups and the distance this app tracked.</string>
+    <string name="statement_locked_cta">Unlock with Premium</string>
+    <!-- Monthly statement push -->
+    <string name="notif_monthly_title">Your monthly statement</string>
+    <string name="notif_monthly_channel">Monthly statement</string>
+    <string name="notif_monthly_channel_desc">A summary of what your travel cost last month</string>
+    <string name="settings_monthly_statement">Monthly statement</string>
+    <string name="settings_monthly_statement_desc">A push when last month’s summary is ready</string>
+    <string name="settings_statement_desc">What your travel cost, month by month</string>
+    <!-- %1$d = journeys, %2$s = currency, %3$s = amount per year -->
+    <string name="recurring_trips_summary_money">%1$d repeat journeys · up to %2$s %3$s/year</string>
+    <!-- %1$s = mode, %2$s = currency, %3$s = amount, %4$s = kg CO2 -->
+    <string name="recurring_trips_row_suggestion_money">Switch to %1$s: save about %2$s %3$s and %4$s kg a year</string>
+    <!-- Repeat journey map -->
+    <string name="trip_map_title">Repeat journey</string>
+    <string name="trip_map_no_selection">No journey selected.</string>
+    <string name="trip_map_no_routes">No saved route for these trips yet.</string>
+    <!-- %1$d = trips, %2$s = distance with unit -->
+    <string name="trip_map_headline">%1$d trips · about %2$s each</string>
+    <!-- %1$d = routes drawn, %2$d = total trips -->
+    <string name="trip_map_showing">Showing %1$d of %2$d runs</string>
+    <string name="trip_map_alternative_title">A greener option</string>
+    <string name="co2_calc_price_unknown">No fuel price for your region yet, so cost is hidden rather than guessed.</string>
+    <string name="co2_calc_set_price">Set your fuel price</string>
+    <string name="co2_calc_price_source_generic">published price</string>
+    <!-- Region / pricing country -->
+    <string name="settings_pricing_region">Pricing region</string>
+    <string name="settings_pricing_region_auto">Automatic</string>
+    <!-- %1$s = country name -->
+    <string name="settings_pricing_region_detected">Detected: %1$s</string>
+    <string name="settings_pricing_region_unknown">Not detected — set your own fuel price</string>
+    <string name="settings_pricing_region_desc">Which country supplies the fuel and electricity prices</string>
+    <!-- %1$s = country -->
+    <string name="settings_pricing_region_no_data">No published prices for %1$s yet — set your own.</string>
+    <!-- %1$s = country, %2$s = currency code -->
+    <string name="settings_pricing_region_active">Using %1$s prices in %2$s</string>
+    <string name="vehicle_profile_km_per_l">Your car does (km/L)</string>
+    <string name="vehicle_profile_km_per_l_hint">Optional. Leave blank to estimate from engine size.</string>
+    <string name="co2_calc_cost_is_owner_stated">Based on the km/L you entered — log a fill-up to measure it exactly.</string>
+    <string name="analysis_view_week_sessions">View this week\'s sessions</string>
+    <string name="fuel_economy_channel_name">Fuel economy</string>
+    <string name="fuel_economy_channel_desc">A one-off note when your fill-ups produce a real economy figure</string>
+    <string name="fuel_economy_measured_title">Your real fuel economy</string>
+    <string name="fuel_economy_measured_body">Your car does %1$s L/100 km, measured from your own fill-ups. Fuel costs across the app now use this instead of an estimate.</string>
 </resources>

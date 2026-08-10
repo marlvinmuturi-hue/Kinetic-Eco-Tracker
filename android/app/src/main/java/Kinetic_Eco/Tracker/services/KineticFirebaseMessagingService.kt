@@ -52,6 +52,33 @@ class KineticFirebaseMessagingService : FirebaseMessagingService() {
         val prefs = UserPreferencesManager(applicationContext)
         val type = message.data["type"] ?: "weekly"
 
+        // A dedicated branch, not a fall-through. The `else` below is the *weekly*
+        // digest — a new type without its own case would inherit the weekly channel and
+        // be silenced by the weekly toggle, which is a bug that looks like a
+        // mis-configured preference rather than a routing mistake.
+        if (type == "monthly") {
+            if (!prefs.isMonthlyStatementEnabled()) {
+                Log.d(TAG, "Monthly statement disabled by user — suppressing")
+                return
+            }
+            val title = message.data["title"] ?: "Your monthly statement"
+            val body = message.data["body"] ?: "Last month's summary is ready."
+            showNotification(title, body, MONTHLY_STATEMENT_CHANNEL_ID, MONTHLY_STATEMENT_NOTIFICATION_ID)
+            return
+        }
+
+        // Deliberately not behind a user toggle. Every other push here is something the
+        // app wants to tell you; this one is that your payment failed and Premium is
+        // about to stop. Letting a digest preference suppress it would mean the user
+        // silently loses what they paid for.
+        if (type == "billing") {
+            val title = message.data["title"] ?: "Payment problem"
+            val body = message.data["body"]
+                ?: "Google Play could not take your payment. Update it to keep Premium."
+            showNotification(title, body, BILLING_CHANNEL_ID, BILLING_NOTIFICATION_ID)
+            return
+        }
+
         if (type == "daily") {
             if (!prefs.isDailyDigestEnabled()) {
                 Log.d(TAG, "Daily digest disabled by user — suppressing")
@@ -115,9 +142,19 @@ class KineticFirebaseMessagingService : FirebaseMessagingService() {
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val (channelName, channelDesc) = when (channelId) {
                 DAILY_DIGEST_CHANNEL_ID -> "Daily Digest" to "Your daily eco impact from Kinetic Eco"
+                MONTHLY_STATEMENT_CHANNEL_ID ->
+                    "Monthly Statement" to "A summary of what your travel cost last month"
+                BILLING_CHANNEL_ID ->
+                    "Subscription & billing" to "Payment problems that affect your Premium access"
                 else                    -> "Weekly Digest" to "Your weekly activity summary from Kinetic Eco"
             }
-            val channel = NotificationChannel(channelId, channelName, NotificationManager.IMPORTANCE_DEFAULT)
+            // Billing gets HIGH: a failed payment is time-limited and actionable, and
+            // sinking it to the same weight as a digest is how people discover it a
+            // week after Premium switched off.
+            val importance =
+                if (channelId == BILLING_CHANNEL_ID) NotificationManager.IMPORTANCE_HIGH
+                else NotificationManager.IMPORTANCE_DEFAULT
+            val channel = NotificationChannel(channelId, channelName, importance)
                 .apply {
                     description = channelDesc
                     enableVibration(false)
@@ -153,5 +190,9 @@ class KineticFirebaseMessagingService : FirebaseMessagingService() {
         private const val DAILY_DIGEST_CHANNEL_ID    = "daily_digest_channel"
         private const val WEEKLY_DIGEST_NOTIFICATION_ID = 5001
         private const val DAILY_DIGEST_NOTIFICATION_ID  = 5002
+        private const val MONTHLY_STATEMENT_CHANNEL_ID  = "monthly_statement_channel"
+        private const val MONTHLY_STATEMENT_NOTIFICATION_ID = 5003
+        const val BILLING_CHANNEL_ID = "billing_channel"
+        private const val BILLING_NOTIFICATION_ID = 5004
     }
 }

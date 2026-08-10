@@ -28,6 +28,12 @@ service cloud.firestore {
       // write one. Purchases are verified server-side against the Play Developer
       // API and written with the Admin SDK, which bypasses these rules entirely.
       // A client that can write its own entitlement has no paywall at all.
+      // Fuel log: hand-typed fill-ups, owner-only. Unlike a session, a fill-up cannot
+      // be re-recorded if lost, so these sync for durability rather than analytics.
+      match /fuelEntries/{entryId} {
+        allow read, write, delete: if request.auth != null && request.auth.uid == userId;
+      }
+
       match /entitlements/{entitlementId} {
         allow read: if request.auth != null && request.auth.uid == userId;
         allow write: if false;
@@ -117,5 +123,16 @@ service cloud.firestore {
     match /playPurchases/{purchaseToken} {
       allow read, write: if false;
     }
+
+    // ── Published energy prices (read-only reference data) ──────────────────
+    // Fuel and electricity unit prices, refreshed monthly from EPRA's published
+    // maximum pump prices and the Kenya Power tariff. World-readable to signed-in
+    // clients because it is public reference data with no user content in it;
+    // writes are console/Admin-SDK only so a client cannot make fuel look free.
+    match /energyPrices/{region} {
+      allow read: if request.auth != null;
+      allow write: if false;
+    }
+
   }
 }

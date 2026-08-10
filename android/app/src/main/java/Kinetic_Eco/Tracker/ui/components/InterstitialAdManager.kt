@@ -11,24 +11,29 @@ import com.google.android.gms.ads.LoadAdError
 import com.google.android.gms.ads.interstitial.InterstitialAd
 import com.google.android.gms.ads.interstitial.InterstitialAdLoadCallback
 import Kinetic_Eco.Tracker.R
+import Kinetic_Eco.Tracker.data.AdFrequencyPolicy
 import Kinetic_Eco.Tracker.services.EntitlementRepository
+import Kinetic_Eco.Tracker.services.UserPreferencesManager
 
 private const val TAG = "InterstitialAdManager"
 
 /** Google test interstitial — returned for every debuggable build. */
 private const val TEST_INTERSTITIAL_UNIT_ID = "ca-app-pub-3940256099942544/1033173712"
 
-/** 3-minute minimum gap between interstitials (wall-clock, survives session resets). */
-private const val COOLDOWN_MS = 3 * 60 * 1_000L
-
 /**
  * Process-lifetime singleton that manages a single pre-loaded interstitial ad.
  *
  * Rules enforced here (in addition to any AdMob dashboard settings):
  *   - At most 1 interstitial shown per tracking session.
- *   - At least [COOLDOWN_MS] (3 min) between successive shows.
+ *   - At least [AdFrequencyPolicy.COOLDOWN_MS] between successive shows.
+ *   - At most [AdFrequencyPolicy.MAX_PER_DAY] per local day.
  *   - Lazy-load: [preload] kicks off a background load while the user reads their
  *     session summary, so the ad is ready with no wait when [showIfReady] is called.
+ *
+ * The cooldown and the daily count live in [UserPreferencesManager], not here. This is
+ * an object in a process that Android kills freely between trips, and in-memory
+ * counters silently reset with it — which is how a "3 minute" rule became no rule at
+ * all for anyone whose app got evicted between outings.
  *
  * Call [resetSession] each time the user starts a new tracking session so the
  * per-session cap resets correctly.
@@ -38,11 +43,34 @@ internal object InterstitialAdManager {
     @Volatile private var pending: InterstitialAd? = null
     @Volatile private var loading = false
     private var shownThisSession = false
-    private var lastShownMs = 0L
 
     /** Reset the per-session shown flag. Call this when a new tracking session starts. */
     fun resetSession() {
         shownThisSession = false
+    }
+
+    /**
+     * Every frequency rule in one place, checked before loading *and* before showing.
+     *
+     * Applied at load time too, deliberately: an ad we are not allowed to show is a
+     * download the user paid for in data and battery for nothing, and an impression
+     * AdMob counted as unfilled.
+     */
+    private fun allowedNow(context: Context): Boolean {
+        val prefs = UserPreferencesManager(context.applicationContext)
+        val decision = AdFrequencyPolicy.decide(
+            isPremium = EntitlementRepository.isPremiumNow(),
+            // Do not request or show ads before UMP consent permits it (GDPR/EEA/UK).
+            canRequestAds = ConsentManager.canRequestAds.value,
+            shownThisSession = shownThisSession,
+            shownToday = prefs.interstitialsShownToday(),
+            lastShownMs = prefs.interstitialLastShownMs(),
+            nowMs = System.currentTimeMillis()
+        )
+        if (decision != AdFrequencyPolicy.Decision.ALLOW) {
+            Log.d(TAG, "Suppressed: $decision")
+        }
+        return decision == AdFrequencyPolicy.Decision.ALLOW
     }
 
     /**
@@ -51,13 +79,11 @@ internal object InterstitialAdManager {
      * loading, or if the session cap has been reached.
      */
     fun preload(context: Context) {
-        // Premium users never see an interstitial, so never fetch one. Checked
-        // before the request rather than at show time: a downloaded-then-discarded
-        // ad still costs the subscriber bandwidth and battery.
-        if (EntitlementRepository.isPremiumNow()) return
-        // Do not request ads before UMP consent permits it (GDPR/EEA/UK).
-        if (!ConsentManager.canRequestAds.value) return
-        if (shownThisSession || loading || pending != null) return
+        // Premium, consent, session cap, cooldown and daily cap all live in
+        // allowedNow — checked here rather than only at show time, so a subscriber or
+        // a capped-out user never pays bandwidth for an ad that cannot be displayed.
+        if (!allowedNow(context)) return
+        if (loading || pending != null) return
         loading = true
         val isDebuggable = (context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE) != 0
         val unitId = if (isDebuggable) TEST_INTERSTITIAL_UNIT_ID
@@ -86,18 +112,18 @@ internal object InterstitialAdManager {
      * (session cap reached, cooldown active, or no ad ready).
      */
     fun showIfReady(activity: Activity): Boolean {
-        // Belt and braces alongside the preload guard: entitlement can flip to
-        // premium between an ad being cached and the moment it would be shown.
-        if (EntitlementRepository.isPremiumNow()) return false
-        if (shownThisSession) return false
-        val now = System.currentTimeMillis()
-        if (now - lastShownMs < COOLDOWN_MS) return false
+        // Re-checked at show time, not just at load: an ad can sit cached for a long
+        // while, and in that window the user may have subscribed, withdrawn consent,
+        // or hit the daily cap via another trip.
+        if (!allowedNow(activity)) return false
         val ad = pending ?: return false
 
         ad.fullScreenContentCallback = object : FullScreenContentCallback() {
             override fun onAdShowedFullScreenContent() {
                 shownThisSession = true
-                lastShownMs = System.currentTimeMillis()
+                // Recorded on *shown*, never on load or on the attempt — the only
+                // event the user actually experiences is the one worth rate-limiting.
+                UserPreferencesManager(activity.applicationContext).recordInterstitialShown()
                 pending = null
                 Log.d(TAG, "Shown")
             }

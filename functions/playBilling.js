@@ -31,6 +31,7 @@ const functions = require('firebase-functions/v1');
 const admin = require('firebase-admin');
 const crypto = require('crypto');
 const { google } = require('googleapis');
+const { sendToUser } = require('./fcm');
 
 /** Must match `applicationId` in app/build.gradle.kts. */
 const PACKAGE_NAME = process.env.PLAY_PACKAGE_NAME || 'com.kineticecotracker';
@@ -390,9 +391,83 @@ async function handleSubscriptionNotification(notification) {
     return;
   }
 
+  const previousState = await currentEntitlementState(uid);
+
   await acknowledgeIfNeeded(summary);
   await applyEntitlement(uid, summary, 'play-rtdn');
   await indexPurchase(uid, summary);
+
+  await notifyBillingProblem(uid, previousState, summary);
+}
+
+/** The state we last recorded, so a transition can be told from a repeat delivery. */
+async function currentEntitlementState(uid) {
+  try {
+    const snap = await db()
+      .collection('users').doc(uid)
+      .collection('entitlements').doc('premium').get();
+    return snap.exists ? (snap.data().state || null) : null;
+  } catch (e) {
+    console.warn(`Could not read prior entitlement state for ${uid}`, e);
+    return null;
+  }
+}
+
+/**
+ * Tell the user when their payment fails, and again when it recovers.
+ *
+ * Without this the failure is completely silent: Play retries for days, we keep them
+ * entitled (see ENTITLING_STATES), and then premium simply evaporates. The user
+ * experiences that as the app breaking, not as a card that needs updating — which is
+ * both a support ticket and an avoidable cancellation.
+ *
+ * Fires only on a *transition*, not on every RTDN. Pub/Sub delivers at-least-once and
+ * Play re-sends the same state, so keying off the state alone would push repeatedly
+ * about one failed payment — the definition of a notification people disable.
+ */
+async function notifyBillingProblem(uid, previousState, summary) {
+  const GRACE = 'SUBSCRIPTION_STATE_IN_GRACE_PERIOD';
+  const HOLD = 'SUBSCRIPTION_STATE_ON_HOLD';
+  const state = summary.state;
+
+  let title = null;
+  let body = null;
+
+  if ((state === GRACE || state === HOLD) && previousState !== state) {
+    if (state === GRACE) {
+      // Still entitled — say so. The point is to prompt a card update, not to alarm
+      // someone into thinking they have already lost what they paid for.
+      const until = summary.expiryMs
+        ? new Date(summary.expiryMs).toLocaleDateString('en-GB', { day: 'numeric', month: 'long' })
+        : null;
+      title = 'Payment problem';
+      body = until
+        ? `Google Play could not take your payment. Premium stays on until ${until} — update your payment method to keep it.`
+        : 'Google Play could not take your payment. Update your payment method to keep Premium.';
+    } else {
+      title = 'Premium is paused';
+      body = 'Your payment did not go through. Update your payment method in Google Play to switch Premium back on.';
+    }
+  } else if (
+    state === 'SUBSCRIPTION_STATE_ACTIVE' &&
+    (previousState === GRACE || previousState === HOLD)
+  ) {
+    // Closing the loop matters: the user acted on our nudge and deserves to know it
+    // worked, rather than wondering whether the fix took.
+    title = 'Payment sorted';
+    body = 'Thanks — your payment went through and Premium is fully active.';
+  }
+
+  if (!title) return;
+
+  try {
+    const devices = await sendToUser(db(), uid, { data: { type: 'billing', title, body } });
+    console.log(`💳 billing push to ${uid} (${previousState} → ${state}), ${devices} device(s)`);
+  } catch (e) {
+    // Never let a push failure fail the RTDN — the entitlement write is what matters,
+    // and throwing here would ask Pub/Sub to redeliver and re-apply it.
+    console.error(`Billing push failed for ${uid}`, e);
+  }
 }
 
 /**

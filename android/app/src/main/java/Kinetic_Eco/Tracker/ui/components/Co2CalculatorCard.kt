@@ -15,9 +15,11 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
@@ -29,6 +31,10 @@ import Kinetic_Eco.Tracker.data.ActivityType
 import Kinetic_Eco.Tracker.data.AircraftCategory
 import Kinetic_Eco.Tracker.data.Co2Calculator
 import Kinetic_Eco.Tracker.data.Co2Estimate
+import Kinetic_Eco.Tracker.data.EnergyPrices
+import Kinetic_Eco.Tracker.data.MeasuredEconomy
+import Kinetic_Eco.Tracker.data.MobilityCostCalculator
+import Kinetic_Eco.Tracker.data.PriceSource
 import Kinetic_Eco.Tracker.data.DrivingEngineCcBand
 import Kinetic_Eco.Tracker.data.ElectricMotorPowerBand
 import Kinetic_Eco.Tracker.data.ElectricVehicleClass
@@ -38,6 +44,9 @@ import Kinetic_Eco.Tracker.data.TrainPropulsion
 import Kinetic_Eco.Tracker.data.UnitSystem
 import Kinetic_Eco.Tracker.data.VehicleBodyType
 import Kinetic_Eco.Tracker.data.VehicleProfile
+import Kinetic_Eco.Tracker.services.EnergyPriceRepository
+import Kinetic_Eco.Tracker.services.FuelLogRepository
+import Kinetic_Eco.Tracker.services.UserPreferencesManager
 import Kinetic_Eco.Tracker.ui.utils.usesMetricDistance
 import kotlin.math.abs
 
@@ -61,7 +70,8 @@ import kotlin.math.abs
 fun Co2CalculatorCard(
     unitSystem: UnitSystem,
     vehicleProfile: VehicleProfile,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onLogFuel: (() -> Unit)? = null
 ) {
     val colorScheme = MaterialTheme.colorScheme
     var selectedActivity by rememberSaveable { mutableStateOf(ActivityType.DRIVING) }
@@ -76,6 +86,11 @@ fun Co2CalculatorCard(
     var vehicleExpanded by rememberSaveable { mutableStateOf(false) }
 
     val effectiveProfile = overrideProfile ?: vehicleProfile
+    val prices by EnergyPriceRepository.prices.collectAsStateWithLifecycle()
+    // Null until the user has logged two brim-full fill-ups. When present it replaces
+    // the engine-displacement average outright — see MobilityCostCalculator.
+    val measuredEconomy by FuelLogRepository.economy.collectAsStateWithLifecycle()
+    val receiptPrice by FuelLogRepository.observedPrice.collectAsStateWithLifecycle()
     val distanceUnit = if (unitSystem.usesMetricDistance()) "km" else "mi"
     val distanceKm = Co2Calculator.parseDistanceToKm(distanceText, unitSystem)
     val estimate = distanceKm?.let {
@@ -180,6 +195,24 @@ fun Co2CalculatorCard(
                     color = colorScheme.onSurfaceVariant
                 )
             } else {
+                // Fuel volume and money lead the card, because it is the Mobility Cost
+                // Calculator and burying the cost under the CO₂ headline would contradict
+                // its own name.
+                //
+                // This is still the least certain number here — the litres come from a
+                // class average until the user logs a fill-up (see MobilityCostCalculator)
+                // — so leading with it raises the stakes on the hedging directly beneath
+                // it. That caption is load-bearing now, not decoration: it is the only
+                // thing separating "estimated" from "measured" at a glance.
+                MobilityCostRow(
+                    estimate = estimate,
+                    profile = effectiveProfile,
+                    prices = prices,
+                    measured = measuredEconomy,
+                    receiptPrice = receiptPrice,
+                    onLogFuel = onLogFuel
+                )
+
                 EstimateResult(estimate = estimate, distanceUnit = distanceUnit)
 
                 Spacer(Modifier.height(12.dp))
@@ -231,6 +264,9 @@ private fun VehicleOverrideSection(
     onProfileChange: (VehicleProfile) -> Unit
 ) {
     Column(modifier = Modifier.padding(top = 4.dp)) {
+        if (activity == ActivityType.DRIVING || activity == ActivityType.MOTORCYCLE) {
+            FuelEconomyField(profile = profile, onProfileChange = onProfileChange)
+        }
         when (activity) {
             ActivityType.DRIVING -> {
                 EnumChipRow(
@@ -357,6 +393,56 @@ private fun <T> EnumChipRow(
     }
 }
 
+
+/**
+ * "What does your car actually do?", in km/L.
+ *
+ * One optional field instead of a make/model/year lookup. It works for every used
+ * import that no manufacturer dataset lists, needs no data to source or maintain, and
+ * is a claim about *this* car rather than about cars of its engine size. Blank falls
+ * back to the engine-displacement average; a logged fill-up overrides it either way.
+ */
+@Composable
+private fun FuelEconomyField(
+    profile: VehicleProfile,
+    onProfileChange: (VehicleProfile) -> Unit
+) {
+    val colorScheme = MaterialTheme.colorScheme
+    var text by rememberSaveable(profile.fuelEconomyKmPerL) {
+        mutableStateOf(profile.fuelEconomyKmPerL?.let { String.format("%.1f", it) } ?: "")
+    }
+
+    Column(modifier = Modifier.padding(bottom = 10.dp)) {
+        OutlinedTextField(
+            value = text,
+            onValueChange = { raw ->
+                if (raw.length <= 5 && raw.all { it.isDigit() || it == '.' || it == ',' }) {
+                    text = raw
+                    // Blank clears back to the class average rather than persisting a
+                    // zero, which would read as infinite consumption.
+                    onProfileChange(
+                        profile.copy(
+                            fuelEconomyKmPerL = raw.replace(',', '.').toDoubleOrNull()?.takeIf { it > 0.0 }
+                        )
+                    )
+                }
+            },
+            label = { Text(stringResource(R.string.vehicle_profile_km_per_l)) },
+            singleLine = true,
+            keyboardOptions = KeyboardOptions(
+                keyboardType = KeyboardType.Decimal,
+                imeAction = ImeAction.Done
+            ),
+            modifier = Modifier.fillMaxWidth()
+        )
+        Text(
+            text = stringResource(R.string.vehicle_profile_km_per_l_hint),
+            style = MaterialTheme.typography.bodySmall,
+            color = colorScheme.onSurfaceVariant
+        )
+    }
+}
+
 /**
  * Mode picker as a single dropdown row.
  *
@@ -440,8 +526,12 @@ private fun ModeSelector(
  * [Co2Calculator.compareModes] against the *same* vehicle profile as the headline
  * estimate, so the comparison can never disagree with the number above it.
  *
- * Collapsed by default — eight rows would push the result off screen — but the header
- * names the winning mode, so the answer is visible without expanding.
+ * Collapsed by default — eight rows would push the result off screen.
+ *
+ * Deliberately states no verdict. Ranking by CO₂ alone made walking "best" at any
+ * distance, including 100 km, which is true arithmetic and useless advice. The card
+ * presents the comparison and lets the reader judge; picking a winner needs a notion of
+ * what is actually practical, which this card does not have.
  */
 @Composable
 private fun ModeComparison(
@@ -456,7 +546,7 @@ private fun ModeComparison(
     val estimates = remember(distanceKm, profile) {
         Co2Calculator.compareModes(distanceKm, profile, CALCULATOR_MODES)
     }
-    val best = estimates.firstOrNull() ?: return
+    if (estimates.isEmpty()) return
     // Deltas are measured against the user's current pick, so every row answers
     // "compared to what I chose" rather than against an arbitrary baseline.
     val selectedNet = estimates.firstOrNull { it.activity == selected }?.netKg ?: 0.0
@@ -475,16 +565,6 @@ private fun ModeComparison(
                     fontWeight = FontWeight.SemiBold,
                     color = colorScheme.onSurface
                 )
-                if (!expanded) {
-                    Text(
-                        text = stringResource(
-                            R.string.co2_calc_compare_best,
-                            stringResource(best.activity.labelResId())
-                        ),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = colorScheme.onSurfaceVariant
-                    )
-                }
             }
             Icon(
                 imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
@@ -584,6 +664,326 @@ private fun ModeComparisonRow(
                     }
                 )
             }
+        }
+    }
+}
+
+/**
+ * Fuel volume and cost, with an inline way to correct the price.
+ *
+ * Shows nothing at all for modes where the user does not buy the energy — walking,
+ * and notably train and flying, where the real cost is a fare. Inventing a ticket
+ * price from a share of the vehicle's energy bill would be wrong by an order of
+ * magnitude and is worse than silence.
+ *
+ * The "estimate" caption is not boilerplate. Driving consumption comes from an engine
+ * displacement band, which is a class average; a CO₂ figure that is 30% out goes
+ * unnoticed, while a shilling figure that is 30% out gets checked against a fuel
+ * receipt and takes the credibility of every other number with it.
+ */
+@Composable
+private fun MobilityCostRow(
+    estimate: Co2Estimate,
+    profile: VehicleProfile,
+    prices: EnergyPrices?,
+    measured: MeasuredEconomy?,
+    receiptPrice: Double?,
+    onLogFuel: (() -> Unit)?
+) {
+    val colorScheme = MaterialTheme.colorScheme
+    val context = LocalContext.current
+    val cost = remember(estimate, profile, prices, measured) {
+        prices?.let { MobilityCostCalculator.costOf(estimate, profile, it, measured) }
+    }
+
+    // No price for this region, but the trip does burn something the user pays for.
+    // Ask for the price instead of inventing one — a figure in the wrong currency is
+    // the failure mode this whole feature was supposed to avoid.
+    if (cost == null) {
+        if (estimate.hasVehicleEnergy && prices == null) {
+            UnknownPricePrompt(profile = profile)
+            CostSectionDivider()
+        }
+        return
+    }
+
+    var editing by rememberSaveable { mutableStateOf(false) }
+    var priceText by rememberSaveable(cost.unitPrice) {
+        mutableStateOf(String.format("%.2f", cost.unitPrice))
+    }
+    val isElectric = cost.kWh != null
+    val fuelKind = when {
+        isElectric -> UserPreferencesManager.FuelKind.ELECTRICITY
+        profile.iceFuel == IceFuel.DIESEL -> UserPreferencesManager.FuelKind.DIESEL
+        else -> UserPreferencesManager.FuelKind.PETROL
+    }
+
+    Row(verticalAlignment = Alignment.Bottom) {
+        Text(
+            text = stringResource(
+                if (isElectric) R.string.co2_calc_energy_needed else R.string.co2_calc_fuel_needed
+            ),
+            style = MaterialTheme.typography.bodyMedium,
+            color = colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = if (isElectric) {
+                stringResource(R.string.co2_calc_kwh, String.format("%.2f", cost.kWh ?: 0.0))
+            } else {
+                stringResource(R.string.co2_calc_litres, String.format("%.2f", cost.litres ?: 0.0))
+            },
+            style = MaterialTheme.typography.titleLarge,
+            fontWeight = FontWeight.Bold,
+            color = colorScheme.onSurface
+        )
+    }
+
+    Spacer(Modifier.height(4.dp))
+
+    Row(verticalAlignment = Alignment.Bottom) {
+        Text(
+            text = stringResource(R.string.co2_calc_cost_label),
+            style = MaterialTheme.typography.bodyMedium,
+            color = colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.width(8.dp))
+        Text(
+            text = "${cost.currencyCode} ${String.format("%,.0f", cost.amount)}",
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Bold,
+            color = colorScheme.onSurface
+        )
+    }
+
+    Spacer(Modifier.height(6.dp))
+
+    // Provenance, always. A price with no source and no date is indistinguishable
+    // from a guess, and a stale one produces confidently wrong money.
+    Text(
+        text = stringResource(
+            R.string.co2_calc_price_provenance,
+            "${cost.currencyCode} ${String.format("%.2f", cost.unitPrice)}",
+            stringResource(
+                if (isElectric) R.string.co2_calc_per_kwh else R.string.co2_calc_per_litre
+            ),
+            when (cost.source) {
+                PriceSource.USER -> stringResource(R.string.co2_calc_price_source_user)
+                // Whoever actually publishes prices in this country. Previously this
+                // read "EPRA" for everyone, so a French user was told the Kenyan
+                // regulator had set their fuel price.
+                PriceSource.REMOTE -> stringResource(
+                    R.string.co2_calc_price_source_remote,
+                    cost.sourceName ?: stringResource(R.string.co2_calc_price_source_generic),
+                    cost.effectiveMonth
+                )
+                PriceSource.BUNDLED -> stringResource(
+                    R.string.co2_calc_price_source_bundled,
+                    cost.sourceName ?: stringResource(R.string.co2_calc_price_source_generic),
+                    cost.effectiveMonth
+                )
+            }
+        ),
+        style = MaterialTheme.typography.bodySmall,
+        color = colorScheme.onSurfaceVariant
+    )
+
+    // The app stops hedging the moment it has evidence. Leaving the estimate caption
+    // up after the user has done the work of logging fill-ups would undersell the one
+    // thing that makes these figures better than any generic calculator's.
+    Text(
+        text = when {
+            cost.isMeasured && measured != null ->
+                stringResource(R.string.co2_calc_cost_is_measured, measured.intervals)
+            // Their own figure for their own car — better than a class average, but
+            // still a claim rather than a measurement, so it keeps the nudge to log.
+            cost.isOwnerStated -> stringResource(R.string.co2_calc_cost_is_owner_stated)
+            else -> stringResource(R.string.co2_calc_cost_is_estimate)
+        },
+        style = MaterialTheme.typography.bodySmall,
+        color = colorScheme.onSurfaceVariant
+    )
+
+    // Only offered while still estimating — once measured, the prompt is just noise.
+    if (!cost.isMeasured && onLogFuel != null && cost.litres != null) {
+        TextButton(onClick = onLogFuel) {
+            Text(stringResource(R.string.co2_calc_log_fillup))
+        }
+    }
+
+    // A receipt beats a national cap and a compiled-in seed alike — it is what this
+    // person actually paid at their pump. Offered, never applied silently: quietly
+    // rewriting someone's numbers is how a helpful figure becomes a suspicious one.
+    // Fuel only; receipts say nothing about an electricity tariff.
+    val suggestion = receiptPrice?.takeIf {
+        !isElectric &&
+            cost.source != PriceSource.USER &&
+            kotlin.math.abs(it - cost.unitPrice) / cost.unitPrice > RECEIPT_PRICE_TOLERANCE
+    }
+    if (suggestion != null && !editing) {
+        Spacer(Modifier.height(4.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = stringResource(
+                    R.string.co2_calc_receipt_price,
+                    "${cost.currencyCode} ${String.format("%.2f", suggestion)}"
+                ),
+                style = MaterialTheme.typography.bodySmall,
+                color = colorScheme.onSurfaceVariant,
+                modifier = Modifier.weight(1f)
+            )
+            TextButton(onClick = {
+                EnergyPriceRepository.setOverride(context, fuelKind, suggestion)
+            }) {
+                Text(stringResource(R.string.co2_calc_receipt_price_use))
+            }
+        }
+    }
+
+    if (editing) {
+        Spacer(Modifier.height(8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(
+                value = priceText,
+                onValueChange = { raw ->
+                    if (raw.length <= 8 && raw.all { it.isDigit() || it == '.' || it == ',' }) {
+                        priceText = raw
+                    }
+                },
+                label = {
+                    Text(
+                        stringResource(
+                            R.string.co2_calc_your_price_label,
+                            cost.currencyCode,
+                            stringResource(
+                                if (isElectric) R.string.co2_calc_per_kwh else R.string.co2_calc_per_litre
+                            )
+                        )
+                    )
+                },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Decimal,
+                    imeAction = ImeAction.Done
+                ),
+                modifier = Modifier.weight(1f)
+            )
+            Spacer(Modifier.width(8.dp))
+            TextButton(onClick = {
+                val parsed = priceText.replace(',', '.').toDoubleOrNull()
+                EnergyPriceRepository.setOverride(context, fuelKind, parsed)
+                editing = false
+            }) {
+                Text(stringResource(R.string.co2_calc_price_save))
+            }
+        }
+    }
+
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        TextButton(onClick = { editing = !editing }) {
+            Text(
+                stringResource(
+                    if (editing) R.string.co2_calc_price_cancel else R.string.co2_calc_use_my_price
+                )
+            )
+        }
+        if (cost.source == PriceSource.USER) {
+            TextButton(onClick = {
+                EnergyPriceRepository.setOverride(context, fuelKind, null)
+                editing = false
+            }) {
+                Text(stringResource(R.string.co2_calc_price_reset))
+            }
+        }
+    }
+
+    CostSectionDivider()
+}
+
+/**
+ * Separator between the cost block and the CO₂ figure beneath it.
+ *
+ * Trailing rather than leading. The cost block used to sit under the CO₂ headline and
+ * opened with its own divider; now that it leads the card, a leading rule would draw a
+ * line directly beneath the distance field with nothing above it. Emitted only by the
+ * paths that actually rendered something, so a mode with no purchased energy — walking,
+ * cycling, a train fare — leaves no orphan rule behind.
+ */
+@Composable
+private fun CostSectionDivider() {
+    Spacer(Modifier.height(12.dp))
+    HorizontalDivider(color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f))
+    Spacer(Modifier.height(10.dp))
+}
+
+/**
+ * Shown when the app has no price basis for the user's region.
+ *
+ * Deliberately not a zero and not another country's figures: the app ships a price
+ * seed for Kenya only, and quoting Kenyan shillings to someone elsewhere would be a
+ * confidently wrong number in the wrong currency. One typed price fixes it, in
+ * whatever currency the device uses.
+ */
+@Composable
+private fun UnknownPricePrompt(profile: VehicleProfile) {
+    val colorScheme = MaterialTheme.colorScheme
+    val context = LocalContext.current
+    var editing by rememberSaveable { mutableStateOf(false) }
+    var priceText by rememberSaveable { mutableStateOf("") }
+
+    val currency = remember { EnergyPriceRepository.currentCurrencyCode() }
+    val isElectric = profile.primaryFuelType == PrimaryFuelType.ELECTRIC
+    val fuelKind = when {
+        isElectric -> UserPreferencesManager.FuelKind.ELECTRICITY
+        profile.iceFuel == IceFuel.DIESEL -> UserPreferencesManager.FuelKind.DIESEL
+        else -> UserPreferencesManager.FuelKind.PETROL
+    }
+    val unitLabel = stringResource(
+        if (isElectric) R.string.co2_calc_per_kwh else R.string.co2_calc_per_litre
+    )
+
+    Spacer(Modifier.height(12.dp))
+    HorizontalDivider(color = colorScheme.onSurface.copy(alpha = 0.08f))
+    Spacer(Modifier.height(10.dp))
+
+    Text(
+        text = stringResource(R.string.co2_calc_price_unknown),
+        style = MaterialTheme.typography.bodySmall,
+        color = colorScheme.onSurfaceVariant
+    )
+
+    if (editing) {
+        Spacer(Modifier.height(8.dp))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            OutlinedTextField(
+                value = priceText,
+                onValueChange = { raw ->
+                    if (raw.length <= 8 && raw.all { it.isDigit() || it == '.' || it == ',' }) {
+                        priceText = raw
+                    }
+                },
+                label = { Text(stringResource(R.string.co2_calc_your_price_label, currency, unitLabel)) },
+                singleLine = true,
+                keyboardOptions = KeyboardOptions(
+                    keyboardType = KeyboardType.Decimal,
+                    imeAction = ImeAction.Done
+                ),
+                modifier = Modifier.weight(1f)
+            )
+            Spacer(Modifier.width(8.dp))
+            TextButton(onClick = {
+                val parsed = priceText.replace(',', '.').toDoubleOrNull()
+                // The currency travels with the amount, so the figure is never shown
+                // under a unit the user did not choose.
+                EnergyPriceRepository.setOverride(context, fuelKind, parsed, currency)
+                editing = false
+            }) {
+                Text(stringResource(R.string.co2_calc_price_save))
+            }
+        }
+    } else {
+        TextButton(onClick = { editing = true }) {
+            Text(stringResource(R.string.co2_calc_set_price))
         }
     }
 }
@@ -829,6 +1229,13 @@ private fun formatKg(kg: Double): String = when {
  * precision `formatEnergy` uses for human energy so the two read consistently,
  * even though they measure different things.
  */
+/**
+ * How far a receipt must diverge from the price in use before it is worth mentioning.
+ * Pump prices vary by a shilling or two between stations; nagging about that would
+ * train people to ignore the prompt that matters when the table is genuinely stale.
+ */
+private const val RECEIPT_PRICE_TOLERANCE = 0.02
+
 private fun formatWh(wh: Double): String = when {
     wh < 1000.0 -> "${Math.round(wh)} Wh"
     wh < 10_000.0 -> "${String.format("%.2f", wh / 1000.0)} kWh"

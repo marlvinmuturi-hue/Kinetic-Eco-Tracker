@@ -55,7 +55,9 @@ internal object RouteClusterer {
     fun clusterByOD(
         sessions: List<TripEndpointRow>,
         lookbackDays: Int,
-        profile: VehicleProfile
+        profile: VehicleProfile,
+        prices: EnergyPrices? = null,
+        measured: MeasuredEconomy? = null
     ): List<RouteCluster> {
         data class OdSession(
             val session: TripEndpointRow,
@@ -96,7 +98,7 @@ internal object RouteClusterer {
 
             if (members.size >= MIN_TRIPS_FOR_CLUSTER) {
                 clusters.add(
-                    buildCluster(nextId++, seed.oLat, seed.oLon, seed.dLat, seed.dLon, members, lookbackDays, profile)
+                    buildCluster(nextId++, seed.oLat, seed.oLon, seed.dLat, seed.dLon, members, lookbackDays, profile, prices, measured)
                 )
             }
         }
@@ -110,7 +112,9 @@ internal object RouteClusterer {
         dLat: Double, dLon: Double,
         sessions: List<TripEndpointRow>,
         lookbackDays: Int,
-        profile: VehicleProfile
+        profile: VehicleProfile,
+        prices: EnergyPrices?,
+        measured: MeasuredEconomy?
     ): RouteCluster {
         val sorted = sessions.sortedBy { it.date }
         val avgDistanceM = sessions.map { it.totalDistance }.average()
@@ -145,7 +149,8 @@ internal object RouteClusterer {
                     activityType = dominant
                 )
             },
-            greenerAlternative = suggestAlternative(dominant, avgDistanceM, sessions.size, lookbackDays, profile)
+            greenerAlternative = suggestAlternative(dominant, avgDistanceM, sessions.size, lookbackDays, profile, prices, measured),
+            memberSessionIds = sessions.sortedByDescending { it.createdAt }.map { it.id }
         )
     }
 
@@ -167,7 +172,9 @@ internal object RouteClusterer {
         avgDistanceM: Double,
         tripCount: Int,
         lookbackDays: Int,
-        profile: VehicleProfile
+        profile: VehicleProfile,
+        prices: EnergyPrices? = null,
+        measured: MeasuredEconomy? = null
     ): GreenerAlternative? {
         val avgKm = avgDistanceM / 1000.0
         val tripsPerYear = tripCount * (365.0 / lookbackDays)
@@ -191,10 +198,21 @@ internal object RouteClusterer {
         // applied. Suggesting a "greener" option that saves nothing is noise.
         if (savingsPerTrip <= 0.0) return null
 
+        // Money saved is the fuel the avoided trip would have burned. The candidate is
+        // always human-powered, so it costs nothing to run and the whole of the current
+        // mode's fuel bill is the saving.
+        val costPerTrip = prices?.let {
+            MobilityCostCalculator.costOf(
+                Co2Calculator.estimate(dominant, avgKm, profile), profile, it, measured
+            )?.amount
+        }
+
         return GreenerAlternative(
             suggestedMode = candidate,
             estimatedSavingsKgPerTrip = savingsPerTrip,
-            projectedAnnualSavingsKg = savingsPerTrip * tripsPerYear
+            projectedAnnualSavingsKg = savingsPerTrip * tripsPerYear,
+            projectedAnnualSavingsCost = costPerTrip?.let { it * tripsPerYear },
+            currencyCode = prices?.currencyCode
         )
     }
 

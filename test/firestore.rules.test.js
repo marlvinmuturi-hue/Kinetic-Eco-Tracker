@@ -165,3 +165,18 @@ test('the Play purchase index is invisible and unwritable to clients', async () 
   await assertFails(getDoc(doc(db(ALICE), 'playPurchases', 'token-123')));
   await assertFails(setDoc(doc(db(BOB), 'playPurchases', 'token-123'), { uid: BOB }));
 });
+
+// ── Fuel log ─────────────────────────────────────────────────────────────────
+// Hand-typed fill-ups that cannot be re-recorded if lost, so they sync for
+// durability. Strictly owner-only: they reveal where and when someone buys fuel.
+
+test('owner may read and write their own fuel entries; nobody else can', async () => {
+  await assertSucceeds(
+    setDoc(doc(db(ALICE), 'users', ALICE, 'fuelEntries', 'f1'), { litres: 40, amountPaid: 8000 }),
+  );
+  await assertSucceeds(getDoc(doc(db(ALICE), 'users', ALICE, 'fuelEntries', 'f1')));
+  await assertFails(getDoc(doc(db(BOB), 'users', ALICE, 'fuelEntries', 'f1')));
+  await assertFails(
+    setDoc(doc(db(BOB), 'users', ALICE, 'fuelEntries', 'f2'), { litres: 1, amountPaid: 1 }),
+  );
+});

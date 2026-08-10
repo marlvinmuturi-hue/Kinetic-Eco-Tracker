@@ -6,12 +6,14 @@ import Kinetic_Eco.Tracker.ui.components.AppOpenAdManager
 import com.google.firebase.FirebaseApp
 import com.google.firebase.appcheck.AppCheckProviderFactory
 import Kinetic_Eco.Tracker.services.BillingManager
+import Kinetic_Eco.Tracker.services.EnergyPriceRepository
 import Kinetic_Eco.Tracker.services.EntitlementRepository
 import com.google.firebase.appcheck.FirebaseAppCheck
 import com.google.firebase.appcheck.playintegrity.PlayIntegrityAppCheckProviderFactory
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 class KineticEcoApplication : Application() {
 
@@ -56,6 +58,18 @@ class KineticEcoApplication : Application() {
             BillingManager.start(this, applicationScope)
         } catch (t: Throwable) {
             Log.e(TAG, "BillingManager.start failed — premium purchase disabled this run", t)
+        }
+
+        // Energy prices: apply any saved user override synchronously so the calculator
+        // never briefly quotes a price the user has already corrected, then refresh the
+        // published table in the background. A failed refresh is silent — the seed or
+        // the user's own figure is already correct enough to show.
+        try {
+            // Takes the scope so it can re-resolve on sign-in — the country fallback
+            // that reads a tracked trip needs a uid, which does not exist yet here.
+            EnergyPriceRepository.start(this, applicationScope)
+        } catch (t: Throwable) {
+            Log.e(TAG, "Energy price init failed — falling back to bundled prices", t)
         }
     }
 

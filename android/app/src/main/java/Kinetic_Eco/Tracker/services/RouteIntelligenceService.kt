@@ -51,7 +51,9 @@ class RouteIntelligenceService(private val sessionManager: SessionManager) {
     suspend fun getRouteClusters(
         userId: String,
         lookbackDays: Int = 90,
-        profile: VehicleProfile = VehicleProfile.DEFAULT
+        profile: VehicleProfile = VehicleProfile.DEFAULT,
+        prices: EnergyPrices? = null,
+        measured: MeasuredEconomy? = null
     ): List<RouteCluster> {
         // Endpoint projection, not full sessions: clustering only ever needed the first
         // and last GPS fix, and selecting the entity drags every route point back
@@ -60,6 +62,6 @@ class RouteIntelligenceService(private val sessionManager: SessionManager) {
         val sinceMs = System.currentTimeMillis() - lookbackDays * 86_400_000L
         val rows = sessionManager.getTripEndpoints(userId, sinceMs)
         if (rows.size < MIN_TRIPS_FOR_CLUSTER) return emptyList()
-        return RouteClusterer.clusterByOD(rows, lookbackDays, profile)
+        return RouteClusterer.clusterByOD(rows, lookbackDays, profile, prices, measured)
     }
 }

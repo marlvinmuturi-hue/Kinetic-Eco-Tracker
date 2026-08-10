@@ -5,6 +5,7 @@ import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.tasks.await
 import Kinetic_Eco.Tracker.BuildConfig
 import Kinetic_Eco.Tracker.data.ActivityAnalysis
+import Kinetic_Eco.Tracker.data.AnalysisContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.MediaType.Companion.toMediaType
@@ -28,7 +29,8 @@ class AIAnalysisService {
     suspend fun analyzeActivity(
         rollingWindowDays: Int,
         locale: String = "en",
-        sessionDateKey: String? = null
+        sessionDateKey: String? = null,
+        analysisContext: AnalysisContext? = null
     ): Result<ActivityAnalysis> = withContext(Dispatchers.IO) {
         try {
             // Check if user is authenticated
@@ -59,6 +61,7 @@ class AIAnalysisService {
                 put("timeframe", effectiveTf)
                 put("locale", locale)
                 if (isSingleDayKey) sk?.let { put("sessionDateKey", it) }
+                analysisContext?.let { put("context", it.toJson()) }
             }
             val requestBody = jsonBody.toString().toRequestBody("application/json".toMediaType())
             
@@ -172,9 +175,44 @@ class AIAnalysisService {
         }
     }
     
+    /**
+     * Serialise the device-only facts for the prompt builder.
+     *
+     * Absent sections are omitted rather than sent as zeros: the server treats a
+     * missing `money` block as "we do not know what energy costs here" and drops the
+     * cost paragraph, which is the same rule the UI follows.
+     */
+    private fun AnalysisContext.toJson(): JSONObject = JSONObject().apply {
+        put("timeZoneOffsetMinutes", timeZoneOffsetMinutes)
+        put("unitSystem", unitSystem)
+        put("isPremium", isPremium)
+        put("weeklyCo2GoalKg", weeklyCo2GoalKg)
+        vehicle?.let { v ->
+            put("vehicle", JSONObject().apply {
+                put("primaryFuel", v.primaryFuel)
+                put("iceFuel", v.iceFuel)
+                put("engineCcBand", v.engineCcBand)
+                put("bodyType", v.bodyType)
+                v.kmPerLitre?.let { put("kmPerLitre", it) }
+            })
+        }
+        money?.let { m ->
+            put("money", JSONObject().apply {
+                put("currencyCode", m.currencyCode)
+                put("petrolPerLitre", m.petrolPerLitre)
+                put("dieselPerLitre", m.dieselPerLitre)
+                put("electricityPerKwh", m.electricityPerKwh)
+                put("priceSource", m.priceSource)
+                put("region", m.region)
+                m.measuredLPer100Km?.let { put("measuredLPer100Km", it) }
+                put("measuredFromFillUps", m.measuredFromFillUps)
+            })
+        }
+    }
+
     companion object {
         private const val TAG = "AIAnalysisService"
-        
+
         @Volatile
         private var instance: AIAnalysisService? = null
         

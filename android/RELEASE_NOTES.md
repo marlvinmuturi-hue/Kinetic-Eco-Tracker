@@ -1,9 +1,10 @@
-# Release Notes — V1.9.15 (versionCode 28)
+# Release Notes — V1.9.16 (versionCode 29)
 
-> **28 is the single release that carries everything. Production is on versionCode
-> 20**, so users jump 20 → 28 in one step: Play Billing, the paywall, the
+> **29 is the single release that carries everything. Production is on versionCode
+> 20**, so users jump 20 → 29 in one step: Play Billing, the paywall, the
 > week-window fix, the calculator changes, recurring-trip mining, Room schema v9 and
-> kotlinx-serialization 1.8.1. versionCodes 21–27 were build/test iterations and
+> kotlinx-serialization 1.8.1, plus fuel-and-cost figures in the calculator.
+> versionCodes 21–28 were build/test iterations and
 > none of them should be promoted — the notes below record why each was superseded.
 >
 > ⚠️ **The Room v8 → v9 migration makes this hard to reverse.** `AppDatabase` has no
@@ -94,6 +95,33 @@
 ---
 
 ## Full changelog
+
+### 💰 New in versionCode 29 — fuel and cost in the calculator
+- **Litres and money alongside CO₂.** Entering a distance now also shows the fuel
+  volume and what it costs, for the modes where the user actually buys the energy.
+  `MobilityCostCalculator` converts `Co2Estimate.energyWh` via lower heating values
+  (petrol 9.7 kWh/L, diesel 10.7 kWh/L). Sanity check: 880 Wh/km for a 1.8–2.5 L car
+  works out to 9.1 L/100 km, and a test keeps that in the 7–12 range so a future
+  change to the energy model cannot silently produce nonsense litres.
+- **Prices resolve user → published → seed.** `EnergyPriceRepository` prefers a price
+  the user typed, then `energyPrices/{region}` in Firestore (refreshed monthly from
+  EPRA's published maximum pump prices and the Kenya Power tariff), then a compiled-in
+  seed so a first launch offline still shows something. Overrides are per-fuel, so
+  correcting petrol does not freeze the electricity tariff.
+- **Every figure carries its provenance** — source and effective month, always. A
+  price with neither is indistinguishable from a guess, and a stale one produces
+  confidently wrong money.
+- **Train and flying are given no cost.** The user pays a fare, not a share of the
+  vehicle's energy bill; quoting the latter would be wrong by an order of magnitude.
+  Walking, running and cycling are likewise silent rather than "0".
+- **Everything is labelled an estimate.** Driving consumption still comes from an
+  engine-displacement band — a class average that two cars in the same band can miss
+  by 30%. A CO₂ figure that is 30% out goes unnoticed; a shilling figure that is 30%
+  out gets checked against a fuel receipt and takes the credibility of every other
+  number with it. The label goes away when a measured fuel economy replaces the class
+  average (fuel log, not in this release).
+- `firestore.rules` gains a signed-in-read / no-client-write rule for `energyPrices`,
+  so nobody can make fuel look free.
 
 ### 🔍 New in versionCode 25
 - **Play reports *why* a product could not be fetched.** Billing 8.0+ returns

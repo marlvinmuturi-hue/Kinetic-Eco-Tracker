@@ -99,6 +99,12 @@ sealed class Screen(val route: String) {
     object Feedback : Screen("feedback")
     /** Paywall (reached via the Settings upsell card). */
     object Premium : Screen("premium")
+    /** Fuel log — turns cost estimates into measurements (reached from the calculator). */
+    object FuelLog : Screen("fuel_log")
+    /** Monthly statement (premium) — reached from Analysis or a monthly push. */
+    object MonthlyStatement : Screen("monthly_statement")
+    /** Map of one repeat journey, its runs overlaid. */
+    object RecurringTripMap : Screen("recurring_trip_map")
     object SessionsList : Screen("sessions_list")
     object WeekSessions : Screen("sessions_week")
     object SessionDetail : Screen("session_detail")
@@ -129,6 +135,8 @@ fun AppNavGraph(
     onWeeklyDigestChange: (Boolean) -> Unit = {},
     dailyDigestEnabled: Boolean = true,
     onDailyDigestChange: (Boolean) -> Unit = {},
+    monthlyStatementEnabled: Boolean = true,
+    onMonthlyStatementChange: (Boolean) -> Unit = {},
     launchGoogleSignIn: () -> Unit,
     onShowActivitySelector: () -> Unit,
     startDestination: String,
@@ -343,8 +351,37 @@ fun AppNavGraph(
                 onWeeklyDigestChange = onWeeklyDigestChange,
                 dailyDigestEnabled = dailyDigestEnabled,
                 onDailyDigestChange = onDailyDigestChange,
+                monthlyStatementEnabled = monthlyStatementEnabled,
+                onMonthlyStatementChange = onMonthlyStatementChange,
+                onMonthlyStatementClick = { navController.navigate(Screen.MonthlyStatement.route) },
                 onProfileClick = { navController.navigate(Screen.Profile.route) },
                 onFeedbackClick = { navController.navigate(Screen.Feedback.route) },
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        // ── Repeat journey on a map ────────────────────────────────────────────
+        fadeComposable(Screen.RecurringTripMap.route) {
+            RecurringTripMapScreen(
+                analyticsViewModel = analyticsViewModel,
+                unitSystem = unitSystem,
+                onBack = { navController.popBackStack() }
+            )
+        }
+
+        // ── Monthly statement (premium) ────────────────────────────────────────
+        fadeComposable(Screen.MonthlyStatement.route) {
+            MonthlyStatementScreen(
+                userId = currentUser?.uid ?: "",
+                onBack = { navController.popBackStack() },
+                onGoPremium = { navController.navigate(Screen.Premium.route) }
+            )
+        }
+
+        // ── Fuel log (reached from the CO2 calculator) ─────────────────────────
+        fadeComposable(Screen.FuelLog.route) {
+            FuelLogScreen(
+                userId = currentUser?.uid ?: "",
                 onBack = { navController.popBackStack() }
             )
         }

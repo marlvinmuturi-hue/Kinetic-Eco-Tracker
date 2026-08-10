@@ -138,6 +138,14 @@ class UserPreferencesManager(context: Context) {
          * Stored as a float because users typically pick whole/half kg values
          * in onboarding (the slider snaps to 0.5 kg increments).
          */
+        private const val KEY_VEHICLE_KM_PER_L = "vehicle_km_per_litre"
+        private const val KEY_COUNTRY_OVERRIDE = "price_country_override"
+        private const val KEY_PRICE_CURRENCY = "price_currency_code"
+        private const val KEY_MONTHLY_STATEMENT_ENABLED = "monthly_statement_enabled"
+        private const val KEY_MEASURED_ECONOMY_CELEBRATED = "measured_economy_celebrated"
+        private const val KEY_AD_LAST_SHOWN_MS = "ad_interstitial_last_shown_ms"
+        private const val KEY_AD_DAY = "ad_interstitial_day"
+        private const val KEY_AD_DAY_COUNT = "ad_interstitial_day_count"
         private const val KEY_WEEKLY_CO2_GOAL_KG = "weekly_co2_goal_kg"
         private const val DEFAULT_WEEKLY_CO2_GOAL_KG = 5.0f
         /** Hard caps so a stray value can't break the ring/plant maths. */
@@ -300,6 +308,15 @@ class UserPreferencesManager(context: Context) {
             .putString(KEY_VEHICLE_EV_MOTOR_POWER, profile.electricMotorPower.name)
             .putString(KEY_VEHICLE_TRAIN, profile.trainPropulsion.name)
             .putString(KEY_VEHICLE_AIRCRAFT, profile.aircraftCategory.name)
+            .apply {
+                // Absent, not zero: zero km/L would mean infinite consumption.
+                val economy = profile.fuelEconomyKmPerL
+                if (economy != null && economy.isFinite() && economy > 0.0) {
+                    putFloat(KEY_VEHICLE_KM_PER_L, economy.toFloat())
+                } else {
+                    remove(KEY_VEHICLE_KM_PER_L)
+                }
+            }
             // Drop the legacy EV-class key on save so old installs don't keep
             // a stale shadow value alongside the new one.
             .remove(KEY_VEHICLE_EV_ROAD)
@@ -345,7 +362,10 @@ class UserPreferencesManager(context: Context) {
             electricVehicleClass = electricVehicleClass,
             electricMotorPower = electricMotorPower,
             trainPropulsion = TrainPropulsion.fromStoredName(prefs.getString(KEY_VEHICLE_TRAIN, null)),
-            aircraftCategory = AircraftCategory.fromStoredName(prefs.getString(KEY_VEHICLE_AIRCRAFT, null))
+            aircraftCategory = AircraftCategory.fromStoredName(prefs.getString(KEY_VEHICLE_AIRCRAFT, null)),
+            fuelEconomyKmPerL = prefs.getFloat(KEY_VEHICLE_KM_PER_L, 0f)
+                .toDouble()
+                .takeIf { it > 0.0 }
         )
     }
     
@@ -686,6 +706,139 @@ class UserPreferencesManager(context: Context) {
      * "fully grown" reference for the sprouting plant when no goal has been
      * set yet, so behaviour is identical for first-launch users.
      */
+    /**
+     * Monthly statement push. Defaults on: it is the main thing a subscriber is paying
+     * for, and one notification a month is not an imposition.
+     */
+    fun isMonthlyStatementEnabled(): Boolean =
+        prefs.getBoolean(KEY_MONTHLY_STATEMENT_ENABLED, true)
+
+    fun setMonthlyStatementEnabled(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_MONTHLY_STATEMENT_ENABLED, enabled).apply()
+    }
+
+    // ── Energy price overrides ────────────────────────────────────────────────
+
+    /** Which unit price the user is overriding. */
+    enum class FuelKind(internal val key: String) {
+        PETROL("price_petrol_per_litre"),
+        DIESEL("price_diesel_per_litre"),
+        ELECTRICITY("price_electricity_per_kwh")
+    }
+
+    /**
+     * The user's own price for [kind], or null to follow the published table.
+     *
+     * Null and "0" are different states: null means "use EPRA / the seed", whereas a
+     * typed 0 would mean "fuel is free" and silently zero out every cost in the app.
+     * Non-positive values are therefore rejected on write rather than stored.
+     */
+    fun getFuelPriceOverride(kind: FuelKind): Double? {
+        if (!prefs.contains(kind.key)) return null
+        val v = prefs.getFloat(kind.key, 0f).toDouble()
+        return v.takeIf { it > 0.0 }
+    }
+
+    /**
+     * Country the user picked for pricing, or null to follow detection.
+     *
+     * An explicit choice always wins: someone who has emigrated, uses a foreign SIM, or
+     * simply knows better should not have to argue with the phone about where they buy
+     * fuel.
+     */
+    fun getCountryOverride(): String? =
+        prefs.getString(KEY_COUNTRY_OVERRIDE, null)?.takeIf { it.length == 2 }
+
+    fun setCountryOverride(code: String?) {
+        val editor = prefs.edit()
+        if (code.isNullOrBlank()) editor.remove(KEY_COUNTRY_OVERRIDE) else editor.putString(KEY_COUNTRY_OVERRIDE, code.uppercase(java.util.Locale.US))
+        editor.apply()
+    }
+
+    /**
+     * Currency the user's typed prices are in.
+     *
+     * Stored separately from the amounts because it applies to all of them, and
+     * because a price without its unit is worse than no price — overriding the number
+     * while inheriting a foreign currency code is how "KES 1.75" happens.
+     */
+    fun getPriceCurrencyOverride(): String? =
+        prefs.getString(KEY_PRICE_CURRENCY, null)?.takeIf { it.isNotBlank() }
+
+    fun setPriceCurrencyOverride(code: String?) {
+        val editor = prefs.edit()
+        if (code.isNullOrBlank()) editor.remove(KEY_PRICE_CURRENCY) else editor.putString(KEY_PRICE_CURRENCY, code)
+        editor.apply()
+    }
+
+    // ── Interstitial ad frequency ────────────────────────────────────────────
+    //
+    // On disk rather than in memory. The manager's own counters live in a process
+    // singleton, so they reset every time Android kills the app — which for a
+    // location-tracking app that spends its life in the background is often. That
+    // turned a "3 minutes between ads" rule into "3 minutes, unless we got killed",
+    // and a user doing short errands could see one after every single trip.
+
+    /** Wall-clock ms of the last interstitial actually shown. 0 when never. */
+    fun interstitialLastShownMs(): Long = prefs.getLong(KEY_AD_LAST_SHOWN_MS, 0L)
+
+    /** How many interstitials have been shown since local midnight. */
+    fun interstitialsShownToday(): Int =
+        if (prefs.getString(KEY_AD_DAY, null) == todayKey()) {
+            prefs.getInt(KEY_AD_DAY_COUNT, 0)
+        } else {
+            0
+        }
+
+    /** Record a show, rolling the daily counter over at local midnight. */
+    fun recordInterstitialShown() {
+        val today = todayKey()
+        val count = if (prefs.getString(KEY_AD_DAY, null) == today) {
+            prefs.getInt(KEY_AD_DAY_COUNT, 0)
+        } else {
+            0
+        }
+        prefs.edit()
+            .putLong(KEY_AD_LAST_SHOWN_MS, System.currentTimeMillis())
+            .putString(KEY_AD_DAY, today)
+            .putInt(KEY_AD_DAY_COUNT, count + 1)
+            .apply()
+    }
+
+    /** Local calendar day, so the cap resets at the user's midnight rather than UTC. */
+    private fun todayKey(): String {
+        val cal = java.util.Calendar.getInstance()
+        return "%04d-%02d-%02d".format(
+            cal.get(java.util.Calendar.YEAR),
+            cal.get(java.util.Calendar.MONTH) + 1,
+            cal.get(java.util.Calendar.DAY_OF_MONTH)
+        )
+    }
+
+    /**
+     * Whether the "your car's real economy is now measured" notification has fired.
+     *
+     * One-shot for the life of the install. It marks a threshold being crossed, not a
+     * state that persists — re-firing it every time the figure is recalculated would
+     * turn a genuine milestone into a nag about fill-ups.
+     */
+    fun hasCelebratedMeasuredEconomy(): Boolean =
+        prefs.getBoolean(KEY_MEASURED_ECONOMY_CELEBRATED, false)
+
+    fun setCelebratedMeasuredEconomy() {
+        prefs.edit().putBoolean(KEY_MEASURED_ECONOMY_CELEBRATED, true).apply()
+    }
+
+    fun setFuelPriceOverride(kind: FuelKind, value: Double?) {
+        val editor = prefs.edit()
+        if (value == null || !value.isFinite() || value <= 0.0) {
+            editor.remove(kind.key)
+        } else {
+            editor.putFloat(kind.key, value.toFloat())
+        }
+        editor.apply()
+    }
+
     fun getWeeklyCo2GoalKg(): Float {
         val raw = prefs.getFloat(KEY_WEEKLY_CO2_GOAL_KG, DEFAULT_WEEKLY_CO2_GOAL_KG)
         return raw.coerceIn(MIN_WEEKLY_CO2_GOAL_KG, MAX_WEEKLY_CO2_GOAL_KG)

@@ -26,7 +26,17 @@ data class Co2DataPoint(
 data class GreenerAlternative(
     val suggestedMode: ActivityType,
     val estimatedSavingsKgPerTrip: Double,
-    val projectedAnnualSavingsKg: Double
+    val projectedAnnualSavingsKg: Double,
+    /**
+     * The same saving in money, or null when the current mode has no fuel cost to
+     * avoid (already walking, or a fare-based mode).
+     *
+     * Carried alongside the carbon figure rather than replacing it: kilograms are the
+     * point of the app, but a currency amount is what actually changes what someone
+     * does on Tuesday morning.
+     */
+    val projectedAnnualSavingsCost: Double? = null,
+    val currencyCode: String? = null
 )
 
 /**
@@ -51,5 +61,13 @@ data class RouteCluster(
     val avgDistanceM: Double,
     val avgCo2ConservedKg: Double,   // kg saved per trip on average
     val co2Timeline: List<Co2DataPoint>,
-    val greenerAlternative: GreenerAlternative?
+    val greenerAlternative: GreenerAlternative?,
+    /**
+     * Ids of the sessions in this cluster, newest first.
+     *
+     * Ids only — never geometry. Clustering deliberately runs off a four-column
+     * projection so a long history cannot OOM; carrying the routes here would undo
+     * that. A map screen loads a handful of these on demand instead.
+     */
+    val memberSessionIds: List<String> = emptyList()
 )

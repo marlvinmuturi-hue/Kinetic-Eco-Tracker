@@ -7,6 +7,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.Map
 import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.WorkspacePremium
 import androidx.compose.material3.*
@@ -45,6 +46,7 @@ fun RecurringTripsCard(
     isPremium: Boolean,
     unitSystem: UnitSystem,
     onGoPremium: () -> Unit,
+    onClusterClick: (RouteCluster) -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val colorScheme = MaterialTheme.colorScheme
@@ -87,11 +89,29 @@ fun RecurringTripsCard(
                             !isPremium -> stringResource(R.string.recurring_trips_locked_subtitle)
                             loading -> stringResource(R.string.recurring_trips_loading)
                             actionable.isEmpty() -> stringResource(R.string.recurring_trips_empty)
-                            else -> stringResource(
-                                R.string.recurring_trips_summary,
-                                actionable.size,
-                                formatKg(actionable.sumOf { it.greenerAlternative!!.projectedAnnualSavingsKg })
-                            )
+                            else -> {
+                                // Lead the summary with money when there is any: it is
+                                // the number that changes what someone does on Tuesday.
+                                val totalCost = actionable
+                                    .mapNotNull { it.greenerAlternative?.projectedAnnualSavingsCost }
+                                    .takeIf { it.isNotEmpty() }?.sum()
+                                val currency = actionable
+                                    .firstNotNullOfOrNull { it.greenerAlternative?.currencyCode }
+                                if (totalCost != null && currency != null) {
+                                    stringResource(
+                                        R.string.recurring_trips_summary_money,
+                                        actionable.size,
+                                        currency,
+                                        String.format("%,.0f", totalCost)
+                                    )
+                                } else {
+                                    stringResource(
+                                        R.string.recurring_trips_summary,
+                                        actionable.size,
+                                        formatKg(actionable.sumOf { it.greenerAlternative!!.projectedAnnualSavingsKg })
+                                    )
+                                }
+                            }
                         },
                         style = MaterialTheme.typography.bodySmall,
                         color = colorScheme.onSurfaceVariant
@@ -131,7 +151,11 @@ fun RecurringTripsCard(
             AnimatedVisibility(visible = expanded && actionable.isNotEmpty()) {
                 Column(modifier = Modifier.padding(top = 12.dp)) {
                     actionable.forEach { cluster ->
-                        RecurringTripRow(cluster = cluster, unitSystem = unitSystem)
+                        RecurringTripRow(
+                            cluster = cluster,
+                            unitSystem = unitSystem,
+                            onClick = { onClusterClick(cluster) }
+                        )
                     }
                 }
             }
@@ -140,7 +164,11 @@ fun RecurringTripsCard(
 }
 
 @Composable
-private fun RecurringTripRow(cluster: RouteCluster, unitSystem: UnitSystem) {
+private fun RecurringTripRow(
+    cluster: RouteCluster,
+    unitSystem: UnitSystem,
+    onClick: () -> Unit
+) {
     val colorScheme = MaterialTheme.colorScheme
     val alternative = cluster.greenerAlternative ?: return
     val isMetric = unitSystem.usesMetricDistance()
@@ -151,6 +179,7 @@ private fun RecurringTripRow(cluster: RouteCluster, unitSystem: UnitSystem) {
     }
 
     Surface(
+        onClick = onClick,
         shape = RoundedCornerShape(12.dp),
         color = colorScheme.surface.copy(alpha = 0.6f),
         modifier = Modifier
@@ -177,14 +206,34 @@ private fun RecurringTripRow(cluster: RouteCluster, unitSystem: UnitSystem) {
                     color = colorScheme.onSurface,
                     modifier = Modifier.weight(1f)
                 )
+                Icon(
+                    imageVector = Icons.Default.Map,
+                    contentDescription = null,
+                    tint = colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(18.dp)
+                )
             }
             Spacer(Modifier.height(6.dp))
+            // Money leads, carbon follows. Both are true; only one of them reliably
+            // changes behaviour, and the app is otherwise fluent only in kilograms.
+            val cost = alternative.projectedAnnualSavingsCost
+            val currency = alternative.currencyCode
             Text(
-                text = stringResource(
-                    R.string.recurring_trips_row_suggestion,
-                    stringResource(alternative.suggestedMode.tripLabelRes()),
-                    formatKg(alternative.projectedAnnualSavingsKg)
-                ),
+                text = if (cost != null && currency != null) {
+                    stringResource(
+                        R.string.recurring_trips_row_suggestion_money,
+                        stringResource(alternative.suggestedMode.tripLabelRes()),
+                        currency,
+                        String.format("%,.0f", cost),
+                        formatKg(alternative.projectedAnnualSavingsKg)
+                    )
+                } else {
+                    stringResource(
+                        R.string.recurring_trips_row_suggestion,
+                        stringResource(alternative.suggestedMode.tripLabelRes()),
+                        formatKg(alternative.projectedAnnualSavingsKg)
+                    )
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = Color(0xFF43A047),
                 fontWeight = FontWeight.Medium

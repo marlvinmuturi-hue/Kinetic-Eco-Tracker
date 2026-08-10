@@ -7,9 +7,10 @@ import androidx.room.RoomDatabase
 import androidx.room.migration.Migration
 import androidx.sqlite.db.SupportSQLiteDatabase
 
-@Database(entities = [SessionEntity::class], version = 9, exportSchema = true)
+@Database(entities = [SessionEntity::class, FuelEntryEntity::class], version = 10, exportSchema = true)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun sessionDao(): SessionDao
+    abstract fun fuelEntryDao(): FuelEntryDao
 
     companion object {
         @Volatile
@@ -45,6 +46,37 @@ abstract class AppDatabase : RoomDatabase() {
             }
         }
 
+        /**
+         * v9 → v10: the fuel log.
+         *
+         * A new table only — no existing column is touched, so the migration cannot
+         * lose session history. Indexed on (userId, filledAtMs) because every read is
+         * "this user's fill-ups in time order".
+         */
+        internal val MIGRATION_9_10 = object : Migration(9, 10) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS fuel_entries (
+                        id TEXT NOT NULL PRIMARY KEY,
+                        userId TEXT NOT NULL,
+                        filledAtMs INTEGER NOT NULL,
+                        litres REAL NOT NULL,
+                        amountPaid REAL NOT NULL,
+                        currencyCode TEXT NOT NULL,
+                        isFullTank INTEGER NOT NULL DEFAULT 1,
+                        createdAt INTEGER NOT NULL,
+                        synced INTEGER NOT NULL DEFAULT 0
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS index_fuel_entries_userId_filledAtMs " +
+                        "ON fuel_entries (userId, filledAtMs)"
+                )
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
@@ -52,7 +84,7 @@ abstract class AppDatabase : RoomDatabase() {
                     AppDatabase::class.java,
                     "kinetic_eco_database"
                 )
-                .addMigrations(MIGRATION_7_8, MIGRATION_8_9)
+                .addMigrations(MIGRATION_7_8, MIGRATION_8_9, MIGRATION_9_10)
                 .build()
                 INSTANCE = instance
                 instance

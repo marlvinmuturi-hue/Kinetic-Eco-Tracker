@@ -115,6 +115,84 @@ class SessionMigrationTest {
         }
     }
 
+    /** Insert a v9-shaped row — endpoint columns exist at this version. */
+    private fun insertV9Session(db: androidx.sqlite.db.SupportSQLiteDatabase, id: String) {
+        db.execSQL(
+            """
+            INSERT INTO sessions (
+                id, userId, date, totalDuration, totalDistance, caloriesBurned,
+                co2Emissions, co2Conserved, totalSteps, elevationGain, elevationLoss,
+                topSpeedMps, kmMilestonesJson, segmentsJson, routePathJson,
+                createdAt, breakdown, synced, startLat, startLng, endLat, endLng
+            ) VALUES (
+                ?, 'user-1', '2026-08-01', 900, 6000.0, 210.0,
+                1.2, 0.0, 0, 0.0, 0.0,
+                12.5, '[]', '[]', '[]',
+                1000, '{}', 1, -1.2921, 36.8219, -1.3200, 36.8500
+            )
+            """.trimIndent(),
+            arrayOf(id)
+        )
+    }
+
+    @Test
+    fun migrate9To10_addsFuelLogAndKeepsEverySession() {
+        helper.createDatabase(TEST_DB, 9).apply {
+            repeat(30) { insertV9Session(this, "session-$it") }
+            close()
+        }
+
+        val db = helper.runMigrationsAndValidate(TEST_DB, 10, true, AppDatabase.MIGRATION_9_10)
+
+        db.query("SELECT COUNT(*) FROM sessions").use {
+            it.moveToFirst()
+            assertEquals("v9 → v10 must not lose a session", 30, it.getInt(0))
+        }
+        // The new table is empty but present — the fuel log starts blank.
+        db.query("SELECT COUNT(*) FROM fuel_entries").use {
+            it.moveToFirst()
+            assertEquals(0, it.getInt(0))
+        }
+    }
+
+    @Test
+    fun migrate9To10_preservesTheEndpointsClusteringDependsOn() {
+        helper.createDatabase(TEST_DB, 9).apply {
+            insertV9Session(this, "session-a")
+            close()
+        }
+
+        val db = helper.runMigrationsAndValidate(TEST_DB, 10, true, AppDatabase.MIGRATION_9_10)
+
+        db.query("SELECT startLat, endLng, synced FROM sessions WHERE id = 'session-a'").use {
+            it.moveToFirst()
+            assertEquals(-1.2921, it.getDouble(0), 1e-9)
+            assertEquals(36.8500, it.getDouble(1), 1e-9)
+            assertEquals(1, it.getInt(2))
+        }
+    }
+
+    @Test
+    fun migrate8To10_runsBothStepsInOrder() {
+        helper.createDatabase(TEST_DB, 8).apply {
+            insertV8Session(this, "session-b")
+            close()
+        }
+
+        val db = helper.runMigrationsAndValidate(
+            TEST_DB, 10, true, AppDatabase.MIGRATION_8_9, AppDatabase.MIGRATION_9_10
+        )
+
+        db.query("SELECT startLat FROM sessions WHERE id = 'session-b'").use {
+            it.moveToFirst()
+            assertTrue("endpoints arrive NULL from v8", it.isNull(0))
+        }
+        db.query("SELECT COUNT(*) FROM fuel_entries").use {
+            it.moveToFirst()
+            assertEquals(0, it.getInt(0))
+        }
+    }
+
     @Test
     fun migrate7To9_runsTheWholeChain() {
         helper.createDatabase(TEST_DB, 7).close()

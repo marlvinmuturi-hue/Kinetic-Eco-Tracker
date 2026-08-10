@@ -21,6 +21,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -42,6 +43,7 @@ import Kinetic_Eco.Tracker.ui.components.BirthDatePicker
 import Kinetic_Eco.Tracker.ui.components.BatteryReliabilityDialog
 import Kinetic_Eco.Tracker.util.BatteryOptimizationHelper
 import Kinetic_Eco.Tracker.ui.theme.Red500
+import Kinetic_Eco.Tracker.services.EnergyPriceRepository
 import Kinetic_Eco.Tracker.services.EntitlementRepository
 import Kinetic_Eco.Tracker.services.UserPhysicalProfile
 import Kinetic_Eco.Tracker.services.UserPreferencesManager
@@ -77,6 +79,9 @@ fun SettingsScreen(
     onWeeklyDigestChange: (Boolean) -> Unit = {},
     dailyDigestEnabled: Boolean = true,
     onDailyDigestChange: (Boolean) -> Unit = {},
+    monthlyStatementEnabled: Boolean = true,
+    onMonthlyStatementChange: (Boolean) -> Unit = {},
+    onMonthlyStatementClick: (() -> Unit)? = null,
     onProfileClick: (() -> Unit)? = null,
     onBack: (() -> Unit)? = null,
     /** Vehicle profile primary fuel is electric — surface quick link to tracker activity picker. */
@@ -203,9 +208,60 @@ fun SettingsScreen(
                 weeklyDigestEnabled = weeklyDigestEnabled,
                 onWeeklyDigestChange = onWeeklyDigestChange,
                 dailyDigestEnabled = dailyDigestEnabled,
-                onDailyDigestChange = onDailyDigestChange
+                onDailyDigestChange = onDailyDigestChange,
+                monthlyStatementEnabled = monthlyStatementEnabled,
+                onMonthlyStatementChange = onMonthlyStatementChange
             )
         }
+
+        // ── Monthly statement (premium) ───────────────────────────────────────
+        // Entry point lives here rather than on Analysis: that tab already carries
+        // five cards, and a statement is something people go and look up rather than
+        // something they want in the way of the tracking they opened the app for.
+        if (onMonthlyStatementClick != null) {
+            item {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable(onClick = onMonthlyStatementClick),
+                    colors = CardDefaults.cardColors(containerColor = colorScheme.surface)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.ReceiptLong,
+                            contentDescription = null,
+                            tint = colorScheme.onSurfaceVariant
+                        )
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = stringResource(R.string.statement_title),
+                                style = MaterialTheme.typography.titleMedium,
+                                color = colorScheme.onSurface
+                            )
+                            Text(
+                                text = stringResource(R.string.settings_statement_desc),
+                                style = MaterialTheme.typography.bodySmall,
+                                color = colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Icon(
+                            imageVector = Icons.Filled.ChevronRight,
+                            contentDescription = null,
+                            tint = colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+
+        // ── Pricing region ────────────────────────────────────────────────────
+        item { PricingRegionCard() }
 
         // ── Leaderboard opt-in ────────────────────────────────────────────────
         // Moved here (was previously after Cloud Sync) per user request: the
@@ -1058,6 +1114,11 @@ fun VehicleProfileSection(
     var primaryFuel by remember(diskProfile) { mutableStateOf(diskProfile.primaryFuelType) }
     var drivingCc by remember(diskProfile) { mutableStateOf(diskProfile.drivingCcBand) }
     var bodyType by remember(diskProfile) { mutableStateOf(diskProfile.bodyType) }
+    // Kept as text, not a Double, so a half-typed "12." survives recomposition instead
+    // of snapping back while the user is still typing.
+    var kmPerL by remember(diskProfile) {
+        mutableStateOf(diskProfile.fuelEconomyKmPerL?.let { String.format("%.1f", it) } ?: "")
+    }
     var evClass by remember(diskProfile) { mutableStateOf(diskProfile.electricVehicleClass) }
     var evMotor by remember(diskProfile) { mutableStateOf(diskProfile.electricMotorPower) }
     var train by remember(diskProfile) { mutableStateOf(diskProfile.trainPropulsion) }
@@ -1233,6 +1294,38 @@ fun VehicleProfileSection(
                             }
                         }
                     }
+
+                    // Optional, and the single most valuable field on this card. The cc
+                    // band above yields a *class average*, which is fine for CO₂ and
+                    // poor for money — two cars in one band differ by ~30%, invisible in
+                    // kilograms but obvious against a fuel receipt. One figure the owner
+                    // types beats any lookup table for a used import nobody catalogues.
+                    Spacer(modifier = Modifier.height(12.dp))
+                    OutlinedTextField(
+                        value = kmPerL,
+                        onValueChange = { raw ->
+                            if (raw.length <= 5 && raw.all { it.isDigit() || it == '.' || it == ',' }) {
+                                kmPerL = raw
+                            }
+                        },
+                        label = { Text(stringResource(R.string.vehicle_profile_km_per_l)) },
+                        singleLine = true,
+                        keyboardOptions = KeyboardOptions(
+                            keyboardType = KeyboardType.Decimal,
+                            imeAction = ImeAction.Done
+                        ),
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = colorScheme.onSurface,
+                            unfocusedBorderColor = colorScheme.outline
+                        )
+                    )
+                    Text(
+                        text = stringResource(R.string.vehicle_profile_km_per_l_hint),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(top = 4.dp)
+                    )
                 }
 
                 // ── Step 2B: Electric sub-fields ──────────────────────────
@@ -1447,7 +1540,15 @@ fun VehicleProfileSection(
                             electricVehicleClass = evClass,
                             electricMotorPower = evMotor,
                             trainPropulsion = train,
-                            aircraftCategory = aircraft
+                            aircraftCategory = aircraft,
+                            // Blank clears back to the class average. Zero is never
+                            // stored: it would read as infinite consumption downstream.
+                            // Retained even when the user is on Electric, matching the
+                            // sub-field state above — flipping fuel type should not
+                            // silently discard what they typed in the other branch.
+                            fuelEconomyKmPerL = kmPerL.replace(',', '.')
+                                .toDoubleOrNull()
+                                ?.takeIf { it > 0.0 }
                         )
                         onSave(profile)
                         saveMessage = savedSuccessMsg
@@ -1699,7 +1800,9 @@ private fun NotificationsSection(
     weeklyDigestEnabled: Boolean,
     onWeeklyDigestChange: (Boolean) -> Unit,
     dailyDigestEnabled: Boolean,
-    onDailyDigestChange: (Boolean) -> Unit
+    onDailyDigestChange: (Boolean) -> Unit,
+    monthlyStatementEnabled: Boolean,
+    onMonthlyStatementChange: (Boolean) -> Unit
 ) {
     val colorScheme = MaterialTheme.colorScheme
     var expanded by remember { mutableStateOf(false) }
@@ -1738,6 +1841,13 @@ private fun NotificationsSection(
                     description = stringResource(R.string.notifications_daily_digest_desc),
                     checked = dailyDigestEnabled,
                     onCheckedChange = onDailyDigestChange
+                )
+                SectionDivider()
+                NotificationToggleRow(
+                    title = stringResource(R.string.settings_monthly_statement),
+                    description = stringResource(R.string.settings_monthly_statement_desc),
+                    checked = monthlyStatementEnabled,
+                    onCheckedChange = onMonthlyStatementChange
                 )
             }
         }
@@ -1877,3 +1987,124 @@ private fun SectionDivider() {
     Spacer(modifier = Modifier.height(16.dp))
 }
 
+/**
+ * Which country's energy prices the app should use.
+ *
+ * Reads and writes [EnergyPriceRepository] directly rather than being threaded through
+ * MainActivity — it is self-contained state that no other screen needs, and the digest
+ * toggles show how much ceremony the alternative costs.
+ *
+ * The list comes from the `energyPrices` collection itself, so it offers exactly the
+ * countries that are actually maintained. "Automatic" hands control back to
+ * [CountryResolver]: SIM, then where they drove, then locale.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun PricingRegionCard() {
+    val colorScheme = MaterialTheme.colorScheme
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+
+    val region by EnergyPriceRepository.region.collectAsStateWithLifecycle()
+    val prices by EnergyPriceRepository.prices.collectAsStateWithLifecycle()
+    var available by remember { mutableStateOf<List<String>>(emptyList()) }
+    var expanded by remember { mutableStateOf(false) }
+
+    val override = remember(region) {
+        UserPreferencesManager(context).getCountryOverride()
+    }
+
+    fun countryName(code: String): String =
+        java.util.Locale("", code).displayCountry.takeIf { it.isNotBlank() && it != code } ?: code
+
+    // Sorted here rather than in the repository: the list is rendered as country names,
+    // so ordering by ISO code would put the United Kingdom under G.
+    // Keyed on region so the active country is always present in the list, including
+    // one detected after the card first composed.
+    LaunchedEffect(region) {
+        available = EnergyPriceRepository.availableRegions().sortedBy { countryName(it) }
+    }
+
+    val autoLabel = stringResource(R.string.settings_pricing_region_auto)
+    val selectedLabel = override?.let { countryName(it) } ?: autoLabel
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = colorScheme.surface)
+    ) {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                text = stringResource(R.string.settings_pricing_region),
+                style = MaterialTheme.typography.titleMedium,
+                color = colorScheme.onSurface
+            )
+            Text(
+                text = stringResource(R.string.settings_pricing_region_desc),
+                style = MaterialTheme.typography.bodySmall,
+                color = colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(10.dp))
+
+            ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = it }) {
+                OutlinedTextField(
+                    value = selectedLabel,
+                    onValueChange = {},
+                    readOnly = true,
+                    singleLine = true,
+                    trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = expanded) },
+                    colors = ExposedDropdownMenuDefaults.outlinedTextFieldColors(),
+                    modifier = Modifier
+                        .menuAnchor()
+                        .fillMaxWidth()
+                )
+                ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                    DropdownMenuItem(
+                        text = { Text(autoLabel) },
+                        onClick = {
+                            expanded = false
+                            scope.launch {
+                                EnergyPriceRepository.setRegionOverride(
+                                    context, null,
+                                    com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid
+                                )
+                            }
+                        }
+                    )
+                    available.forEach { code ->
+                        DropdownMenuItem(
+                            text = { Text(countryName(code)) },
+                            onClick = {
+                                expanded = false
+                                scope.launch {
+                                    EnergyPriceRepository.setRegionOverride(
+                                        context, code,
+                                        com.google.firebase.auth.FirebaseAuth.getInstance().currentUser?.uid
+                                    )
+                                }
+                            }
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(8.dp))
+            // Says what is actually in effect. A silent "Automatic" that resolved to
+            // nothing is how someone ends up wondering why cost never appears.
+            Text(
+                text = when {
+                    prices == null && region.isBlank() ->
+                        stringResource(R.string.settings_pricing_region_unknown)
+                    prices == null ->
+                        stringResource(R.string.settings_pricing_region_no_data, countryName(region))
+                    else -> stringResource(
+                        R.string.settings_pricing_region_active,
+                        countryName(region.ifBlank { override ?: "" }).ifBlank { autoLabel },
+                        prices!!.currencyCode
+                    )
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}

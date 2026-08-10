@@ -6,6 +6,10 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 admin.initializeApp();
 const db = admin.firestore();
 
+// Required after initializeApp: fcm.js calls admin.messaging() at send time, but
+// keeping the require here documents the ordering dependency.
+const { sendFcmWithRetry } = require('./fcm');
+
 /** Firestore session.timestamp ms (number or Timestamp). */
 function getTimestampMs(data) {
   const t = data.timestamp;
@@ -131,12 +135,19 @@ exports.analyzeActivity = functions.runWith({ secrets: ['GEMINI_API_KEY'] }).htt
     let timeframe = (req.body.data && req.body.data.timeframe) || req.body.timeframe || '7days';
     const locale = (req.body.data && req.body.data.locale) || req.body.locale || 'en';
     const sessionDateKey = ((req.body.data && req.body.data.sessionDateKey) || req.body.sessionDateKey || '').trim();
+    // Device-only facts: vehicle, prices, measured economy, goal, timezone. Absent for
+    // older clients, in which case the prompt simply omits those sections.
+    const userContext = (req.body.data && req.body.data.context) || req.body.context || null;
     // If a valid calendar day is sent, single-day analysis must win (ignore mistaken rolling timeframe from client).
     if (/^\d{4}-\d{2}-\d{2}$/.test(sessionDateKey)) {
       timeframe = '1day';
     }
     const effectiveCacheTimeframe =
       timeframe === '1day' && sessionDateKey ? `1day:${sessionDateKey}` : timeframe;
+    // The prompt now depends on the vehicle, prices and goal, so those have to take
+    // part in the cache key. Without this, changing car or correcting a fuel price
+    // would keep serving yesterday's analysis for a full day.
+    const contextKey = fingerprintContext(userContext);
 
     console.log(
       `Analyzing activity for user: ${userId}, timeframe: ${timeframe}, sessionDateKey: ${sessionDateKey || 'n/a'}, locale: ${locale}`
@@ -171,7 +182,12 @@ exports.analyzeActivity = functions.runWith({ secrets: ['GEMINI_API_KEY'] }).htt
       const cached = cacheDoc.data();
       const dayAgo = Date.now() - (24 * 60 * 60 * 1000);
       
-      if (cached.timestamp > dayAgo && cached.timeframe === effectiveCacheTimeframe && cached.locale === locale) {
+      if (
+        cached.timestamp > dayAgo &&
+        cached.timeframe === effectiveCacheTimeframe &&
+        cached.locale === locale &&
+        (cached.contextKey || '') === contextKey
+      ) {
         console.log('Returning cached analysis');
         res.status(200).json({
           ...cached.analysis,
@@ -204,8 +220,13 @@ exports.analyzeActivity = functions.runWith({ secrets: ['GEMINI_API_KEY'] }).htt
     }
 
     // Step 5: Calculate aggregate stats
-    const stats = calculateAggregateStats(sessions);
-    console.log('Stats calculated:', JSON.stringify(stats, null, 2));
+    const tzOffsetMinutes = Number(userContext && userContext.timeZoneOffsetMinutes) || 0;
+    const stats = calculateAggregateStats(sessions, tzOffsetMinutes);
+    console.log(
+      `Stats: ${stats.totalSessions} sessions, ${stats.dailySeries.length} active days, ` +
+      `bestDay=${stats.bestDay ? stats.bestDay.date : 'n/a'}, ` +
+      `context=${userContext ? 'yes' : 'none'}, money=${userContext && userContext.money ? 'yes' : 'no'}`
+    );
 
     // Step 5b: Fetch the equal-length previous period for a CO2 trend comparison
     // (rolling windows only — a single day has no meaningful "previous period").
@@ -216,12 +237,12 @@ exports.analyzeActivity = functions.runWith({ secrets: ['GEMINI_API_KEY'] }).htt
       const previousStartMs = currentStartMs - windowDays * 24 * 60 * 60 * 1000;
       const previousSessions = await fetchUserSessionsInRange(userId, previousStartMs, currentStartMs);
       if (previousSessions.length > 0) {
-        previousStats = calculateAggregateStats(previousSessions);
+        previousStats = calculateAggregateStats(previousSessions, tzOffsetMinutes);
       }
     }
 
     // Step 6: Build prompt for Gemini (locale: en/fr/de/es/zh)
-    const prompt = buildAnalysisPrompt(stats, timeframe, locale, sessionDateKey, previousStats);
+    const prompt = buildAnalysisPrompt(stats, timeframe, locale, sessionDateKey, previousStats, userContext);
 
     // Step 7: Call Gemini API
     console.log('Calling Gemini API...');
@@ -262,7 +283,8 @@ exports.analyzeActivity = functions.runWith({ secrets: ['GEMINI_API_KEY'] }).htt
       analysis: analysis,
       timestamp: Date.now(),
       timeframe: effectiveCacheTimeframe,
-      locale: locale
+      locale: locale,
+      contextKey: contextKey
     });
 
     console.log('✅ Analysis complete successfully');
@@ -378,7 +400,7 @@ async function fetchUserSessionsInRange(userId, startMs, endMs) {
 /**
  * Calculate aggregate statistics from sessions
  */
-function calculateAggregateStats(sessions) {
+function calculateAggregateStats(sessions, tzOffsetMinutes = 0) {
   const stats = {
     totalSessions: sessions.length,
     totalDistance: 0,
@@ -418,9 +440,20 @@ function calculateAggregateStats(sessions) {
     if (session.breakdown) {
       Object.keys(session.breakdown).forEach(activity => {
         if (stats.activityBreakdown[activity]) {
+          const distance = session.breakdown[activity].distance || 0;
+          const duration = session.breakdown[activity].time || 0;
+          // Count a session towards a mode only if that mode was actually used.
+          //
+          // Session documents carry a breakdown map with an entry for every mode,
+          // zeroed for the ones that did not happen — so counting key presence made
+          // every mode report the total session count. The prompt has been telling
+          // the model "FLYING: 48 sessions, 0.00 km" for as long as this has existed,
+          // and any average derived from that count was really a division by the
+          // overall total wearing a per-mode label.
+          if (distance <= 0 && duration <= 0) return;
           stats.activityBreakdown[activity].count++;
-          stats.activityBreakdown[activity].distance += session.breakdown[activity].distance || 0;
-          stats.activityBreakdown[activity].duration += session.breakdown[activity].time || 0;
+          stats.activityBreakdown[activity].distance += distance;
+          stats.activityBreakdown[activity].duration += duration;
         }
       });
     }
@@ -430,15 +463,162 @@ function calculateAggregateStats(sessions) {
   stats.avgDistance = stats.totalDistance / stats.totalSessions;
   stats.avgDuration = stats.totalDuration / stats.totalSessions;
 
+  stats.dailySeries = buildDailySeries(sessions, tzOffsetMinutes);
+  stats.timeOfDay = buildTimeOfDayBuckets(sessions, tzOffsetMinutes);
+  stats.bestDay = pickBestDay(stats.dailySeries);
+
   // Estimate per-activity CO2 from aggregated distance using the simplified
   // factor table — session docs only carry session-level CO2 totals.
   Object.keys(stats.activityBreakdown).forEach((activity) => {
     const data = stats.activityBreakdown[activity];
     const factor = ESTIMATED_CO2_KG_PER_KM[activity] || 0;
     data.estCo2Kg = (data.distance / 1000) * factor;
+    // Per-mode averages, computed here so the model never has to divide. Asked to
+    // work out "minutes per walking session" it reached for the *total* session
+    // count and produced "659 minutes / 48 sessions" — the arithmetic equivalent of
+    // the fabricated bestDay, and fixed the same way: hand over the answer.
+    data.avgDistanceKm = data.count > 0 ? data.distance / 1000 / data.count : 0;
+    data.avgMinutes = data.count > 0 ? data.duration / 60 / data.count : 0;
   });
 
   return stats;
+}
+
+/** Local calendar day for a session, honouring the device's UTC offset. */
+function localDayKey(session, tzOffsetMinutes) {
+  // Prefer the key the app itself stored: it was computed on the device in the
+  // user's own timezone at the moment of the trip, so it is right even if they
+  // have since flown somewhere else.
+  const stored = sessionDateKeyFromDoc(session);
+  if (stored) return stored;
+  const shifted = new Date((session.timestamp || 0) + tzOffsetMinutes * 60 * 1000);
+  return shifted.toISOString().slice(0, 10);
+}
+
+const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+/** Modes the user moves under their own power. */
+const HUMAN_POWERED = new Set(['WALKING', 'RUNNING', 'CYCLING']);
+
+/**
+ * One row per day that had activity.
+ *
+ * This is the single biggest gap in what the model used to receive: everything was
+ * pre-aggregated into one flat summary, so the AI could not say anything about *when*
+ * a user moves. It was nonetheless asked for a "bestDay", which it had no choice but
+ * to invent — see [pickBestDay].
+ */
+function buildDailySeries(sessions, tzOffsetMinutes) {
+  const byDay = new Map();
+
+  sessions.forEach((s) => {
+    const key = localDayKey(s, tzOffsetMinutes);
+    if (!byDay.has(key)) {
+      byDay.set(key, {
+        date: key,
+        weekday: WEEKDAYS[new Date(key + 'T12:00:00Z').getUTCDay()],
+        sessions: 0,
+        distanceKm: 0,
+        activeKm: 0,
+        minutes: 0,
+        co2SavedKg: 0,
+        co2EmittedKg: 0,
+        modes: new Set()
+      });
+    }
+    const row = byDay.get(key);
+    row.sessions++;
+    row.distanceKm += (s.totalDistance || 0) / 1000;
+    row.minutes += (s.totalDuration || 0) / 60;
+    row.co2SavedKg += s.co2Conserved || 0;
+    row.co2EmittedKg += s.co2Emissions || 0;
+    if (s.breakdown) {
+      Object.keys(s.breakdown).forEach((m) => {
+        const d = s.breakdown[m].distance || 0;
+        if (m !== 'IDLE' && d > 0) {
+          row.modes.add(m);
+          if (HUMAN_POWERED.has(m)) row.activeKm += d / 1000;
+        }
+      });
+    }
+  });
+
+  return Array.from(byDay.values())
+    .map((r) => ({ ...r, modes: Array.from(r.modes) }))
+    .sort((a, b) => (a.date < b.date ? -1 : 1));
+}
+
+/**
+ * Four six-hour windows in the user's local time, matching the buckets the Analysis
+ * tab already draws so the AI and the chart cannot disagree.
+ */
+function buildTimeOfDayBuckets(sessions, tzOffsetMinutes) {
+  const buckets = {
+    '00-06': { sessions: 0, distanceKm: 0 },
+    '06-12': { sessions: 0, distanceKm: 0 },
+    '12-18': { sessions: 0, distanceKm: 0 },
+    '18-24': { sessions: 0, distanceKm: 0 }
+  };
+  sessions.forEach((s) => {
+    const localHour = new Date((s.timestamp || 0) + tzOffsetMinutes * 60 * 1000).getUTCHours();
+    const key = localHour < 6 ? '00-06' : localHour < 12 ? '06-12' : localHour < 18 ? '12-18' : '18-24';
+    buckets[key].sessions++;
+    buckets[key].distanceKm += (s.totalDistance || 0) / 1000;
+  });
+  return buckets;
+}
+
+/**
+ * The most active day, decided here rather than by the model.
+ *
+ * `highlights.bestDay` is rendered directly in the app, and the model was previously
+ * never given per-day data — so every value it produced for this field was fabricated.
+ * An argmax is not a judgement call; computing it and handing over the answer removes
+ * a whole class of confident, checkable, wrong claims.
+ */
+function pickBestDay(dailySeries) {
+  if (!dailySeries || dailySeries.length === 0) return null;
+  // Ranked by CO2 saved, then by human-powered distance — NOT by raw distance. This
+  // value is rendered under a "Wins" heading, and ranking on total distance made a
+  // 23 km drive beat an 11 km walk, congratulating the user for the one thing the app
+  // exists to discourage.
+  return dailySeries.reduce((best, row) => {
+    if (!best) return row;
+    if (row.co2SavedKg > best.co2SavedKg) return row;
+    if (row.co2SavedKg === best.co2SavedKg && row.activeKm > best.activeKm) return row;
+    return best;
+  }, null);
+}
+
+/**
+ * Short fingerprint of the facts that change what the prompt says.
+ *
+ * Only the inputs that alter the analysis are included: session data is already
+ * covered by the 24-hour TTL, but a new vehicle or a corrected fuel price must
+ * invalidate immediately, or the user "fixes" their profile and sees the same stale
+ * answer all day.
+ */
+/**
+ * Bump whenever the prompt changes in a way that should invalidate cached answers.
+ *
+ * Analyses are cached for 24 hours, so without this a prompt fix keeps serving the old
+ * text for a full day after deploy — which is how the broken "51.64 kg better than
+ * baseline" line would have outlived its own fix.
+ */
+const PROMPT_VERSION = 'v4-real-mode-counts';
+
+function fingerprintContext(ctx) {
+  if (!ctx) return `none-${PROMPT_VERSION}`;
+  const v = ctx.vehicle || {};
+  const m = ctx.money || {};
+  const parts = [
+    v.primaryFuel, v.iceFuel, v.engineCcBand, v.bodyType, v.kmPerLitre,
+    m.currencyCode, m.petrolPerLitre, m.dieselPerLitre, m.electricityPerKwh,
+    m.measuredLPer100Km, m.region,
+    ctx.weeklyCo2GoalKg, ctx.unitSystem, ctx.timeZoneOffsetMinutes,
+    PROMPT_VERSION
+  ].join('|');
+  return require('crypto').createHash('sha1').update(parts).digest('hex').slice(0, 12);
 }
 
 /**
@@ -465,7 +645,60 @@ function getLanguageForLocale(locale) {
 /**
  * Build analysis prompt for Gemini
  */
-function buildAnalysisPrompt(stats, timeframe, locale, sessionDateKey, previousStats) {
+/**
+ * Render the device-only facts the client posted as `context`.
+ *
+ * Sections are omitted when absent rather than filled with zeros. A user with no
+ * vehicle set or no prices for their region yields fewer facts, and the model is told
+ * nothing rather than something false — the same rule the cost UI follows.
+ */
+function buildUserContextSection(ctx) {
+  if (!ctx) return '';
+  const lines = [];
+
+  if (ctx.vehicle) {
+    const v = ctx.vehicle;
+    const economy = v.kmPerLitre
+      ? `${v.kmPerLitre} km/L as stated by the owner`
+      : 'not stated (estimated from engine size)';
+    lines.push(
+      `**Their Vehicle**:
+- Fuel: ${v.primaryFuel}${v.primaryFuel === 'ELECTRIC' ? '' : ` (${v.iceFuel})`}
+- Engine band: ${v.engineCcBand}, body: ${v.bodyType}
+- Fuel economy: ${economy}`
+    );
+  }
+
+  if (ctx.money) {
+    const m = ctx.money;
+    const measured = m.measuredLPer100Km
+      ? `${m.measuredLPer100Km.toFixed(1)} L/100 km, measured from ${m.measuredFromFillUps} of their own fill-ups`
+      : 'no measured economy yet (they have not logged two full tanks)';
+    lines.push(
+      `**Energy Prices** (region ${m.region || 'unknown'}, source ${m.priceSource}):
+- Petrol: ${m.currencyCode} ${m.petrolPerLitre}/L${m.dieselPerLitre ? `, diesel: ${m.currencyCode} ${m.dieselPerLitre}/L` : ''}
+- Measured consumption: ${measured}
+- You MAY quote costs in ${m.currencyCode}. Never quote a cost in any other currency.`
+    );
+  } else {
+    lines.push(
+      `**Energy Prices**: unknown for this user's region.
+- Do NOT mention money, cost, savings in currency, or fuel spend anywhere in your response.`
+    );
+  }
+
+  if (ctx.weeklyCo2GoalKg > 0) {
+    lines.push(`**Their Weekly CO2 Goal**: ${ctx.weeklyCo2GoalKg} kg saved per week`);
+  }
+
+  if (ctx.unitSystem) {
+    lines.push(`**Units**: ${ctx.unitSystem} — express distances accordingly.`);
+  }
+
+  return lines.length ? `\n${lines.join('\n\n')}\n` : '';
+}
+
+function buildAnalysisPrompt(stats, timeframe, locale, sessionDateKey, previousStats, userContext) {
   const days = parseRollingDaysFromTimeframe(timeframe);
   const language = getLanguageForLocale(locale);
   const periodLabel =
@@ -476,7 +709,14 @@ function buildAnalysisPrompt(stats, timeframe, locale, sessionDateKey, previousS
   const totalKm = stats.totalDistance / 1000;
   const netCo2Kg = stats.co2Conserved - stats.co2Emissions;
   const baselineEmissionsKg = totalKm * BASELINE_DRIVING_CO2_PER_KM;
-  const baselineDeltaKg = baselineEmissionsKg - netCo2Kg; // positive = better than baseline
+  // Compare emissions with emissions.
+  //
+  // This previously read `baselineEmissionsKg - netCo2Kg`, where netCo2Kg is
+  // conserved-minus-emitted and so goes *negative* for anyone who drives more than
+  // they walk. Subtracting a negative inflated the gap by twice their emissions, and
+  // a user who drove 122 km was told they came in "51.64 kg better than driving" —
+  // a claim contradicted by the same paragraph reporting 22 kg net emitted.
+  const baselineDeltaKg = baselineEmissionsKg - stats.co2Emissions;
   const trend = buildCo2Trend(stats, previousStats);
 
   return `You are a fitness and health analyst. Analyze this user's activity data and provide insights.
@@ -487,7 +727,14 @@ function buildAnalysisPrompt(stats, timeframe, locale, sessionDateKey, previousS
 
 **Activity Summary**:
 - Total Sessions: ${stats.totalSessions}
-- Active Days: ${stats.activeDaysCount} out of ${timeframe === '1day' ? 1 : days} day(s)
+- Active Days: ${
+    timeframe === '1day'
+      ? '1 (single-day analysis)'
+      : // Never phrased as a fraction. A rolling 7-day window starts mid-day and so
+        // can touch 8 calendar dates, which rendered as "8 out of 7 days" — a figure
+        // that is arithmetically fine and reads as a bug to the person seeing it.
+        `${stats.activeDaysCount} distinct date(s) had activity within the last ${days} days`
+  }
 - Total Distance: ${(stats.totalDistance / 1000).toFixed(2)} km
 - Total Duration: ${(stats.totalDuration / 3600).toFixed(1)} hours
 - Calories Burned: ${Math.round(stats.totalCalories)} kcal
@@ -502,7 +749,11 @@ ${Object.entries(stats.activityBreakdown)
     const co2Label = data.estCo2Kg !== 0
       ? `, ~${Math.abs(data.estCo2Kg).toFixed(2)} kg CO2 ${data.estCo2Kg < 0 ? 'saved' : 'emitted'}`
       : '';
-    return `- ${activity}: ${data.count} sessions, ${(data.distance / 1000).toFixed(2)} km, ${(data.duration / 60).toFixed(0)} minutes${co2Label}`;
+    return (
+      `- ${activity}: ${data.count} session(s) containing this mode, ` +
+      `${(data.distance / 1000).toFixed(2)} km, ${(data.duration / 60).toFixed(0)} minutes${co2Label}` +
+      ` — averaging ${data.avgDistanceKm.toFixed(2)} km and ${data.avgMinutes.toFixed(0)} min per session of this mode`
+    );
   })
   .join('\n')}
 
@@ -510,9 +761,35 @@ ${Object.entries(stats.activityBreakdown)
 - Distance: ${(stats.avgDistance / 1000).toFixed(2)} km
 - Duration: ${(stats.avgDuration / 60).toFixed(0)} minutes
 
-**CO2 Baseline Comparison**:
+**Day-by-Day** (local dates; only days with activity appear — gaps are rest days):
+${(stats.dailySeries || [])
+  .map(
+    (d) =>
+      `- ${d.date} (${d.weekday}): ${d.sessions} session(s), ${d.distanceKm.toFixed(2)} km ` +
+      `(${d.activeKm.toFixed(2)} km human-powered), ` +
+      `${d.minutes.toFixed(0)} min, ${d.co2SavedKg.toFixed(2)} kg saved, ` +
+      `${d.co2EmittedKg.toFixed(2)} kg emitted, modes: ${d.modes.join('/') || 'none'}`
+  )
+  .join('\n') || '- (no daily data)'}
+
+**Time of Day** (local time, sessions by start hour):
+${Object.entries(stats.timeOfDay || {})
+  .map(([window, b]) => `- ${window}: ${b.sessions} session(s), ${b.distanceKm.toFixed(2)} km`)
+  .join('\n')}
+${
+  stats.bestDay
+    ? `
+**Most Active Day (already computed — use this exact value, do not derive your own)**:
+- ${stats.bestDay.date} (${stats.bestDay.weekday}) — ${stats.bestDay.co2SavedKg.toFixed(2)} kg CO2 saved, ${stats.bestDay.activeKm.toFixed(2)} km human-powered, ${stats.bestDay.distanceKm.toFixed(2)} km total
+- Ranked by CO2 saved, not raw distance — a long drive is not a win.
+`
+    : ''
+}${buildUserContextSection(userContext)}
+
+**CO2 Baseline Comparison** (emissions vs emissions — do not mix these with the net figure):
 - Driving this same ${totalKm.toFixed(2)} km in an average petrol car (${BASELINE_DRIVING_CO2_PER_KM} kg CO2/km) would have emitted ${baselineEmissionsKg.toFixed(2)} kg
-- The user's actual net impact was ${netCo2Kg.toFixed(2)} kg — ${Math.abs(baselineDeltaKg).toFixed(2)} kg ${baselineDeltaKg >= 0 ? 'better than' : 'worse than'} that baseline
+- The user actually emitted ${stats.co2Emissions.toFixed(2)} kg — ${Math.abs(baselineDeltaKg).toFixed(2)} kg ${baselineDeltaKg >= 0 ? 'less than' : 'more than'} that all-driving baseline
+- Separately, their net figure (saved minus emitted) is ${netCo2Kg.toFixed(2)} kg. ${netCo2Kg >= 0 ? 'They saved more than they emitted.' : 'They emitted more than they saved.'} Never describe a negative net figure as "better than baseline".
 ${trend ? `
 **CO2 Trend vs. Previous ${days}-Day Period**:
 - Previous period net CO2: ${trend.netPrev.toFixed(2)} kg
@@ -536,7 +813,7 @@ Please provide a comprehensive analysis in the following JSON format:
   "motivation": "One encouraging message celebrating their achievements",
   "environmentalImpact": "Brief summary of their CO2 impact",
   "highlights": {
-    "bestDay": "Day with most activity",
+    "bestDay": "Copy the Most Active Day given above, e.g. 'Tuesday 12 Aug — 8.4 km'",
     "topActivity": "Most frequent activity type",
     "improvement": "Area showing most improvement or potential"
   }
@@ -549,6 +826,30 @@ Guidelines:
 - Consider activity consistency, variety, and intensity
 - Score out of 10 (0-3: needs improvement, 4-6: fair, 7-8: good, 9-10: excellent)
 - Keep insights brief but meaningful (1-2 sentences each)
+
+Grounding rules — these override the guidelines above:
+- Every number you state must come from the data above. Do not estimate, extrapolate
+  or infer a figure that is not present.
+- For "bestDay", use the Most Active Day supplied above verbatim. Do not pick your own.
+- Use the Day-by-Day and Time of Day sections to say something about *patterns* —
+  which weekdays differ, whether trips cluster at particular hours, where the gaps
+  are. A pattern the user could not have read off their own dashboard is the most
+  valuable thing you can offer.
+- Tailor recommendations to their actual vehicle and mode mix. Do not suggest
+  switching to a mode they already use for most of their distance, and do not suggest
+  cycling or walking a distance they have never covered that way.
+- If energy prices are unavailable, do not mention money at all.
+- Session counts are per-activity in the Activity Breakdown. The Total Sessions figure
+  covers all modes — never describe it as the count for one mode ("the 48 driving
+  sessions" when 48 is the overall total is wrong).
+- Per-mode averages are given to you. Do not compute your own by dividing a mode's
+  total by the overall session count — quote the supplied average instead.
+- A rolling window can span more calendar dates than its length. Do not phrase active
+  days as a fraction such as "8 out of 7 days".
+- "Most Active Day" above is ranked by CO2 saved. If you also mention the day with the
+  greatest distance, call it the "longest-distance day" so the two do not read as
+  contradicting each other.
+- If you do not have enough data to support a claim, say less rather than guessing.
 - If CO2 conserved is significant, celebrate it!
 - If user is mostly sedentary, gently encourage more activity
 - Use the CO2 baseline comparison and trend data (when present) to ground environmentalImpact and insights in concrete numbers — e.g. how their net impact compares to driving the same distance, and whether it improved or declined versus the prior period
@@ -921,38 +1222,6 @@ exports.weeklyDigestScheduled = functions.pubsub
 
 // ── FCM send with retry ─────────────────────────────────────────────────────
 
-/**
- * Send an FCM message with up to maxAttempts retries on transient errors.
- * Stale/invalid tokens are deleted immediately and not retried.
- */
-async function sendFcmWithRetry(tokenDoc, message, userId, maxAttempts = 3) {
-  const token = tokenDoc.id;
-  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-    try {
-      // High priority so Android wakes the app to deliver immediately,
-      // bypassing Doze/battery-optimization deferral of normal-priority data messages.
-      await admin.messaging().send({ token, android: { priority: 'high' }, ...message });
-      return;
-    } catch (err) {
-      if (
-        err.code === 'messaging/registration-token-not-registered' ||
-        err.code === 'messaging/invalid-registration-token'
-      ) {
-        console.warn(`Stale FCM token removed for ${userId}/${token}`);
-        tokenDoc.ref.delete().catch(() => {});
-        return;
-      }
-      if (attempt < maxAttempts) {
-        const delayMs = 500 * attempt;
-        console.warn(`FCM send attempt ${attempt} failed for ${userId}/${token}: ${err.message} — retrying in ${delayMs}ms`);
-        await new Promise(r => setTimeout(r, delayMs));
-      } else {
-        console.error(`FCM send failed after ${maxAttempts} attempts for ${userId}/${token}: ${err.message}`);
-      }
-    }
-  }
-}
-
 // ── CO₂ equivalency helper ──────────────────────────────────────────────────
 
 /**
@@ -1295,6 +1564,78 @@ Use Markdown for formatting.
     res.status(500).json({ error: 'AI service error' });
   }
 });
+
+
+/**
+ * Monthly statement push — premium only.
+ *
+ * Fires on the 1st at 06:00 UTC, about the month that just closed.
+ *
+ * **The numbers in the notification are deliberately limited to distance and trips.**
+ * The money figure a subscriber actually cares about depends on their measured fuel
+ * economy and the price they pay, both of which live on the device — the server would
+ * have to substitute a class average and a national price cap and present the result
+ * as their spending. So the push reports what the server genuinely knows and the app
+ * computes the cost when the statement is opened.
+ */
+exports.monthlyStatementPush = functions.pubsub
+  .schedule('0 6 1 * *')
+  .timeZone('UTC')
+  .onRun(async () => {
+    const now = new Date();
+    const monthEnd = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1);
+    const monthStart = Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - 1, 1);
+    const monthLabel = new Date(monthStart).toLocaleString('en-US', { month: 'long', timeZone: 'UTC' });
+    console.log(`📄 monthlyStatementPush: ${monthLabel}`);
+
+    const usersSnap = await db.collection('users').get();
+    const fanOut = [];
+    let eligible = 0;
+
+    for (const userDoc of usersSnap.docs) {
+      const userId = userDoc.id;
+      try {
+        // Premium gate, server-side. The entitlement doc is written only by
+        // verifyPlayPurchase/RTDN, so it is the authoritative answer — and expiry is
+        // what grants access, not `active`, matching Entitlement.isEntitledAt.
+        const ent = await db
+          .collection('users').doc(userId)
+          .collection('entitlements').doc('premium').get();
+        if (!ent.exists || Number(ent.data().expiryMs || 0) <= Date.now()) continue;
+
+        const tokensSnap = await db.collection('users').doc(userId).collection('fcmTokens').get();
+        if (tokensSnap.empty) continue;
+
+        const sessionsSnap = await db
+          .collection('users').doc(userId).collection('sessions')
+          .where('timestamp', '>=', monthStart)
+          .where('timestamp', '<', monthEnd)
+          .get();
+        // Nothing tracked means nothing to report. A statement reading "0 trips" is a
+        // notification that only reminds someone they did not use the app.
+        if (sessionsSnap.empty) continue;
+
+        let distanceM = 0;
+        sessionsSnap.docs.forEach((d) => { distanceM += Number(d.data().totalDistance) || 0; });
+
+        eligible++;
+        const title = `📄 Your ${monthLabel} statement`;
+        const body =
+          `${sessionsSnap.size} trips · ${(distanceM / 1000).toFixed(0)} km. ` +
+          'Tap to see what it cost.';
+
+        for (const tokenDoc of tokensSnap.docs) {
+          fanOut.push(sendFcmWithRetry(tokenDoc, { data: { type: 'monthly', title, body } }, userId));
+        }
+      } catch (e) {
+        console.error(`monthlyStatementPush: error for user ${userId}`, e);
+      }
+    }
+
+    await Promise.allSettled(fanOut);
+    console.log(`📄 monthlyStatementPush: ${eligible} subscribers, ${fanOut.length} device(s)`);
+    return null;
+  });
 
 /**
  * Health check endpoint

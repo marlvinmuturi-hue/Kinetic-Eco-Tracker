@@ -133,7 +133,9 @@ fun MainTabsWithSwipe(
                         navController.navigate(Screen.SessionDetail.route)
                     },
                     onViewWeekSessions = { navController.navigate(Screen.WeekSessions.route) },
-                    onGoPremium = { navController.navigate(Screen.Premium.route) }
+                    onGoPremium = { navController.navigate(Screen.Premium.route) },
+                    onLogFuel = { navController.navigate(Screen.FuelLog.route) },
+                    onClusterClick = { navController.navigate(Screen.RecurringTripMap.route) }
                 )
                 else -> Unit
             }

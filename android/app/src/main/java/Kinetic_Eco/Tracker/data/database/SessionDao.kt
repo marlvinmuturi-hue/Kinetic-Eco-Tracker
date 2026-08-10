@@ -137,6 +137,19 @@ interface SessionDao {
     """)
     suspend fun getTripEndpoints(userId: String, sinceMs: Long): List<TripEndpointRow>
 
+    /**
+     * A month of trips, costed. Projection only — a statement never needs geometry,
+     * and selecting the entity would pull every GPS point through
+     * `Converters.toRoutePath`, the documented Room OOM on this app's history.
+     */
+    @Query("""
+        SELECT createdAt, totalDistance, co2Conserved, co2Emissions, breakdown
+        FROM sessions
+        WHERE userId = :userId AND createdAt >= :fromMs AND createdAt < :toMs
+        ORDER BY createdAt ASC
+    """)
+    suspend fun getStatementRows(userId: String, fromMs: Long, toMs: Long): List<StatementRow>
+
     /** Ids still awaiting endpoint backfill. Bounded by [limit] to cap peak memory. */
     @Query("""
         SELECT id FROM sessions
@@ -179,6 +192,16 @@ interface SessionDao {
     """)
     suspend fun markEndpointsUnavailable(sessionId: String)
 }
+
+/** Statement projection: totals and the activity split, no route geometry. */
+@TypeConverters(Converters::class)
+data class StatementRow(
+    val createdAt: Long,
+    val totalDistance: Double,
+    val co2Conserved: Double,
+    val co2Emissions: Double,
+    val breakdown: Map<Kinetic_Eco.Tracker.data.ActivityType, ActivityBreakdownEntity>
+)
 
 /**
  * Endpoint projection of a session — everything recurring-trip detection needs and

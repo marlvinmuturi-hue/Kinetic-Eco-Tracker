@@ -10,11 +10,15 @@ import kotlinx.coroutines.withContext
 import java.util.Locale
 import Kinetic_Eco.Tracker.R
 import Kinetic_Eco.Tracker.data.ActivityAnalysis
+import Kinetic_Eco.Tracker.data.AnalysisContext
 import Kinetic_Eco.Tracker.data.CohortProfile
 import Kinetic_Eco.Tracker.data.RouteCluster
 import Kinetic_Eco.Tracker.data.SessionStats
 import Kinetic_Eco.Tracker.services.AIAnalysisService
 import Kinetic_Eco.Tracker.services.CohortAnalysisService
+import Kinetic_Eco.Tracker.services.EnergyPriceRepository
+import Kinetic_Eco.Tracker.services.EntitlementRepository
+import Kinetic_Eco.Tracker.services.FuelLogRepository
 import Kinetic_Eco.Tracker.services.RouteIntelligenceService
 import Kinetic_Eco.Tracker.services.SessionManager
 import Kinetic_Eco.Tracker.data.ActivitySegment
@@ -66,6 +70,53 @@ class AnalyticsViewModel(application: Application) : AndroidViewModel(applicatio
 
     private val _routeClustersLoading = MutableStateFlow(false)
     val routeClustersLoading: StateFlow<Boolean> = _routeClustersLoading.asStateFlow()
+
+    // ── Selected repeat journey (map view) ────────────────────────────────────
+
+    private val _selectedCluster = MutableStateFlow<RouteCluster?>(null)
+    val selectedCluster: StateFlow<RouteCluster?> = _selectedCluster.asStateFlow()
+
+    private val _clusterRoutePaths =
+        MutableStateFlow<List<List<Kinetic_Eco.Tracker.data.RoutePoint>>>(emptyList())
+    val clusterRoutePaths: StateFlow<List<List<Kinetic_Eco.Tracker.data.RoutePoint>>> =
+        _clusterRoutePaths.asStateFlow()
+
+    private val _clusterRoutesLoading = MutableStateFlow(false)
+    val clusterRoutesLoading: StateFlow<Boolean> = _clusterRoutesLoading.asStateFlow()
+
+    /**
+     * How many of a cluster's trips to draw.
+     *
+     * Geometry is the one thing that makes this app run out of memory, so the map
+     * loads a bounded sample rather than every member. Five overlaid runs already show
+     * whether the route varies; thirty-three would be an unreadable smear and a heap
+     * spike for no extra information.
+     */
+    private val MAX_ROUTES_ON_MAP = 5
+
+    fun selectCluster(cluster: RouteCluster) {
+        _selectedCluster.value = cluster
+        _clusterRoutePaths.value = emptyList()
+        viewModelScope.launch(Dispatchers.IO) {
+            _clusterRoutesLoading.value = true
+            try {
+                val paths = cluster.memberSessionIds
+                    .take(MAX_ROUTES_ON_MAP)
+                    .mapNotNull { id -> sessionManager.getSessionById(id)?.routePath }
+                    .filter { it.size >= 2 }
+                    // Simplified before display: a route recorded every ~1.5 s has far
+                    // more points than a phone-sized map can resolve, and the polyline
+                    // is indistinguishable at 5 m tolerance.
+                    .map { Kinetic_Eco.Tracker.util.douglasPeuckerRoute(it, 5.0) }
+                _clusterRoutePaths.value = paths
+            } catch (e: Exception) {
+                android.util.Log.e("AnalyticsViewModel", "Cluster route load failed", e)
+                _clusterRoutePaths.value = emptyList()
+            } finally {
+                _clusterRoutesLoading.value = false
+            }
+        }
+    }
 
     // AI Analysis State
     private val _aiAnalysisState = MutableStateFlow<AIAnalysisState>(AIAnalysisState.Idle)
@@ -206,7 +257,12 @@ class AnalyticsViewModel(application: Application) : AndroidViewModel(applicatio
             withContext(Dispatchers.Main.immediate) { _aiAnalysisState.value = AIAnalysisState.Loading }
 
             val locale = resolveLocaleForAnalysis()
-            val result = aiAnalysisService.analyzeActivity(_rollingAnalysisDays.value, locale, sessionDateKey = day)
+            val result = aiAnalysisService.analyzeActivity(
+                _rollingAnalysisDays.value,
+                locale,
+                sessionDateKey = day,
+                analysisContext = buildAnalysisContext()
+            )
 
             withContext(Dispatchers.Main.immediate) {
                 _aiAnalysisState.value = result.fold(
@@ -247,8 +303,15 @@ class AnalyticsViewModel(application: Application) : AndroidViewModel(applicatio
                 if (filled == 0) break
                 passes++
             }
-            _routeClusters.value =
-                routeIntelligenceService.getRouteClusters(userId, lookbackDays, profile)
+            _routeClusters.value = routeIntelligenceService.getRouteClusters(
+                userId,
+                lookbackDays,
+                profile,
+                // Same price and economy the calculator uses, so a saving quoted here
+                // can never contradict the per-trip figure shown there.
+                prices = Kinetic_Eco.Tracker.services.EnergyPriceRepository.prices.value,
+                measured = Kinetic_Eco.Tracker.services.FuelLogRepository.economy.value
+            )
             _routeClustersLoading.value = false
         }
     }
@@ -268,6 +331,49 @@ class AnalyticsViewModel(application: Application) : AndroidViewModel(applicatio
         }
     }
     
+    /**
+     * Device-only facts the analysis backend cannot look up for itself.
+     *
+     * Built fresh per request rather than cached: the user may change vehicle, region
+     * or price between two analyses, and a stale profile would produce cost figures
+     * attributed to a car they no longer drive.
+     */
+    private fun buildAnalysisContext(): AnalysisContext {
+        val profile = userPrefsManager.loadVehicleProfile()
+        val prices = EnergyPriceRepository.prices.value
+        val economy = FuelLogRepository.economy.value
+
+        return AnalysisContext(
+            timeZoneOffsetMinutes = java.util.TimeZone.getDefault()
+                .getOffset(System.currentTimeMillis()) / 60_000,
+            unitSystem = userPrefsManager.getUnitPreference().name,
+            isPremium = EntitlementRepository.isPremiumNow(),
+            weeklyCo2GoalKg = userPrefsManager.getWeeklyCo2GoalKg().toDouble(),
+            vehicle = AnalysisContext.Vehicle(
+                primaryFuel = profile.primaryFuelType.name,
+                iceFuel = profile.iceFuel.name,
+                engineCcBand = profile.drivingCcBand.name,
+                bodyType = profile.bodyType.name,
+                kmPerLitre = profile.fuelEconomyKmPerL
+            ),
+            // Null when the region has no known prices. The prompt then omits money
+            // entirely rather than quoting a figure in an unknown currency — the same
+            // rule MobilityCostCalculator applies on the device.
+            money = prices?.let { p ->
+                AnalysisContext.Money(
+                    currencyCode = p.currencyCode,
+                    petrolPerLitre = p.petrolPerLitre,
+                    dieselPerLitre = p.dieselPerLitre,
+                    electricityPerKwh = p.electricityPerKwh,
+                    priceSource = p.source.name,
+                    region = EnergyPriceRepository.region.value,
+                    measuredLPer100Km = economy?.lPer100Km,
+                    measuredFromFillUps = economy?.intervals ?: 0
+                )
+            }
+        )
+    }
+
     /** Resolves locale for AI analysis: "auto" -> device locale, else user preference. Returns en/fr/de/es/zh. */
     private fun resolveLocaleForAnalysis(): String {
         val pref = userPrefsManager.getLocalePreference()

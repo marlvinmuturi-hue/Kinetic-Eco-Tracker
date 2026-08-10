@@ -39,3 +39,6 @@ android/.gradle/
 *.njsproj
 *.sln
 *.sw?
+
+# Pulled APKs for on-device inspection — build artifacts, not source.
+device-apk/

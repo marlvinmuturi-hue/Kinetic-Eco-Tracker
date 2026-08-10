@@ -92,7 +92,9 @@ fun AnalysisScreen(
     onSettingsClick: () -> Unit,
     onSessionClick: ((SessionStats) -> Unit)? = null,
     onViewWeekSessions: () -> Unit = {},
-    onGoPremium: () -> Unit = {}
+    onGoPremium: () -> Unit = {},
+    onLogFuel: () -> Unit = {},
+    onClusterClick: () -> Unit = {}
 ) {
     val colorScheme = MaterialTheme.colorScheme
     val scroll = rememberScrollState()
@@ -141,10 +143,6 @@ fun AnalysisScreen(
     // Formerly a second, separate pair of calendar-week sums sitting alongside the
     // rolling ones above — the two coexisting on one screen is how the windows drifted.
     val net = weekCo2Saved - weekCo2Emit
-
-    val recentSessions = remember(allSessions) {
-        allSessions.sortedByDescending { it.sessionEndTimeMs }.take(2)
-    }
 
     // Repeat-journey mining is premium and reads the whole history, so it is loaded
     // only for subscribers and only once per screen entry — never on every recomposition.
@@ -198,7 +196,8 @@ fun AnalysisScreen(
         WeeklyReportCard(
             data = weeklyReport,
             weekStartMs = thisWeekCutoff,
-            unitSystem = unitSystem
+            unitSystem = unitSystem,
+            onViewWeekSessions = onViewWeekSessions
         )
 
         // ── Repeat journeys (premium) ─────────────────────────────────────────
@@ -210,7 +209,11 @@ fun AnalysisScreen(
             loading = routeClustersLoading,
             isPremium = isPremium,
             unitSystem = unitSystem,
-            onGoPremium = onGoPremium
+            onGoPremium = onGoPremium,
+            onClusterClick = { cluster ->
+                analyticsViewModel.selectCluster(cluster)
+                onClusterClick()
+            }
         )
 
         // ── Manual CO₂ calculator ─────────────────────────────────────────────
@@ -218,6 +221,7 @@ fun AnalysisScreen(
         // immediately followed by "what would I do?". Purely local — see
         // [Co2Calculator]; nothing entered here is persisted.
         Co2CalculatorCard(
+            onLogFuel = onLogFuel,
             unitSystem = unitSystem,
             vehicleProfile = vehicleProfile
         )
@@ -394,15 +398,10 @@ fun AnalysisScreen(
             }
         }
 
-        // ── Recent sessions ──────────────────────────────────────────────────
-        if (recentSessions.isNotEmpty()) {
-            RecentSessionsCard(
-                sessions = recentSessions,
-                unitSystem = unitSystem,
-                onSessionClick = onSessionClick,
-                onViewWeekSessions = onViewWeekSessions
-            )
-        }
+        // Recent sessions used to sit here as a two-row preview. It was a third place
+        // on one screen showing session data, and the only one scoped to all history
+        // rather than the week — so it disagreed with the weekly report directly above
+        // it. The way in is now a button on that report, which owns the week window.
 
         Spacer(Modifier.height(80.dp))
     }
@@ -578,157 +577,6 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawRoundedBar(
 }
 
 // ── Recent sessions ──────────────────────────────────────────────────────────
-
-@Composable
-private fun RecentSessionsCard(
-    sessions: List<SessionStats>,
-    unitSystem: UnitSystem,
-    onSessionClick: ((SessionStats) -> Unit)?,
-    onViewWeekSessions: () -> Unit = {}
-) {
-    val colorScheme = MaterialTheme.colorScheme
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = colorScheme.surfaceVariant),
-        shape = RoundedCornerShape(16.dp)
-    ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Icon(
-                    imageVector = Icons.Default.History,
-                    contentDescription = null,
-                    tint = colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.width(8.dp))
-                Text(
-                    text = stringResource(R.string.recent_sessions),
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = colorScheme.onSurface
-                )
-            }
-            Spacer(Modifier.height(12.dp))
-            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                sessions.forEach { session ->
-                    AnalysisSessionRow(
-                        session = session,
-                        unitSystem = unitSystem,
-                        onClick = { onSessionClick?.invoke(session) }
-                    )
-                }
-            }
-            Spacer(Modifier.height(12.dp))
-            HorizontalDivider(color = colorScheme.onSurface.copy(alpha = 0.08f))
-            Spacer(Modifier.height(10.dp))
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clickable(onClick = onViewWeekSessions),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = stringResource(R.string.see_all_this_week),
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.SemiBold,
-                    color = colorScheme.primary
-                )
-                Icon(
-                    imageVector = Icons.Default.ChevronRight,
-                    contentDescription = null,
-                    tint = colorScheme.primary,
-                    modifier = Modifier.size(18.dp)
-                )
-            }
-        }
-    }
-}
-
-@Composable
-private fun AnalysisSessionRow(
-    session: SessionStats,
-    unitSystem: UnitSystem,
-    onClick: () -> Unit
-) {
-    val colorScheme = MaterialTheme.colorScheme
-    val (icon, tint) = sessionActivityIconAndTint(session, colorScheme)
-    Surface(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clickable(onClick = onClick),
-        shape = RoundedCornerShape(12.dp),
-        color = colorScheme.surface.copy(alpha = 0.6f)
-    ) {
-        Row(
-            modifier = Modifier.padding(12.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(36.dp)
-                    .clip(CircleShape)
-                    .background(tint.copy(alpha = 0.15f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = icon,
-                    contentDescription = null,
-                    tint = tint,
-                    modifier = Modifier.size(18.dp)
-                )
-            }
-            Spacer(Modifier.width(12.dp))
-            Column(modifier = Modifier.weight(1f)) {
-                Text(
-                    text = session.date.ifBlank { stringResource(R.string.session) },
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.SemiBold,
-                    color = colorScheme.onSurface
-                )
-                Text(
-                    text = weeklyFormatDistance(session.totalDistance, unitSystem) +
-                        " • " + formatRouteDuration(session.totalDuration),
-                    style = MaterialTheme.typography.bodySmall,
-                    color = colorScheme.onSurfaceVariant
-                )
-            }
-            if (session.co2Conserved > 0.001) {
-                Text(
-                    text = "+${session.co2Conserved.format(2)} kg",
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.SemiBold,
-                    color = Green500
-                )
-            } else if (session.co2Emissions > 0.001) {
-                Text(
-                    text = "${session.co2Emissions.format(2)} kg",
-                    style = MaterialTheme.typography.labelLarge,
-                    fontWeight = FontWeight.SemiBold,
-                    color = colorScheme.onSurfaceVariant
-                )
-            }
-        }
-    }
-}
-
-private fun sessionActivityIconAndTint(
-    s: SessionStats,
-    colorScheme: androidx.compose.material3.ColorScheme
-): Pair<ImageVector, Color> {
-    val dominant = s.breakdown.maxByOrNull { it.value.distance }?.key ?: ActivityType.WALKING
-    val icon: ImageVector = when (dominant) {
-        ActivityType.WALKING          -> Icons.AutoMirrored.Filled.DirectionsWalk
-        ActivityType.RUNNING          -> Icons.AutoMirrored.Filled.DirectionsRun
-        ActivityType.CYCLING          -> Icons.AutoMirrored.Filled.DirectionsBike
-        ActivityType.MOTORCYCLE       -> Icons.Outlined.TwoWheeler
-        ActivityType.DRIVING          -> Icons.Default.DirectionsCar
-        ActivityType.ELECTRIC_VEHICLE -> Icons.Default.ElectricCar
-        ActivityType.TRAIN            -> Icons.Default.Train
-        ActivityType.FLYING           -> Icons.Default.Flight
-        ActivityType.IDLE             -> Icons.Default.PauseCircle
-    }
-    return icon to colorScheme.onSurfaceVariant
-}
 
 // ── Chart helpers ─────────────────────────────────────────────────────────────
 
@@ -1004,7 +852,8 @@ private fun computeWeeklyReportData(sessions: List<SessionStats>): WeeklyReportD
 private fun WeeklyReportCard(
     data: WeeklyReportData,
     weekStartMs: Long,
-    unitSystem: UnitSystem
+    unitSystem: UnitSystem,
+    onViewWeekSessions: () -> Unit
 ) {
     val colorScheme = MaterialTheme.colorScheme
     val weekLabel = remember(weekStartMs) {
@@ -1161,6 +1010,27 @@ private fun WeeklyReportCard(
                 }
             }
               }
+            }
+
+            // Outside the AnimatedVisibility on purpose: this is now the only route to
+            // the session list on this tab, and burying it in the expanded body would
+            // hide it from anyone who leaves the report collapsed — which it is by
+            // default. Hidden only when the week is genuinely empty, since the
+            // destination would be too.
+            if (data.sessionCount > 0) {
+                Spacer(Modifier.height(12.dp))
+                OutlinedButton(
+                    onClick = onViewWeekSessions,
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.History,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(Modifier.width(8.dp))
+                    Text(stringResource(R.string.analysis_view_week_sessions))
+                }
             }
         }
     }

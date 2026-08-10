@@ -124,7 +124,26 @@ class MainActivity : AppCompatActivity() {
         ) {
             Kinetic_Eco.Tracker.services.AutoStartMonitorService.start(this@MainActivity)
         }
+
+        // Chained off the result rather than fired alongside the foreground request.
+        // Android refuses background location in the same call as foreground, so the
+        // two used to be launched together and surfaced as two dialogs back to back —
+        // and the second was pointless anyway, because at the moment it launched the
+        // foreground grant it depends on had not landed yet.
+        if (pendingBackgroundLocationRequest && (fineLocationGranted || coarseLocationGranted)) {
+            pendingBackgroundLocationRequest = false
+            requestBackgroundLocationIfNeeded()
+        } else {
+            pendingBackgroundLocationRequest = false
+        }
     }
+
+    /**
+     * Set when a caller wants "all the time" location but foreground has not been
+     * granted yet, so the background prompt can follow the foreground answer instead
+     * of racing it.
+     */
+    private var pendingBackgroundLocationRequest = false
 
     /** "All the time" location — required on many devices for GPS updates while the app is not visible. */
     private val requestBackgroundLocationLauncher = registerForActivityResult(
@@ -207,11 +226,16 @@ class MainActivity : AppCompatActivity() {
         // Auto-start on walk, or re-arm after idle auto-stop (pending flag)
         if (autoStartOnWalkEnabled || userPrefsManager.getPendingResumeAfterIdleAutoStop()) {
             Kinetic_Eco.Tracker.services.AutoStartMonitorService.start(this)
-            requestBackgroundLocationIfNeeded()
         }
-        
-        // Request tracking permissions (non-blocking)
-        requestTrackingPermissions()
+
+        // No permission prompt on launch. Onboarding asks once; after that the
+        // remaining prompts are raised at the point of need — pressing Start on the
+        // tracker, or enabling auto-start in Settings.
+        //
+        // This used to run unconditionally on every cold start. A new user was asked
+        // for location twice (onboarding, then again on landing here), and anyone who
+        // had declined was asked afresh every single launch, including launches where
+        // they only opened the app to look at a chart.
 
         // Gather UMP consent (GDPR/EEA/UK) before any ad request. This shows a
         // consent form only when required and initializes the Mobile Ads SDK once
@@ -359,6 +383,14 @@ class MainActivity : AppCompatActivity() {
                         if (currentUser == null) return@LaunchedEffect
                         // Only after onboarding/login — the Permissions step already asks there.
                         if (currentRoute != Screen.MainTabs.route) return@LaunchedEffect
+                        // Checking the route was not enough: it is satisfied on every
+                        // launch, so this fired again each cold start for anyone who
+                        // had declined, duplicating what onboarding already asked.
+                        if (!userPrefsManager.isOnboardingDone()) return@LaunchedEffect
+                        if (userPrefsManager.hasSeenReliabilityPrompt()) {
+                            reliabilityChecked = true
+                            return@LaunchedEffect
+                        }
                         val ctx = applicationContext
                         val missing = !BatteryOptimizationHelper.hasBackgroundLocationAccess(ctx) ||
                             !BatteryOptimizationHelper.isIgnoringBatteryOptimizations(ctx)
@@ -366,7 +398,11 @@ class MainActivity : AppCompatActivity() {
                         reliabilityChecked = true
                     }
                     if (showReliabilityDialog) {
-                        BatteryReliabilityDialog(onDismiss = { showReliabilityDialog = false })
+                        BatteryReliabilityDialog(onDismiss = {
+                            showReliabilityDialog = false
+                            // Asked once. Settings keeps both switches reachable.
+                            userPrefsManager.setSeenReliabilityPrompt()
+                        })
                     }
 
                     // ── Orphaned-session recovery ─────────────────────────────────
@@ -742,7 +778,13 @@ class MainActivity : AppCompatActivity() {
             PackageManager.PERMISSION_GRANTED
         val coarse = ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) ==
             PackageManager.PERMISSION_GRANTED
-        if (!fine && !coarse) return
+        if (!fine && !coarse) {
+            // Queue instead of dropping it. Bailing out silently is why this prompt
+            // reappeared on every cold start: the request was retried from onCreate
+            // each time rather than following the foreground grant once.
+            pendingBackgroundLocationRequest = true
+            return
+        }
         requestBackgroundLocationLauncher.launch(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
     }
 

@@ -143,6 +143,7 @@ class UserPreferencesManager(context: Context) {
         private const val KEY_PRICE_CURRENCY = "price_currency_code"
         private const val KEY_MONTHLY_STATEMENT_ENABLED = "monthly_statement_enabled"
         private const val KEY_MEASURED_ECONOMY_CELEBRATED = "measured_economy_celebrated"
+        private const val KEY_RELIABILITY_PROMPT_SEEN = "reliability_prompt_seen"
         private const val KEY_AD_LAST_SHOWN_MS = "ad_interstitial_last_shown_ms"
         private const val KEY_AD_DAY = "ad_interstitial_day"
         private const val KEY_AD_DAY_COUNT = "ad_interstitial_day_count"
@@ -813,6 +814,21 @@ class UserPreferencesManager(context: Context) {
             cal.get(java.util.Calendar.MONTH) + 1,
             cal.get(java.util.Calendar.DAY_OF_MONTH)
         )
+    }
+
+    /**
+     * Whether the background-location / battery reliability dialog has been shown.
+     *
+     * Persisted, not per-process. It used to be guarded by a plain field, so a user
+     * who declined once was asked again on every cold start — on top of the same two
+     * permissions the onboarding Permissions step had already requested. Settings
+     * still surfaces both, so declining here loses nothing but the nagging.
+     */
+    fun hasSeenReliabilityPrompt(): Boolean =
+        prefs.getBoolean(KEY_RELIABILITY_PROMPT_SEEN, false)
+
+    fun setSeenReliabilityPrompt() {
+        prefs.edit().putBoolean(KEY_RELIABILITY_PROMPT_SEEN, true).apply()
     }
 
     /**

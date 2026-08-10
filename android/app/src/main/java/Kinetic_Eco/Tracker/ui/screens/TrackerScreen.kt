@@ -14,6 +14,11 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.Box
+import android.Manifest
+import android.content.pm.PackageManager
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.core.content.ContextCompat
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -131,6 +136,15 @@ fun TrackerScreen(
     var saveError by remember { mutableStateOf<String?>(null) }
 
     val context = LocalContext.current
+
+    // Registered locally rather than routed through MainActivity: this is the only
+    // place that needs it, and keeping it here is what allows the launch-time prompt
+    // to go away without leaving Start silently dead for anyone who declined earlier.
+    val locationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestMultiplePermissions()
+    ) { granted ->
+        if (granted.values.any { it }) viewModel.startTracking()
+    }
     val speedDisplay = if (unitSystem.usesMetricDistance()) {
         "${(animatedSpeed * 3.6f).format(1)} km/h"
     } else {
@@ -310,8 +324,20 @@ fun TrackerScreen(
             onClick = {
                 if (isTracking) {
                     showStopDialog = true
-                } else {
+                } else if (hasLocationPermission(context)) {
                     viewModel.startTracking()
+                } else {
+                    // Asked here rather than on every app launch. TrackerViewModel
+                    // silently returns when location is missing, so without a prompt
+                    // at the moment of pressing Start the button would simply do
+                    // nothing — and asking at launch instead means nagging someone who
+                    // opened the app to look at last week's chart.
+                    locationPermissionLauncher.launch(
+                        arrayOf(
+                            Manifest.permission.ACCESS_FINE_LOCATION,
+                            Manifest.permission.ACCESS_COARSE_LOCATION
+                        )
+                    )
                 }
             }
         )
@@ -1624,3 +1650,9 @@ fun SummaryStatCardCompact(
     }
 }
 
+/** True when either location precision has been granted. */
+private fun hasLocationPermission(context: android.content.Context): Boolean =
+    ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) ==
+        PackageManager.PERMISSION_GRANTED ||
+    ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_COARSE_LOCATION) ==
+        PackageManager.PERMISSION_GRANTED

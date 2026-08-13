@@ -1,13 +1,17 @@
-# Release Notes — V1.9.18 (versionCode 31)
+# Release Notes — V1.9.19 (versionCode 32)
 
-> **31 is the single release that carries everything. Production is on versionCode
-> 20**, so users jump 20 → 31 in one step: Play Billing, the paywall, the
+> **32 is the single release that carries everything. Production is on versionCode
+> 20**, so users jump 20 → 32 in one step: Play Billing, the paywall, the
 > week-window fix, the calculator changes, recurring-trip mining, Room schema v9 and
 > kotlinx-serialization 1.8.1, plus fuel-and-cost figures in the calculator.
-> versionCodes 21–30 were build/test iterations and
+> versionCodes 21–31 were build/test iterations and
 > none of them should be promoted — the notes below record why each was superseded.
 >
-> **31 supersedes 30, which reached an internal track but not production.** It fixes a
+> **32 reverts the frosted-glass appearance that shipped in 31** and returns the app to
+> its previous look. The leaderboard fixes 31 introduced are kept in full. 31 was
+> uploaded, so its versionCode is permanently consumed and cannot be reused.
+>
+> **31 superseded 30, which reached an internal track but not production.** It fixed a
 > Settings leaderboard toggle that could not be operated at all, and an auto-opt-in that
 > could put an opted-out user back on the public board. Everything 30 carried is carried
 > here unchanged.
@@ -100,6 +104,18 @@
 ---
 
 ## Full changelog
+
+### ↩️ New in versionCode 32 — the previous look is back
+
+- **The frosted-glass appearance introduced in 31 is reverted.** `Glass.kt` is deleted, the
+  `dev.chrisbanes.haze:haze:0.7.3` dependency is dropped, and `Theme.kt`, the six screens
+  and the three card components return to exactly their versionCode 30 source.
+- **Nothing else from 31 is lost.** The leaderboard toggle fixes and the opt-in-status fix
+  are kept in full; the only surviving change in `SettingsScreen` is the two-line
+  `leaderboardOptInBusy` rename those fixes depend on.
+- Verified by compiling with no Haze on the classpath, so a missed import would have failed
+  the build rather than surfacing later at runtime.
+- 31 was uploaded to Play, so its versionCode is spent. This is 32 rather than a re-upload.
 
 ### 🔘 New in versionCode 31 — the leaderboard toggle works, and respects "off"
 
@@ -332,6 +348,6 @@ failure once the document has been cached. That branch is reasoned and compiled 
 
 ---
 
-_Build: versionName `V1.9.18`, versionCode `31`, targetSdk 36, minSdk 24. Signed
+_Build: versionName `V1.9.19`, versionCode `32`, targetSdk 36, minSdk 24. Signed
 with the Kinetic Eco Tracker upload key. Artifact:
 `app/build/outputs/bundle/release/app-release.aab`._

@@ -64,13 +64,9 @@ import Kinetic_Eco.Tracker.ui.components.Co2CalculatorCard
 import Kinetic_Eco.Tracker.ui.components.RecurringTripsCard
 import Kinetic_Eco.Tracker.ui.components.RouteMapMultiSessionView
 import Kinetic_Eco.Tracker.ui.theme.Green500
-import Kinetic_Eco.Tracker.ui.theme.glassTile
-import Kinetic_Eco.Tracker.ui.theme.kineticGradientBackground
 import Kinetic_Eco.Tracker.ui.utils.format
 import Kinetic_Eco.Tracker.ui.utils.usesMetricDistance
 import Kinetic_Eco.Tracker.viewmodel.AnalyticsViewModel
-import dev.chrisbanes.haze.HazeState
-import dev.chrisbanes.haze.haze
 import java.text.SimpleDateFormat
 import java.time.Instant
 import java.time.ZoneId
@@ -170,26 +166,10 @@ fun AnalysisScreen(
         }
     }
 
-    // Frosted-glass backdrop (dark theme only — see Glass.kt/Theme.kt): a gradient
-    // layer marked as the haze source, with the scrollable content's glassTile
-    // cards drawn on top of it. In light theme, hazeState stays null and every
-    // card below falls back to its original flat MaterialTheme surface color.
-    val hazeState = remember { HazeState() }
-
-    Box(modifier = Modifier.fillMaxSize()) {
-    if (hazeState != null) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .kineticGradientBackground()
-                .haze(state = hazeState)
-        )
-    }
-
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .then(if (hazeState == null) Modifier.background(colorScheme.background) else Modifier)
+            .background(colorScheme.background)
             .verticalScroll(scroll)
             .padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(14.dp)
@@ -228,8 +208,7 @@ fun AnalysisScreen(
             data = weeklyReport,
             weekStartMs = thisWeekCutoff,
             unitSystem = unitSystem,
-            onViewWeekSessions = onViewWeekSessions,
-            hazeState = hazeState
+            onViewWeekSessions = onViewWeekSessions
         )
 
         // ── Repeat journeys (premium) ─────────────────────────────────────────
@@ -245,8 +224,7 @@ fun AnalysisScreen(
             onClusterClick = { cluster ->
                 analyticsViewModel.selectCluster(cluster)
                 onClusterClick()
-            },
-            hazeState = hazeState
+            }
         )
 
         // ── Manual CO₂ calculator ─────────────────────────────────────────────
@@ -256,18 +234,13 @@ fun AnalysisScreen(
         Co2CalculatorCard(
             onLogFuel = onLogFuel,
             unitSystem = unitSystem,
-            vehicleProfile = vehicleProfile,
-            hazeState = hazeState
+            vehicleProfile = vehicleProfile
         )
 
         // ── AI Analysis section (reuses existing AnalyticsScreen helpers) ─────
         Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .then(if (hazeState != null) Modifier.glassTile(hazeState, RoundedCornerShape(16.dp)) else Modifier),
-            colors = CardDefaults.cardColors(
-                containerColor = if (hazeState != null) Color.Transparent else colorScheme.surfaceVariant
-            ),
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = colorScheme.surfaceVariant),
             shape = RoundedCornerShape(16.dp)
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
@@ -298,19 +271,14 @@ fun AnalysisScreen(
             WeeklyRouteMapCard(
                 weekSessions = calWeekSessions,
                 unitSystem = unitSystem,
-                onSessionClick = onSessionClick,
-                hazeState = hazeState
+                onSessionClick = onSessionClick
             )
         }
 
         // ── 7-day CO2 bar chart ───────────────────────────────────────────────
         Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .then(if (hazeState != null) Modifier.glassTile(hazeState, RoundedCornerShape(16.dp)) else Modifier),
-            colors = CardDefaults.cardColors(
-                containerColor = if (hazeState != null) Color.Transparent else colorScheme.surfaceVariant
-            ),
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = colorScheme.surfaceVariant),
             shape = RoundedCornerShape(16.dp)
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
@@ -368,11 +336,9 @@ fun AnalysisScreen(
         // ── CO₂ equivalence card ──────────────────────────────────────────────
         val netAccent = colorScheme.onSurface
         Card(
-            modifier = Modifier
-                .fillMaxWidth()
-                .then(if (hazeState != null) Modifier.glassTile(hazeState, RoundedCornerShape(16.dp)) else Modifier),
+            modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(
-                containerColor = if (hazeState != null) Color.Transparent else colorScheme.surfaceVariant.copy(alpha = 0.55f)
+                containerColor = colorScheme.surfaceVariant.copy(alpha = 0.55f)
             ),
             shape = RoundedCornerShape(16.dp)
         ) {
@@ -450,7 +416,6 @@ fun AnalysisScreen(
 
         Spacer(Modifier.height(80.dp))
     }
-    } // end backdrop Box
 }
 
 // ── 7-day CO2 bar chart ──────────────────────────────────────────────────────
@@ -665,8 +630,7 @@ private fun LegendDot(color: Color, label: AnnotatedString) {
 private fun WeeklyRouteMapCard(
     weekSessions: List<SessionStats>,
     unitSystem: UnitSystem,
-    onSessionClick: ((SessionStats) -> Unit)?,
-    hazeState: HazeState?
+    onSessionClick: ((SessionStats) -> Unit)?
 ) {
     val colorScheme = MaterialTheme.colorScheme
 
@@ -682,7 +646,6 @@ private fun WeeklyRouteMapCard(
         weekSessions.maxByOrNull { it.sessionEndTimeMs }
     }
 
-    val shape = RoundedCornerShape(16.dp)
     val cardModifier = Modifier
         .fillMaxWidth()
         .let { mod ->
@@ -690,14 +653,11 @@ private fun WeeklyRouteMapCard(
                 mod.clickable { onSessionClick(detailSession) }
             else mod
         }
-        .then(if (hazeState != null) Modifier.glassTile(hazeState, shape) else Modifier)
 
     Card(
         modifier = cardModifier,
-        colors = CardDefaults.cardColors(
-            containerColor = if (hazeState != null) Color.Transparent else colorScheme.surfaceVariant
-        ),
-        shape = shape
+        colors = CardDefaults.cardColors(containerColor = colorScheme.surfaceVariant),
+        shape = RoundedCornerShape(16.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -904,8 +864,7 @@ private fun WeeklyReportCard(
     data: WeeklyReportData,
     weekStartMs: Long,
     unitSystem: UnitSystem,
-    onViewWeekSessions: () -> Unit,
-    hazeState: HazeState?
+    onViewWeekSessions: () -> Unit
 ) {
     val colorScheme = MaterialTheme.colorScheme
     val weekLabel = remember(weekStartMs) {
@@ -925,15 +884,10 @@ private fun WeeklyReportCard(
         label = "weeklyReportChevron"
     )
 
-    val shape = RoundedCornerShape(16.dp)
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .then(if (hazeState != null) Modifier.glassTile(hazeState, shape) else Modifier),
-        colors = CardDefaults.cardColors(
-            containerColor = if (hazeState != null) Color.Transparent else colorScheme.surfaceVariant
-        ),
-        shape = shape
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = colorScheme.surfaceVariant),
+        shape = RoundedCornerShape(16.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(

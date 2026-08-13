@@ -4,7 +4,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -44,10 +43,6 @@ import Kinetic_Eco.Tracker.ui.components.BirthDatePicker
 import Kinetic_Eco.Tracker.ui.components.BatteryReliabilityDialog
 import Kinetic_Eco.Tracker.util.BatteryOptimizationHelper
 import Kinetic_Eco.Tracker.ui.theme.Red500
-import Kinetic_Eco.Tracker.ui.theme.glassTile
-import Kinetic_Eco.Tracker.ui.theme.kineticGradientBackground
-import dev.chrisbanes.haze.HazeState
-import dev.chrisbanes.haze.haze
 import Kinetic_Eco.Tracker.services.EnergyPriceRepository
 import Kinetic_Eco.Tracker.services.EntitlementRepository
 import Kinetic_Eco.Tracker.services.UserPhysicalProfile
@@ -111,26 +106,11 @@ fun SettingsScreen(
         BatteryReliabilityDialog(onDismiss = { showBatteryDialog = false })
     }
 
-    // Frosted-glass backdrop (dark theme only — see Glass.kt/Theme.kt): a gradient
-    // layer marked as the haze source, with the scrollable content's glassTile
-    // cards drawn on top of it. In light theme, hazeState stays null and every
-    // card below falls back to its original flat MaterialTheme surface color.
-    val hazeState = remember { HazeState() }
-
     Box(modifier = Modifier.fillMaxSize()) {
-        if (hazeState != null) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .kineticGradientBackground()
-                    .haze(state = hazeState)
-            )
-        }
-
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .then(if (hazeState == null) Modifier.background(colorScheme.background) else Modifier)
+                .background(colorScheme.background)
                 .padding(16.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp)
         ) {
@@ -169,12 +149,8 @@ fun SettingsScreen(
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable(onClick = onProfileClick)
-                        .then(if (hazeState != null) Modifier.glassTile(hazeState, RoundedCornerShape(12.dp)) else Modifier),
-                    colors = CardDefaults.cardColors(
-                        containerColor = if (hazeState != null) Color.Transparent else colorScheme.surface
-                    ),
-                    shape = RoundedCornerShape(12.dp)
+                        .clickable(onClick = onProfileClick),
+                    colors = CardDefaults.cardColors(containerColor = colorScheme.surface)
                 ) {
                     Row(
                         modifier = Modifier
@@ -221,8 +197,7 @@ fun SettingsScreen(
                 currentLocale = currentLocale,
                 onLocaleChange = onLocaleChange,
                 unitSystem = unitSystem,
-                onUnitSystemChange = onUnitSystemChange,
-                hazeState = hazeState
+                onUnitSystemChange = onUnitSystemChange
             )
         }
 
@@ -236,8 +211,7 @@ fun SettingsScreen(
                 dailyDigestEnabled = dailyDigestEnabled,
                 onDailyDigestChange = onDailyDigestChange,
                 monthlyStatementEnabled = monthlyStatementEnabled,
-                onMonthlyStatementChange = onMonthlyStatementChange,
-                hazeState = hazeState
+                onMonthlyStatementChange = onMonthlyStatementChange
             )
         }
 
@@ -250,12 +224,8 @@ fun SettingsScreen(
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable(onClick = onMonthlyStatementClick)
-                        .then(if (hazeState != null) Modifier.glassTile(hazeState, RoundedCornerShape(12.dp)) else Modifier),
-                    colors = CardDefaults.cardColors(
-                        containerColor = if (hazeState != null) Color.Transparent else colorScheme.surface
-                    ),
-                    shape = RoundedCornerShape(12.dp)
+                        .clickable(onClick = onMonthlyStatementClick),
+                    colors = CardDefaults.cardColors(containerColor = colorScheme.surface)
                 ) {
                     Row(
                         modifier = Modifier
@@ -292,7 +262,7 @@ fun SettingsScreen(
         }
 
         // ── Pricing region ────────────────────────────────────────────────────
-        item { PricingRegionCard(hazeState = hazeState) }
+        item { PricingRegionCard() }
 
         // ── Leaderboard opt-in ────────────────────────────────────────────────
         // Moved here (was previously after Cloud Sync) per user request: the
@@ -300,13 +270,8 @@ fun SettingsScreen(
         // toggle, since both relate to how the app behaves while you're moving.
         item {
             Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .then(if (hazeState != null) Modifier.glassTile(hazeState, RoundedCornerShape(12.dp)) else Modifier),
-                colors = CardDefaults.cardColors(
-                    containerColor = if (hazeState != null) Color.Transparent else colorScheme.surface
-                ),
-                shape = RoundedCornerShape(12.dp)
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = colorScheme.surface)
             ) {
                 Column(modifier = Modifier.fillMaxWidth()) {
                     Row(
@@ -382,12 +347,8 @@ fun SettingsScreen(
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clickable(onClick = onOpenActivitySelector)
-                        .then(if (hazeState != null) Modifier.glassTile(hazeState, RoundedCornerShape(12.dp)) else Modifier),
-                    colors = CardDefaults.cardColors(
-                        containerColor = if (hazeState != null) Color.Transparent else colorScheme.surface
-                    ),
-                    shape = RoundedCornerShape(12.dp)
+                        .clickable(onClick = onOpenActivitySelector),
+                    colors = CardDefaults.cardColors(containerColor = colorScheme.surface)
                 ) {
                     Row(
                         modifier = Modifier
@@ -422,13 +383,8 @@ fun SettingsScreen(
         // ── Auto-start on movement ────────────────────────────────────────────
         item {
             Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .then(if (hazeState != null) Modifier.glassTile(hazeState, RoundedCornerShape(12.dp)) else Modifier),
-                colors = CardDefaults.cardColors(
-                    containerColor = if (hazeState != null) Color.Transparent else colorScheme.surface
-                ),
-                shape = RoundedCornerShape(12.dp)
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = colorScheme.surface)
             ) {
                 Row(
                     modifier = Modifier
@@ -518,8 +474,7 @@ fun SettingsScreen(
         item {
             IdleStopDropdownCard(
                 idleStopMinutes = idleStopMinutes,
-                onIdleStopMinutesChange = onIdleStopMinutesChange,
-                hazeState = hazeState
+                onIdleStopMinutesChange = onIdleStopMinutesChange
             )
         }
 
@@ -532,21 +487,15 @@ fun SettingsScreen(
             SettingsItem(
                 title = stringResource(R.string.send_feedback),
                 icon = Icons.Default.RateReview,
-                onClick = onFeedbackClick,
-                hazeState = hazeState
+                onClick = onFeedbackClick
             )
         }
 
         // App Version
         item {
             Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .then(if (hazeState != null) Modifier.glassTile(hazeState, RoundedCornerShape(12.dp)) else Modifier),
-                colors = CardDefaults.cardColors(
-                    containerColor = if (hazeState != null) Color.Transparent else colorScheme.surface
-                ),
-                shape = RoundedCornerShape(12.dp)
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = colorScheme.surface)
             ) {
                 Row(
                     modifier = Modifier
@@ -575,8 +524,7 @@ fun SettingsScreen(
                 title = stringResource(R.string.logout),
                 icon = Icons.AutoMirrored.Filled.ExitToApp,
                 onClick = onLogout,
-                isDestructive = true,
-                hazeState = hazeState
+                isDestructive = true
             )
         }
         }
@@ -593,21 +541,15 @@ private val IDLE_STOP_OPTIONS = listOf(3, 5, 10)
 @Composable
 fun IdleStopDropdownCard(
     idleStopMinutes: Int,
-    onIdleStopMinutesChange: (Int) -> Unit,
-    hazeState: HazeState?
+    onIdleStopMinutesChange: (Int) -> Unit
 ) {
     var expanded by remember { mutableStateOf(false) }
     val colorScheme = MaterialTheme.colorScheme
     val displayName = stringResource(R.string.idle_stop_minutes, idleStopMinutes)
 
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .then(if (hazeState != null) Modifier.glassTile(hazeState, RoundedCornerShape(12.dp)) else Modifier),
-        colors = CardDefaults.cardColors(
-            containerColor = if (hazeState != null) Color.Transparent else colorScheme.surface
-        ),
-        shape = RoundedCornerShape(12.dp)
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = colorScheme.surface)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(
@@ -781,21 +723,12 @@ fun SettingsItem(
     title: String,
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     onClick: () -> Unit,
-    isDestructive: Boolean = false,
-    // Defaulted (unlike other screen-local conversions in this file) because this
-    // composable is also called from AnalyticsScreen.kt, which is out of scope for
-    // this pass and still expects the un-glassed default appearance.
-    hazeState: HazeState? = null
+    isDestructive: Boolean = false
 ) {
     val colorScheme = MaterialTheme.colorScheme
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .then(if (hazeState != null) Modifier.glassTile(hazeState, RoundedCornerShape(12.dp)) else Modifier),
-        colors = CardDefaults.cardColors(
-            containerColor = if (hazeState != null) Color.Transparent else colorScheme.surface
-        ),
-        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = colorScheme.surface),
         onClick = onClick
     ) {
         Row(
@@ -1691,8 +1624,7 @@ private fun AppearanceSection(
     currentLocale: String,
     onLocaleChange: (String) -> Unit,
     unitSystem: UnitSystem,
-    onUnitSystemChange: (UnitSystem) -> Unit,
-    hazeState: HazeState?
+    onUnitSystemChange: (UnitSystem) -> Unit
 ) {
     val colorScheme = MaterialTheme.colorScheme
     var expanded by remember { mutableStateOf(false) }
@@ -1708,13 +1640,8 @@ private fun AppearanceSection(
     }
 
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .then(if (hazeState != null) Modifier.glassTile(hazeState, RoundedCornerShape(12.dp)) else Modifier),
-        colors = CardDefaults.cardColors(
-            containerColor = if (hazeState != null) Color.Transparent else colorScheme.surface
-        ),
-        shape = RoundedCornerShape(12.dp)
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = colorScheme.surface)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             ExpandableSectionHeader(
@@ -1876,20 +1803,14 @@ private fun NotificationsSection(
     dailyDigestEnabled: Boolean,
     onDailyDigestChange: (Boolean) -> Unit,
     monthlyStatementEnabled: Boolean,
-    onMonthlyStatementChange: (Boolean) -> Unit,
-    hazeState: HazeState?
+    onMonthlyStatementChange: (Boolean) -> Unit
 ) {
     val colorScheme = MaterialTheme.colorScheme
     var expanded by remember { mutableStateOf(false) }
 
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .then(if (hazeState != null) Modifier.glassTile(hazeState, RoundedCornerShape(12.dp)) else Modifier),
-        colors = CardDefaults.cardColors(
-            containerColor = if (hazeState != null) Color.Transparent else colorScheme.surface
-        ),
-        shape = RoundedCornerShape(12.dp)
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = colorScheme.surface)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             ExpandableSectionHeader(
@@ -2080,7 +2001,7 @@ private fun SectionDivider() {
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun PricingRegionCard(hazeState: HazeState?) {
+private fun PricingRegionCard() {
     val colorScheme = MaterialTheme.colorScheme
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -2109,13 +2030,8 @@ private fun PricingRegionCard(hazeState: HazeState?) {
     val selectedLabel = override?.let { countryName(it) } ?: autoLabel
 
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .then(if (hazeState != null) Modifier.glassTile(hazeState, RoundedCornerShape(12.dp)) else Modifier),
-        colors = CardDefaults.cardColors(
-            containerColor = if (hazeState != null) Color.Transparent else colorScheme.surface
-        ),
-        shape = RoundedCornerShape(12.dp)
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = colorScheme.surface)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(

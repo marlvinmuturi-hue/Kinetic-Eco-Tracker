@@ -38,8 +38,6 @@ import androidx.core.content.FileProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import com.google.firebase.auth.FirebaseUser
-import dev.chrisbanes.haze.HazeState
-import dev.chrisbanes.haze.haze
 import Kinetic_Eco.Tracker.R
 import Kinetic_Eco.Tracker.data.UnitSystem
 import Kinetic_Eco.Tracker.ui.utils.usesMetricDistance
@@ -51,8 +49,6 @@ import Kinetic_Eco.Tracker.data.TripRecord
 import Kinetic_Eco.Tracker.ui.theme.Amber500
 import Kinetic_Eco.Tracker.ui.theme.Green500
 import Kinetic_Eco.Tracker.ui.theme.Red500
-import Kinetic_Eco.Tracker.ui.theme.glassTile
-import Kinetic_Eco.Tracker.ui.theme.kineticGradientBackground
 import Kinetic_Eco.Tracker.ui.utils.format
 import Kinetic_Eco.Tracker.viewmodel.AnalyticsViewModel
 import Kinetic_Eco.Tracker.viewmodel.ProfileViewModel
@@ -75,12 +71,6 @@ fun ProfileScreen(
     val context = LocalContext.current
     val activity = context as? ComponentActivity
     val userId = user?.uid ?: ""
-
-    // Frosted-glass backdrop (dark theme only — see Glass.kt/Theme.kt): a gradient
-    // layer marked as the haze source, with the scrollable content's glassTile
-    // cards drawn on top of it. In light theme, hazeState stays null and every
-    // card below falls back to its original flat MaterialTheme surface color.
-    val hazeState = remember { HazeState() }
 
     val allSessions by viewModel.getAllSessions(userId).collectAsStateWithLifecycle(initialValue = emptyList())
     val aggregatedStats = viewModel.getAggregatedStats(allSessions)
@@ -161,20 +151,10 @@ fun ProfileScreen(
     val displayName = profile?.displayName?.takeIf { it.isNotBlank() }
     val fallbackName = user?.email ?: stringResource(R.string.not_signed_in)
 
-    Box(modifier = Modifier.fillMaxSize()) {
-    if (hazeState != null) {
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .kineticGradientBackground()
-                .haze(state = hazeState)
-        )
-    }
-
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .then(if (hazeState == null) Modifier.background(colorScheme.background) else Modifier)
+            .background(colorScheme.background)
             .padding(16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
@@ -188,15 +168,10 @@ fun ProfileScreen(
         }
 
         item {
-            val profileCardShape = RoundedCornerShape(16.dp)
             Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .then(if (hazeState != null) Modifier.glassTile(hazeState, profileCardShape) else Modifier),
-                colors = CardDefaults.cardColors(
-                    containerColor = if (hazeState != null) Color.Transparent else colorScheme.surface
-                ),
-                shape = profileCardShape
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = colorScheme.surface),
+                shape = RoundedCornerShape(16.dp)
             ) {
                 Column(
                     modifier = Modifier.padding(16.dp),
@@ -325,8 +300,7 @@ fun ProfileScreen(
                     icon = Icons.AutoMirrored.Filled.List,
                     color = colorScheme.tertiary,
                     modifier = Modifier.weight(1f),
-                    onClick = onSessionsClick,
-                    hazeState = hazeState
+                    onClick = onSessionsClick
                 )
                 StatCard(
                     title = stringResource(R.string.total_distance),
@@ -337,8 +311,7 @@ fun ProfileScreen(
                     },
                     icon = Icons.Default.Straighten,
                     color = colorScheme.secondary,
-                    modifier = Modifier.weight(1f),
-                    hazeState = hazeState
+                    modifier = Modifier.weight(1f)
                 )
             }
         }
@@ -350,8 +323,7 @@ fun ProfileScreen(
                 iconPainter = painterResource(R.drawable.ic_co2_carbon_neutral),
                 color = colorScheme.secondary,
                 modifier = Modifier.fillMaxWidth(),
-                emphasize = true,
-                hazeState = hazeState
+                emphasize = true
             )
         }
 
@@ -367,8 +339,7 @@ fun ProfileScreen(
                             value = String.format("%,d", aggregatedStats.totalSteps),
                             icon = Icons.AutoMirrored.Filled.DirectionsWalk,
                             color = Amber500,
-                            modifier = Modifier.weight(1f),
-                            hazeState = hazeState
+                            modifier = Modifier.weight(1f)
                         )
                     }
                     if (aggregatedStats.co2Emissions > 0) {
@@ -377,8 +348,7 @@ fun ProfileScreen(
                             value = "${aggregatedStats.co2Emissions.format(3)} kg",
                             icon = Icons.Default.LocalFireDepartment,
                             color = Red500,
-                            modifier = Modifier.weight(1f),
-                            hazeState = hazeState
+                            modifier = Modifier.weight(1f)
                         )
                     }
                 }
@@ -386,7 +356,7 @@ fun ProfileScreen(
         }
 
         item {
-            TravelRecapCard(recap = travelRecap, isLoading = travelRecapLoading, hazeState = hazeState)
+            TravelRecapCard(recap = travelRecap, isLoading = travelRecapLoading)
         }
 
         item {
@@ -396,7 +366,6 @@ fun ProfileScreen(
             VehicleProfileSection(onSave = onVehicleProfileSave)
         }
     }
-    } // end backdrop Box
 
     if (showEditDialog) {
         var nameField by remember(showEditDialog) { mutableStateOf(displayName ?: "") }
@@ -523,18 +492,13 @@ fun ProfileScreen(
 }
 
 @Composable
-private fun TravelRecapCard(recap: TravelRecap?, isLoading: Boolean, hazeState: HazeState?) {
+private fun TravelRecapCard(recap: TravelRecap?, isLoading: Boolean) {
     val colorScheme = MaterialTheme.colorScheme
-    val recapShape = RoundedCornerShape(16.dp)
 
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .then(if (hazeState != null) Modifier.glassTile(hazeState, recapShape) else Modifier),
-        shape = recapShape,
-        colors = CardDefaults.cardColors(
-            containerColor = if (hazeState != null) Color.Transparent else colorScheme.surfaceVariant
-        )
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = colorScheme.surfaceVariant)
     ) {
         Box(
             modifier = Modifier

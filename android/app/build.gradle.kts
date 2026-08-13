@@ -35,8 +35,8 @@ android {
         applicationId = "com.kineticecotracker"
         minSdk = 24
         targetSdk = 36
-        versionCode = 31
-        versionName = "V1.9.18"
+        versionCode = 32
+        versionName = "V1.9.19"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "FUNCTIONS_BASE_URL", "\"https://us-central1-gen-lang-client-0114974661.cloudfunctions.net\"")
@@ -144,17 +144,6 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
     implementation("androidx.activity:activity-compose:1.8.2")
     debugImplementation("androidx.compose.ui:ui-tooling")
-
-    // Haze — backdrop blur ("frosted glass") for Compose. Blurs on API 31+, falls
-    // back to a flat translucent tint automatically on older devices.
-    // Pinned to 0.7.3 (not latest) deliberately: it depends on compose-ui/foundation
-    // 1.6.11, a tiny patch bump from this project's 1.6.1. Newer Haze releases pull
-    // compose-foundation up to ~1.10.x, which forces a wide version jump that broke
-    // navigation-compose 2.7.6's AnimatedContent-based screen transitions at runtime
-    // ("LayoutNode should be attached to an owner" crash) — do not casually bump this
-    // without also auditing/upgrading navigation-compose, activity-compose, and the
-    // lifecycle-*-compose versions together.
-    implementation("dev.chrisbanes.haze:haze:0.7.3")
 
     // Navigation Compose
     implementation("androidx.navigation:navigation-compose:2.7.6")

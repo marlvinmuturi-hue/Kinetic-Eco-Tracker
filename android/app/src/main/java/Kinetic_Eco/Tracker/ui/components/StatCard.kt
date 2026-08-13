@@ -13,13 +13,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import dev.chrisbanes.haze.HazeState
-import Kinetic_Eco.Tracker.ui.theme.glassTile
-
-// hazeState defaults to null everywhere in this file: screens that don't paint
-// the gradient backdrop (Analytics, SessionDetail, Tracker) get the original
-// flat containerColor unchanged. Only Dashboard/Profile/Settings pass a real
-// HazeState, which is what switches these cards to the frosted-glass look.
 
 @Composable
 fun StatCard(
@@ -29,18 +22,17 @@ fun StatCard(
     color: Color,
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
-    emphasize: Boolean = false,
-    hazeState: HazeState? = null
+    emphasize: Boolean = false
 ) {
-    val shape = CardDefaults.shape
     Card(
-        modifier = modifier
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
-            .then(if (hazeState != null) Modifier.glassTile(hazeState, shape) else Modifier),
-        shape = shape,
-        colors = CardDefaults.cardColors(
-            containerColor = if (hazeState != null) Color.Transparent else MaterialTheme.colorScheme.surface
-        )
+        modifier = modifier.then(
+            if (onClick != null) {
+                Modifier.clickable(onClick = onClick)
+            } else {
+                Modifier
+            }
+        ),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
         Column(
             modifier = Modifier.padding(if (emphasize) 20.dp else 16.dp)
@@ -82,18 +74,17 @@ fun StatCard(
     color: Color,
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
-    emphasize: Boolean = false,
-    hazeState: HazeState? = null
+    emphasize: Boolean = false
 ) {
-    val shape = CardDefaults.shape
     Card(
-        modifier = modifier
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
-            .then(if (hazeState != null) Modifier.glassTile(hazeState, shape) else Modifier),
-        shape = shape,
-        colors = CardDefaults.cardColors(
-            containerColor = if (hazeState != null) Color.Transparent else MaterialTheme.colorScheme.surface
-        )
+        modifier = modifier.then(
+            if (onClick != null) {
+                Modifier.clickable(onClick = onClick)
+            } else {
+                Modifier
+            }
+        ),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
         Column(
             modifier = Modifier.padding(if (emphasize) 20.dp else 16.dp)
@@ -134,18 +125,17 @@ fun StatCardCompact(
     icon: ImageVector,
     color: Color,
     modifier: Modifier = Modifier,
-    onClick: (() -> Unit)? = null,
-    hazeState: HazeState? = null
+    onClick: (() -> Unit)? = null
 ) {
-    val shape = CardDefaults.shape
     Card(
-        modifier = modifier
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
-            .then(if (hazeState != null) Modifier.glassTile(hazeState, shape) else Modifier),
-        shape = shape,
-        colors = CardDefaults.cardColors(
-            containerColor = if (hazeState != null) Color.Transparent else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-        )
+        modifier = modifier.then(
+            if (onClick != null) {
+                Modifier.clickable(onClick = onClick)
+            } else {
+                Modifier
+            }
+        ),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
     ) {
         Row(
             modifier = Modifier
@@ -187,18 +177,17 @@ fun StatCardCompact(
     iconPainter: Painter,
     color: Color,
     modifier: Modifier = Modifier,
-    onClick: (() -> Unit)? = null,
-    hazeState: HazeState? = null
+    onClick: (() -> Unit)? = null
 ) {
-    val shape = CardDefaults.shape
     Card(
-        modifier = modifier
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
-            .then(if (hazeState != null) Modifier.glassTile(hazeState, shape) else Modifier),
-        shape = shape,
-        colors = CardDefaults.cardColors(
-            containerColor = if (hazeState != null) Color.Transparent else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
-        )
+        modifier = modifier.then(
+            if (onClick != null) {
+                Modifier.clickable(onClick = onClick)
+            } else {
+                Modifier
+            }
+        ),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
     ) {
         Row(
             modifier = Modifier

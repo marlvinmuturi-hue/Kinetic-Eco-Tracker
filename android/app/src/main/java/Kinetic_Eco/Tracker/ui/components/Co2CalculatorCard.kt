@@ -48,8 +48,6 @@ import Kinetic_Eco.Tracker.services.EnergyPriceRepository
 import Kinetic_Eco.Tracker.services.FuelLogRepository
 import Kinetic_Eco.Tracker.services.UserPreferencesManager
 import Kinetic_Eco.Tracker.ui.utils.usesMetricDistance
-import dev.chrisbanes.haze.HazeState
-import Kinetic_Eco.Tracker.ui.theme.glassTile
 import kotlin.math.abs
 
 /**
@@ -73,8 +71,7 @@ fun Co2CalculatorCard(
     unitSystem: UnitSystem,
     vehicleProfile: VehicleProfile,
     modifier: Modifier = Modifier,
-    onLogFuel: (() -> Unit)? = null,
-    hazeState: HazeState? = null
+    onLogFuel: (() -> Unit)? = null
 ) {
     val colorScheme = MaterialTheme.colorScheme
     var selectedActivity by rememberSaveable { mutableStateOf(ActivityType.DRIVING) }
@@ -100,15 +97,10 @@ fun Co2CalculatorCard(
         Co2Calculator.estimate(selectedActivity, it, effectiveProfile)
     }
 
-    val shape = RoundedCornerShape(16.dp)
     Card(
-        modifier = modifier
-            .fillMaxWidth()
-            .then(if (hazeState != null) Modifier.glassTile(hazeState, shape) else Modifier),
-        colors = CardDefaults.cardColors(
-            containerColor = if (hazeState != null) Color.Transparent else colorScheme.surfaceVariant
-        ),
-        shape = shape
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = colorScheme.surfaceVariant),
+        shape = RoundedCornerShape(16.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {

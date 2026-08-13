@@ -16,7 +16,6 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.painter.Painter
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
@@ -45,8 +44,6 @@ import Kinetic_Eco.Tracker.ui.utils.formatTime
 import Kinetic_Eco.Tracker.ui.utils.usesMetricDistance
 import Kinetic_Eco.Tracker.viewmodel.AnalyticsViewModel
 import Kinetic_Eco.Tracker.viewmodel.AIAnalysisState
-import dev.chrisbanes.haze.HazeState
-import dev.chrisbanes.haze.haze
 import java.time.LocalDate
 import java.time.ZoneId
 
@@ -81,96 +78,71 @@ fun AnalyticsScreen(
         }
     }
 
-    // Frosted-glass backdrop (dark theme only — see Glass.kt/Theme.kt): a gradient
-    // layer marked as the haze source, with the scrollable content's glassTile
-    // cards drawn on top of it. In light theme, hazeState stays null and every
-    // card below falls back to its original flat MaterialTheme surface color.
-    val hazeState = remember { HazeState() }
-
     // Column + verticalScroll (not LazyColumn): only a few sections, and LazyColumn
     // disposes off-screen items — recycling Osmdroid MapView + heavy composables causes
     // native crashes when scrolling back up.
     val scrollState = rememberScrollState()
-
-    Box(modifier = Modifier.fillMaxSize()) {
-        if (hazeState != null) {
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .kineticGradientBackground()
-                    .haze(state = hazeState)
-            )
-        }
-
-        Column(
-            modifier = Modifier
-                .fillMaxSize()
-                .then(if (hazeState == null) Modifier.background(colorScheme.background) else Modifier)
-                .verticalScroll(scrollState)
-                .padding(16.dp),
-            verticalArrangement = Arrangement.spacedBy(12.dp)
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(colorScheme.background)
+            .verticalScroll(scrollState)
+            .padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = colorScheme.surface),
+            shape = RoundedCornerShape(12.dp)
         ) {
-            Card(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .then(if (hazeState != null) Modifier.glassTile(hazeState, RoundedCornerShape(12.dp)) else Modifier),
-                colors = CardDefaults.cardColors(
-                    containerColor = if (hazeState != null) Color.Transparent else colorScheme.surface
-                ),
-                shape = RoundedCornerShape(12.dp)
-            ) {
-                Column(modifier = Modifier.padding(12.dp)) {
-                    Text(
-                        text = stringResource(R.string.route),
-                        style = MaterialTheme.typography.titleMedium,
-                        color = colorScheme.onSurface,
-                        modifier = Modifier.padding(bottom = 8.dp)
-                    )
-                    RouteMapView(
-                        routePath = displayStats.routePath,
-                        modifier = Modifier.fillMaxWidth(),
-                        heightDp = 220
-                    )
-                }
-            }
-
-            CollapsibleCard(
-                title = stringResource(R.string.ai_powered_analysis),
-                icon = Icons.Default.AutoAwesome,
-                expanded = aiExpanded,
-                onToggle = { aiExpanded = !aiExpanded },
-                hazeState = hazeState
-            ) {
-                AIAnalysisContent(viewModel = viewModel, userId = userId)
-            }
-
-            CollapsibleCard(
-                title = stringResource(R.string.session_summary),
-                iconPainter = painterResource(R.drawable.ic_session_summary),
-                expanded = sessionExpanded,
-                onToggle = { sessionExpanded = !sessionExpanded },
-                hazeState = hazeState
-            ) {
-                SessionSummaryContentInner(
-                    displayStats = displayStats,
-                    unitSystem = unitSystem,
-                    energyUnit = energyUnit
+            Column(modifier = Modifier.padding(12.dp)) {
+                Text(
+                    text = stringResource(R.string.route),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = colorScheme.onSurface,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+                RouteMapView(
+                    routePath = displayStats.routePath,
+                    modifier = Modifier.fillMaxWidth(),
+                    heightDp = 220
                 )
             }
+        }
 
-            ActivityTimeOfDayLineChart(
-                bucketMs = timeOfDayBuckets,
-                selectedDateKey = selectedDayKey,
-                onDateKeyChange = { selectedDayKey = it }
-            )
+        CollapsibleCard(
+            title = stringResource(R.string.ai_powered_analysis),
+            icon = Icons.Default.AutoAwesome,
+            expanded = aiExpanded,
+            onToggle = { aiExpanded = !aiExpanded }
+        ) {
+            AIAnalysisContent(viewModel = viewModel, userId = userId)
+        }
 
-            SettingsItem(
-                title = stringResource(R.string.send_feedback),
-                icon = Icons.Default.Feedback,
-                onClick = onNavigateToFeedback,
-                hazeState = hazeState
+        CollapsibleCard(
+            title = stringResource(R.string.session_summary),
+            iconPainter = painterResource(R.drawable.ic_session_summary),
+            expanded = sessionExpanded,
+            onToggle = { sessionExpanded = !sessionExpanded }
+        ) {
+            SessionSummaryContentInner(
+                displayStats = displayStats,
+                unitSystem = unitSystem,
+                energyUnit = energyUnit
             )
         }
+
+        ActivityTimeOfDayLineChart(
+            bucketMs = timeOfDayBuckets,
+            selectedDateKey = selectedDayKey,
+            onDateKeyChange = { selectedDayKey = it }
+        )
+
+        SettingsItem(
+            title = stringResource(R.string.send_feedback),
+            icon = Icons.Default.Feedback,
+            onClick = onNavigateToFeedback
+        )
     }
 }
 
@@ -180,19 +152,13 @@ private fun CollapsibleCard(
     iconPainter: Painter,
     expanded: Boolean,
     onToggle: () -> Unit,
-    hazeState: HazeState?,
     content: @Composable ColumnScope.() -> Unit
 ) {
     val colorScheme = MaterialTheme.colorScheme
-    val shape = RoundedCornerShape(12.dp)
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .then(if (hazeState != null) Modifier.glassTile(hazeState, shape) else Modifier),
-        colors = CardDefaults.cardColors(
-            containerColor = if (hazeState != null) Color.Transparent else colorScheme.surface
-        ),
-        shape = shape
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = colorScheme.surface),
+        shape = RoundedCornerShape(12.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(
@@ -249,19 +215,13 @@ private fun CollapsibleCard(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     expanded: Boolean,
     onToggle: () -> Unit,
-    hazeState: HazeState?,
     content: @Composable ColumnScope.() -> Unit
 ) {
     val colorScheme = MaterialTheme.colorScheme
-    val shape = RoundedCornerShape(12.dp)
     Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .then(if (hazeState != null) Modifier.glassTile(hazeState, shape) else Modifier),
-        colors = CardDefaults.cardColors(
-            containerColor = if (hazeState != null) Color.Transparent else colorScheme.surface
-        ),
-        shape = shape
+        modifier = Modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(containerColor = colorScheme.surface),
+        shape = RoundedCornerShape(12.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(

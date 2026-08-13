@@ -29,11 +29,6 @@ private tailrec fun Context.findActivity(): Activity? = when (this) {
 // A single fixed accent (Emerald500, #10B981) drives buttons / FAB / selected
 // chips / progress indicators in both modes — there is no per-user accent
 // picker. Material You / dynamic color is intentionally NOT used.
-//
-// Dashboard, Profile, and Settings opt out of the flat dark background above:
-// they paint the gradient + frosted-glass tiles defined in Glass.kt instead
-// (dark theme only). Everything else — dialogs, other screens, light theme —
-// keeps the flat background/surface colors below.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /** Near-black page background for dark mode. */

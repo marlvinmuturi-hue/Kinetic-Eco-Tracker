@@ -1,6 +1,12 @@
-# V1.9.18 — versionCode 31 (brief)
+# V1.9.19 — versionCode 32 (brief)
 
 Full detail: `RELEASE_NOTES.md`
+
+## New in 32
+- Frosted-glass look from 31 reverted; Glass.kt deleted, Haze dependency dropped.
+- Theme, 6 screens and 3 card components back to their versionCode 30 source.
+- All leaderboard fixes from 31 retained.
+- 31 was uploaded, so its versionCode is spent — this is 32, not a re-upload.
 
 ## New in 31
 - Settings leaderboard switch was completely unresponsive — fixed (three causes: a loading
@@ -12,8 +18,8 @@ Full detail: `RELEASE_NOTES.md`
 - Toggle verified on device; the read-failure branch is compile-verified only.
 
 ## Ship rules
-- 31 is the only release to promote. Production is on 20; users jump 20 → 31.
-- 21–30 were build/test iterations. Do not promote any of them.
+- 32 is the only release to promote. Production is on 20; users jump 20 → 32.
+- 21–31 were build/test iterations. Do not promote any of them.
 - 23 crashes on launch (`PendingPurchasesParams` missing `enableOneTimeProducts()`).
 - Room v8 → v9 has no downgrade fallback — irreversible once a device updates.
 - Internal track first, then production as a staged rollout.
@@ -66,5 +72,5 @@ Full detail: `RELEASE_NOTES.md`
 
 ---
 
-_versionName `V1.9.18`, versionCode `31`, targetSdk 36, minSdk 24. Artifact:
+_versionName `V1.9.19`, versionCode `32`, targetSdk 36, minSdk 24. Artifact:
 `app/build/outputs/bundle/release/app-release.aab`._

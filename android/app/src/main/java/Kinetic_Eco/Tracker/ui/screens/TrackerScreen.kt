@@ -65,6 +65,8 @@ import Kinetic_Eco.Tracker.ui.utils.formatSpeedMax
 import Kinetic_Eco.Tracker.ui.utils.formatTime
 import Kinetic_Eco.Tracker.ui.utils.usesMetricDistance
 import Kinetic_Eco.Tracker.viewmodel.TrackerViewModel
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.haze
 import kotlinx.coroutines.delay
 
 /** How long the "Electric vehicle?" prompt stays on screen before dismissing itself. */
@@ -172,13 +174,21 @@ fun TrackerScreen(
     // Show steps for Walking and Running activities (show even if 0 to indicate tracking)
     val isWalkingOrRunning = currentActivity == ActivityType.WALKING || currentActivity == ActivityType.RUNNING
     val colorScheme = MaterialTheme.colorScheme
-    
+
+    // Haze source for the frosted-glass tiles below — TrackerScreen keeps its own
+    // bespoke DynamicTrackerBackground (time-of-day gradient tinted by activity)
+    // rather than the shared kineticGradientBackground() used on other screens; we
+    // just mark that existing background as the blur source for glassTile().
+    val hazeState = remember { HazeState() }
+
     Box(modifier = Modifier.fillMaxSize()) {
         // Animated, code-driven background: time-of-day base with a tint
         // that follows the current activity. Replaces the old looped MP4.
         DynamicTrackerBackground(
             currentActivity = currentActivity,
-            modifier = Modifier.matchParentSize()
+            modifier = Modifier
+                .matchParentSize()
+                .haze(state = hazeState)
         )
         // Soft darken at the bottom only — keeps the dial/stats legible
         // without flattening the gradient like the old full-screen scrim did.
@@ -206,13 +216,16 @@ fun TrackerScreen(
             ) {
         // Error message
         errorMessage?.let { error ->
+            val errorCardShape = RoundedCornerShape(16.dp)
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(bottom = 16.dp),
+                    .padding(bottom = 16.dp)
+                    .glassTile(hazeState, errorCardShape),
                 colors = CardDefaults.cardColors(
-                    containerColor = colorScheme.surfaceVariant.copy(alpha = 0.72f)
-                )
+                    containerColor = Color.Transparent
+                ),
+                shape = errorCardShape
             ) {
                 Text(
                     text = error,
@@ -229,9 +242,10 @@ fun TrackerScreen(
             speedDisplay = speedDisplay,
             activity = currentActivity,
             isTracking = isTracking,
-            manualMode = manualActivityMode != null
+            manualMode = manualActivityMode != null,
+            hazeState = hazeState
         )
-        
+
         Spacer(modifier = Modifier.height(24.dp))
 
         // Stats Row 1: Duration / Distance / Steps (walking/running only)
@@ -239,13 +253,14 @@ fun TrackerScreen(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceEvenly
         ) {
-            StatCard(stringResource(R.string.duration), formatTime(sessionDuration), modifier = Modifier.weight(1f))
-            StatCard(stringResource(R.string.distance), distanceDisplay, modifier = Modifier.weight(1f))
+            StatCard(stringResource(R.string.duration), formatTime(sessionDuration), modifier = Modifier.weight(1f), hazeState = hazeState)
+            StatCard(stringResource(R.string.distance), distanceDisplay, modifier = Modifier.weight(1f), hazeState = hazeState)
             if (isWalkingOrRunning) {
                 StatCard(
                     label = stringResource(R.string.steps),
                     value = sessionSteps.toString(),
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.weight(1f),
+                    hazeState = hazeState
                 )
             }
         }
@@ -253,11 +268,15 @@ fun TrackerScreen(
         // Manual mode indicator
         manualActivityMode?.let { mode ->
             Spacer(modifier = Modifier.height(16.dp))
+            val manualModeCardShape = RoundedCornerShape(16.dp)
             Card(
                 colors = CardDefaults.cardColors(
-                    containerColor = colorScheme.surfaceVariant.copy(alpha = 0.55f)
+                    containerColor = Color.Transparent
                 ),
-                modifier = Modifier.fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .glassTile(hazeState, manualModeCardShape),
+                shape = manualModeCardShape
             ) {
                 Text(
                     text = stringResource(R.string.manual_mode, stringResource(mode.toActivityStringResId())),
@@ -365,7 +384,8 @@ fun TrackerScreen(
         TrackerActivityStrip(
             manualActivityMode = manualActivityMode,
             onActivitySelected = { viewModel.setManualActivityMode(it) },
-            onAutoSelected = { viewModel.setManualActivityMode(null) }
+            onAutoSelected = { viewModel.setManualActivityMode(null) },
+            hazeState = hazeState
         )
         } // end outer Column
     }
@@ -524,7 +544,8 @@ private val trackerActivityOptions = listOf(
 private fun TrackerActivityStrip(
     manualActivityMode: ActivityType?,
     onActivitySelected: (ActivityType) -> Unit,
-    onAutoSelected: () -> Unit
+    onAutoSelected: () -> Unit,
+    hazeState: HazeState
 ) {
     val colorScheme = MaterialTheme.colorScheme
     var expanded by rememberSaveable { mutableStateOf(false) }
@@ -537,10 +558,11 @@ private fun TrackerActivityStrip(
     val firstRow = trackerActivityOptions.take(3)
     val restRows  = trackerActivityOptions.drop(3).chunked(3)
 
+    val stripShape = RoundedCornerShape(topStart = 20.dp, topEnd = 20.dp)
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .background(colorScheme.surface.copy(alpha = 0.88f))
+            .glassTile(hazeState, stripShape)
     ) {
         // Drag handle — tap or swipe to expand / collapse
         Box(
@@ -914,7 +936,8 @@ fun SpeedometerCircle(
     speedDisplay: String,
     activity: ActivityType,
     isTracking: Boolean,
-    manualMode: Boolean
+    manualMode: Boolean,
+    hazeState: HazeState
 ) {
     val colorScheme = MaterialTheme.colorScheme
     val ringColor = colorScheme.outline.copy(alpha = if (isTracking) 0.9f else 0.52f)
@@ -959,7 +982,7 @@ fun SpeedometerCircle(
             }
         }
 
-        // Main circle (semi-transparent to show video background)
+        // Main circle — frosted glass over the dynamic background
         Box(
             modifier = Modifier
                 .size(256.dp)
@@ -968,10 +991,7 @@ fun SpeedometerCircle(
                     color = ringColor.copy(alpha = 0.92f),
                     shape = CircleShape
                 )
-                .background(
-                    color = colorScheme.surface.copy(alpha = 0.75f),
-                    shape = CircleShape
-                ),
+                .glassTile(hazeState, CircleShape),
             contentAlignment = Alignment.Center
         ) {
             Column(
@@ -1040,14 +1060,19 @@ fun StatCard(
     label: String,
     value: String,
     modifier: Modifier = Modifier,
+    hazeState: HazeState,
     highlightColor: androidx.compose.ui.graphics.Color? = null
 ) {
     val colorScheme = MaterialTheme.colorScheme
+    val statCardShape = RoundedCornerShape(16.dp)
     Card(
-        modifier = modifier.padding(horizontal = 2.dp),
+        modifier = modifier
+            .padding(horizontal = 2.dp)
+            .glassTile(hazeState, statCardShape),
         colors = CardDefaults.cardColors(
-            containerColor = colorScheme.surface.copy(alpha = 0.75f)
+            containerColor = Color.Transparent
         ),
+        shape = statCardShape,
         border = if (highlightColor != null) {
             androidx.compose.foundation.BorderStroke(1.dp, highlightColor.copy(alpha = 0.5f))
         } else null

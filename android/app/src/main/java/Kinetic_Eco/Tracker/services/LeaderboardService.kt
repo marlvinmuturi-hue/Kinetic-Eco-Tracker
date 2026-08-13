@@ -74,30 +74,36 @@ class LeaderboardService {
         .readTimeout(30, TimeUnit.SECONDS)
         .build()
 
-    /** Check if user has opted in (from Firestore users doc). */
-    suspend fun isOptedIn(userId: String): Boolean = withContext(Dispatchers.IO) {
-        try {
-            val doc = firestore.collection("users").document(userId).get().await()
-            (doc.data?.get("leaderboardOptIn") as? Boolean) ?: false
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to check opt-in", e)
-            false
-        }
-    }
+    /**
+     * Check if user has opted in (from Firestore users doc). A failed read reports `false`,
+     * which is safe **only** for callers that do nothing when false (e.g. skipping an entry
+     * refresh). Anything that acts on the answer — or displays it — must use [getOptInStatus]
+     * and handle the failure case explicitly.
+     */
+    suspend fun isOptedIn(userId: String): Boolean =
+        getOptInStatus(userId).getOrNull() ?: false
 
     /**
      * Returns the raw opt-in flag:
-     *   true  = user explicitly opted in
-     *   false = user explicitly opted out
-     *   null  = field has never been written (new user, no preference set)
+     *   success(true)  = user explicitly opted in
+     *   success(false) = user explicitly opted out
+     *   success(null)  = field has never been written (new user, no preference set)
+     *   failure        = the read did not complete (offline, permission, transient)
+     *
+     * The failure case must stay distinct from `success(null)`. This previously returned a bare
+     * `Boolean?` and mapped read errors onto `null`, so a launch with no connectivity was
+     * indistinguishable from a brand-new account — and `autoOptInOnLogin` responded by opting the
+     * user in, silently republishing someone who had explicitly opted out. Observed on device:
+     * "Failed to get document because the client is offline" at 09:01:47 was followed by
+     * "Leaderboard opt-in complete" at 09:01:54.
      */
-    suspend fun getOptInStatus(userId: String): Boolean? = withContext(Dispatchers.IO) {
+    suspend fun getOptInStatus(userId: String): Result<Boolean?> = withContext(Dispatchers.IO) {
         try {
             val doc = firestore.collection("users").document(userId).get().await()
-            doc.data?.get("leaderboardOptIn") as? Boolean
+            Result.success(doc.data?.get("leaderboardOptIn") as? Boolean)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to get opt-in status", e)
-            null
+            Result.failure(e)
         }
     }
 

@@ -307,8 +307,16 @@ fun AppNavGraph(
         // ── Settings (full screen, reached via floating icon on Dashboard / Analysis) ───
         fadeComposable(Screen.Settings.route) { navBackStackEntry ->
             val leaderboardOptedIn by profileViewModel.leaderboardOptedIn.collectAsStateWithLifecycle()
-            val leaderboardLoading by profileViewModel.leaderboardLoading.collectAsStateWithLifecycle()
+            val leaderboardOptInBusy by profileViewModel.leaderboardOptInBusy.collectAsStateWithLifecycle()
             val leaderboardError by profileViewModel.errorMessage.collectAsStateWithLifecycle()
+
+            // Read the stored preference when Settings opens. Without this the switch showed
+            // whatever `autoOptInOnLogin` last left in memory, collapsing an unresolved null to
+            // "off" — so an opted-in user could be shown an off switch, and tapping it to "turn on"
+            // re-ran an opt-in that was already true.
+            LaunchedEffect(currentUser?.uid) {
+                currentUser?.uid?.takeIf { it.isNotBlank() }?.let { profileViewModel.loadLeaderboardOptIn(it) }
+            }
 
             val electricRoadUser = remember(navBackStackEntry.id) {
                 userPrefsManager.loadVehicleProfile().primaryFuelType == PrimaryFuelType.ELECTRIC
@@ -339,9 +347,14 @@ fun AppNavGraph(
                 appVersion = BuildConfig.VERSION_NAME,
                 leaderboardOptIn = leaderboardOptedIn ?: false,
                 onLeaderboardOptInChange = { enabled ->
-                    currentUser?.uid?.let { profileViewModel.setLeaderboardOptIn(it, enabled) }
+                    val uid = currentUser?.uid
+                    // Was `uid?.let { … }`, which swallowed the tap when auth had not resolved:
+                    // no write, no error, and a controlled Switch that cannot move on its own.
+                    // A dead control needs to say why it is dead.
+                    if (uid.isNullOrBlank()) profileViewModel.showLeaderboardSignInRequired()
+                    else profileViewModel.setLeaderboardOptIn(uid, enabled)
                 },
-                leaderboardLoading = leaderboardLoading,
+                leaderboardOptInBusy = leaderboardOptInBusy,
                 leaderboardError = leaderboardError,
                 onLeaderboardErrorDismiss = { profileViewModel.clearError() },
                 electricRoadUser = electricRoadUser,

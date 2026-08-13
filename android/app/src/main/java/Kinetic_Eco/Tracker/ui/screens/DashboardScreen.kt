@@ -67,6 +67,10 @@ import Kinetic_Eco.Tracker.data.UnitSystem
 import Kinetic_Eco.Tracker.services.LeaderboardPeriod
 import Kinetic_Eco.Tracker.services.UserPreferencesManager
 import Kinetic_Eco.Tracker.ui.theme.Green500
+import Kinetic_Eco.Tracker.ui.theme.glassTile
+import Kinetic_Eco.Tracker.ui.theme.kineticGradientBackground
+import dev.chrisbanes.haze.HazeState
+import dev.chrisbanes.haze.haze
 import Kinetic_Eco.Tracker.ui.utils.format
 import Kinetic_Eco.Tracker.ui.utils.usesMetricDistance
 import Kinetic_Eco.Tracker.ui.utils.ShareUtils
@@ -310,10 +314,26 @@ fun DashboardScreen(
     }
     val showFirstTripPrompt = allSessions.isEmpty() && !firstTripPromptDismissed
 
+    // Frosted-glass backdrop (dark theme only — see Glass.kt/Theme.kt): a gradient
+    // layer marked as the haze source, with the scrollable content's glassTile
+    // cards drawn on top of it. In light theme, hazeState stays null and every
+    // card below falls back to its original flat MaterialTheme surface color.
+    val hazeState = remember { HazeState() }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+    if (hazeState != null) {
+        Box(
+            modifier = Modifier
+                .fillMaxSize()
+                .kineticGradientBackground()
+                .haze(state = hazeState)
+        )
+    }
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .background(colorScheme.background)
+            .then(if (hazeState == null) Modifier.background(colorScheme.background) else Modifier)
             .padding(horizontal = 16.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
@@ -423,7 +443,8 @@ fun DashboardScreen(
                 greenStreakDays = greenStreakDays,
                 weeklyGoalKg = weeklyGoalKg,
                 onAdjustGoal = { showGoalDialog = true },
-                onClick = onAnalysisClick
+                onClick = onAnalysisClick,
+                hazeState = hazeState
             )
         }
 
@@ -434,7 +455,8 @@ fun DashboardScreen(
         item {
             AIInsightCard(
                 analysis = aiAnalysis,
-                onClick = onAnalysisClick
+                onClick = onAnalysisClick,
+                hazeState = hazeState
             )
         }
 
@@ -447,7 +469,8 @@ fun DashboardScreen(
                 onSettingsClick = onSettingsClick,
                 onReact = { targetUserId, emojiCode ->
                     profileViewModel.reactToEntry(userId, targetUserId, emojiCode)
-                }
+                },
+                hazeState = hazeState
             )
         }
 
@@ -455,12 +478,14 @@ fun DashboardScreen(
         item {
             AchievementBadgesCard(
                 achievements = achievements,
-                onBadgeClick = { selectedBadge = it }
+                onBadgeClick = { selectedBadge = it },
+                hazeState = hazeState
             )
         }
 
         item { Spacer(Modifier.height(80.dp)) }
     }
+    } // end backdrop Box
 
     // ── Achievement badge dialog (magnify + share) ──────────────────────────
     // A queued milestone celebration takes priority over a tapped badge. Both
@@ -576,7 +601,8 @@ private fun WeeklyReportHeroCard(
     greenStreakDays: Int,
     weeklyGoalKg: Float,
     onAdjustGoal: () -> Unit,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    hazeState: HazeState?
 ) {
     val colorScheme = MaterialTheme.colorScheme
     var highlightsExpanded by remember { mutableStateOf(false) }
@@ -596,19 +622,23 @@ private fun WeeklyReportHeroCard(
     )
     val goalReached = co2SavedThisWeek + 0.005 >= weeklyGoalKg.toDouble()
     val ringColor = colorScheme.onSurface.copy(alpha = if (goalReached) 0.92f else 0.52f)
-
-    val gradient = Brush.verticalGradient(
-        colors = listOf(
-            colorScheme.surface,
-            colorScheme.surfaceVariant.copy(alpha = 0.9f)
-        )
-    )
+    val heroShape = RoundedCornerShape(20.dp)
 
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
-            .background(gradient)
+            .clip(heroShape)
+            .then(
+                if (hazeState != null) {
+                    Modifier.glassTile(hazeState, heroShape)
+                } else {
+                    Modifier.background(
+                        Brush.verticalGradient(
+                            colors = listOf(colorScheme.surface, colorScheme.surfaceVariant.copy(alpha = 0.9f))
+                        )
+                    )
+                }
+            )
             .clickable(onClick = onClick)
             .padding(20.dp)
     ) {
@@ -1148,13 +1178,16 @@ private fun CompactStatCard(
     icon: ImageVector,
     accent: Color,
     deltaPct: Double?,
+    hazeState: HazeState?,
     modifier: Modifier = Modifier,
     invertDeltaPolarity: Boolean = false
 ) {
     val colorScheme = MaterialTheme.colorScheme
     Card(
-        modifier = modifier,
-        colors = CardDefaults.cardColors(containerColor = colorScheme.surfaceVariant),
+        modifier = modifier.then(if (hazeState != null) Modifier.glassTile(hazeState, RoundedCornerShape(14.dp)) else Modifier),
+        colors = CardDefaults.cardColors(
+            containerColor = if (hazeState != null) Color.Transparent else colorScheme.surfaceVariant
+        ),
         shape = RoundedCornerShape(14.dp)
     ) {
         Column(modifier = Modifier.padding(12.dp)) {
@@ -1219,7 +1252,8 @@ private fun CompactDeltaText(deltaPct: Double, invertPolarity: Boolean) {
 @Composable
 private fun AIInsightCard(
     analysis: Kinetic_Eco.Tracker.data.ActivityAnalysis?,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    hazeState: HazeState?
 ) {
     val colorScheme = MaterialTheme.colorScheme
     // Pick the first non-blank insight; fall back to the motivation line if
@@ -1231,8 +1265,11 @@ private fun AIInsightCard(
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick),
-        colors = CardDefaults.cardColors(containerColor = colorScheme.surfaceVariant),
+            .clickable(onClick = onClick)
+            .then(if (hazeState != null) Modifier.glassTile(hazeState, RoundedCornerShape(16.dp)) else Modifier),
+        colors = CardDefaults.cardColors(
+            containerColor = if (hazeState != null) Color.Transparent else colorScheme.surfaceVariant
+        ),
         shape = RoundedCornerShape(16.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -1296,12 +1333,17 @@ private fun LeaderboardOverviewCard(
     currentUserId: String,
     optedIn: Boolean,
     onSettingsClick: () -> Unit,
-    onReact: (targetUserId: String, emojiCode: String) -> Unit
+    onReact: (targetUserId: String, emojiCode: String) -> Unit,
+    hazeState: HazeState?
 ) {
     val colorScheme = MaterialTheme.colorScheme
     Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = colorScheme.surfaceVariant),
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(if (hazeState != null) Modifier.glassTile(hazeState, RoundedCornerShape(20.dp)) else Modifier),
+        colors = CardDefaults.cardColors(
+            containerColor = if (hazeState != null) Color.Transparent else colorScheme.surfaceVariant
+        ),
         shape = RoundedCornerShape(20.dp)
     ) {
         // Gradient header strip
@@ -1581,12 +1623,17 @@ private fun ReactionStrip(
 @Composable
 private fun AchievementBadgesCard(
     achievements: List<AchievementBadge>,
-    onBadgeClick: (AchievementBadge) -> Unit
+    onBadgeClick: (AchievementBadge) -> Unit,
+    hazeState: HazeState?
 ) {
     val colorScheme = MaterialTheme.colorScheme
     Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = colorScheme.surfaceVariant),
+        modifier = Modifier
+            .fillMaxWidth()
+            .then(if (hazeState != null) Modifier.glassTile(hazeState, RoundedCornerShape(20.dp)) else Modifier),
+        colors = CardDefaults.cardColors(
+            containerColor = if (hazeState != null) Color.Transparent else colorScheme.surfaceVariant
+        ),
         shape = RoundedCornerShape(20.dp)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
@@ -1748,14 +1795,18 @@ private fun AchievementBadgeChip(badge: AchievementBadge, onClick: () -> Unit) {
 private fun RecentSessionRow(
     session: SessionStats,
     unitSystem: UnitSystem,
-    onClick: () -> Unit
+    onClick: () -> Unit,
+    hazeState: HazeState?
 ) {
     val colorScheme = MaterialTheme.colorScheme
     Card(
         modifier = Modifier
             .fillMaxWidth()
-            .clickable(onClick = onClick),
-        colors = CardDefaults.cardColors(containerColor = colorScheme.surfaceVariant),
+            .clickable(onClick = onClick)
+            .then(if (hazeState != null) Modifier.glassTile(hazeState, RoundedCornerShape(14.dp)) else Modifier),
+        colors = CardDefaults.cardColors(
+            containerColor = if (hazeState != null) Color.Transparent else colorScheme.surfaceVariant
+        ),
         shape = RoundedCornerShape(14.dp)
     ) {
         Row(

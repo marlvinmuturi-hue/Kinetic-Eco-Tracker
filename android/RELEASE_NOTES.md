@@ -1,11 +1,16 @@
-# Release Notes — V1.9.16 (versionCode 29)
+# Release Notes — V1.9.18 (versionCode 31)
 
-> **29 is the single release that carries everything. Production is on versionCode
-> 20**, so users jump 20 → 29 in one step: Play Billing, the paywall, the
+> **31 is the single release that carries everything. Production is on versionCode
+> 20**, so users jump 20 → 31 in one step: Play Billing, the paywall, the
 > week-window fix, the calculator changes, recurring-trip mining, Room schema v9 and
 > kotlinx-serialization 1.8.1, plus fuel-and-cost figures in the calculator.
-> versionCodes 21–28 were build/test iterations and
+> versionCodes 21–30 were build/test iterations and
 > none of them should be promoted — the notes below record why each was superseded.
+>
+> **31 supersedes 30, which reached an internal track but not production.** It fixes a
+> Settings leaderboard toggle that could not be operated at all, and an auto-opt-in that
+> could put an opted-out user back on the public board. Everything 30 carried is carried
+> here unchanged.
 >
 > ⚠️ **The Room v8 → v9 migration makes this hard to reverse.** `AppDatabase` has no
 > `fallbackToDestructiveMigrationOnDowngrade`, so once a device is on v9 an older
@@ -95,6 +100,94 @@
 ---
 
 ## Full changelog
+
+### 🔘 New in versionCode 31 — the leaderboard toggle works, and respects "off"
+
+**The Settings leaderboard switch could not be operated.** Tapping it did nothing at all:
+it never moved and never showed an error, which is indistinguishable from a dead control.
+Three independent causes, all fixed:
+- The switch disabled itself on `leaderboardLoading`, a flag shared with leaderboard
+  *fetches*. `loadLeaderboard` reads the whole `leaderboard` collection plus a reactions
+  subcollection per row, and fires on login and from the dashboard — so a background fetch
+  held the switch disabled. It now keys off a dedicated `leaderboardOptInBusy` that covers
+  only the opt-in/opt-out write.
+- The switch waited for success before moving, and `optIn` aggregates the user's entire
+  Firestore session history before writing the flag. It now moves immediately and reverts
+  only if the write fails.
+- `_leaderboardLoading` was cleared *before* `loadLeaderboard` was called, which
+  immediately re-raised it — so the control died a second time right after the tap.
+
+**Settings now reads the stored preference.** `loadLeaderboardOptIn` had no callers anywhere
+in `app/src/main`; the switch rendered whatever `autoOptInOnLogin` last left in memory, with
+an unresolved `null` collapsed to "off". An opted-in user could be shown an off switch.
+
+**A failed read no longer opts you into a public leaderboard.** `getOptInStatus` returned
+`Boolean?` and mapped read errors onto `null` — the same value meaning "no preference ever
+set". `autoOptInOnLogin` treated that as a new account and opted the user in, so a cold start
+without connectivity could republish someone who had explicitly opted out. It now returns
+`Result<Boolean?>`, and auto-opt-in requires positive evidence the preference is absent; a
+failed read changes nothing and retries next launch. Seen on device: "Failed to get document
+because the client is offline" at 09:01:47 followed by "Leaderboard opt-in complete" at
+09:01:54.
+
+**A tap with no signed-in uid** was silently swallowed by `uid?.let { … }`. It now says
+"Please sign in to change your leaderboard preference."
+
+**Testing:** the toggle is verified on a real device (SM-M366B, API 36) — opt-in and opt-out
+both reached Firestore, confirmed in logcat. The read-failure branch is **not** verified on
+device: Firestore serves `get()` from its local cache, so airplane mode cannot reproduce the
+failure once the document has been cached. That branch is reasoned and compiled only.
+
+### 🩹 New in versionCode 30 — corrected savings, fewer prompts, four languages
+
+**Repeat-journey CO₂ savings were roughly double. Fixed.**
+- `RouteClusterer.suggestAlternative` subtracted the alternative's `netKg` from the
+  current mode's. `netKg` is `emittedKg - savedKg`, and a human-powered mode's
+  `savedKg` *is* the emissions it avoids versus a car baseline — so the same
+  kilograms were counted twice. A 3.8 km drive scored +0.80 and cycling it scored
+  −0.80, giving a 1.60 kg "saving" for 0.80 kg of avoided driving.
+- It now compares emissions with emissions. A 25-journey cluster drops from about
+  146 to about 73 kg CO₂/year. **The money figure was always right**, being derived
+  from the fuel bill alone, which is exactly how the error was caught: the two
+  numbers appeared in one sentence and disagreed.
+- Shipped in 29, so premium users have been shown inflated savings. Three tests now
+  pin it, including one asserting that litres implied by the money match litres
+  implied by the energy model. Nothing compared those two figures before.
+- Cluster prices were also never applied: the Analysis screen keyed cluster loading
+  on user/premium/profile only, and prices arrive asynchronously, so clustering
+  baked in `prices = null` and every cost stayed null.
+
+**Permissions are asked once, at the point of need.**
+- `MainActivity.onCreate` requested location and background location on every cold
+  start, so a new user was asked twice — once in onboarding, once on landing — and
+  anyone who declined was re-asked every launch. There is now no prompt on launch.
+- The Start button asks instead, and begins tracking on grant.
+- Background location follows the foreground answer rather than racing it.
+- The battery/background reliability dialog is shown once ever, not once per launch.
+- Android still requires a separate step for "all the time" location; that is the OS.
+
+**Four languages completed.**
+- 371 strings translated into French, German, Spanish and Simplified Chinese; all
+  four locales now complete at 694 keys. The monthly statement, fuel log, premium
+  screens, pricing region and calculator were previously English-only.
+
+**Fewer interstitials.**
+- 3 minutes → 30 minutes between ads, a hard cap of 3 per day, and the counters
+  moved to disk. They lived in a process singleton, so Android killing the app
+  between trips reset them and the old limit barely applied.
+
+**Also in this release**
+- Owner-stated km/L is editable in Settings, so the statement and repeat journeys
+  can use your car rather than an engine-band average.
+- The calculator leads with cost and is renamed the Mobility Cost Calculator.
+- Monthly statement screen and its push notification for premium subscribers.
+- Billing failures now notify: a payment problem in grace period, and again when it
+  recovers. Previously premium evaporated silently after Play stopped retrying.
+- A one-off notice when two brim-full fill-ups first yield a measured economy.
+- Region-aware pricing: currency follows the selected country, and the picker no
+  longer depends on Firestore being reachable.
+- Analysis tab: the recent-sessions card is replaced by a button on the weekly
+  report, which owns the same week window.
 
 ### 💰 New in versionCode 29 — fuel and cost in the calculator
 - **Litres and money alongside CO₂.** Entering a distance now also shows the fuel
@@ -239,6 +332,6 @@
 
 ---
 
-_Build: versionName `V1.9.13`, versionCode `26`, targetSdk 36, minSdk 24. Signed
+_Build: versionName `V1.9.18`, versionCode `31`, targetSdk 36, minSdk 24. Signed
 with the Kinetic Eco Tracker upload key. Artifact:
 `app/build/outputs/bundle/release/app-release.aab`._

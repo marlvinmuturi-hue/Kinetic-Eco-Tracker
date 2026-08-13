@@ -63,6 +63,19 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
     private val _leaderboardLoading = MutableStateFlow(false)
     val leaderboardLoading: StateFlow<Boolean> = _leaderboardLoading.asStateFlow()
 
+    /**
+     * True only while an opt-in/opt-out *write* is in flight — deliberately separate from
+     * [leaderboardLoading], which also covers entry *fetches*.
+     *
+     * The Settings switch disables itself on this flag. Sharing one flag meant a background
+     * `loadLeaderboard` — which reads the whole `leaderboard` collection plus a reactions
+     * subcollection per row, and is fired on login and by the dashboard — held the switch
+     * disabled for the length of that fetch. Tapping it did nothing, silently, which is
+     * indistinguishable from a dead control.
+     */
+    private val _leaderboardOptInBusy = MutableStateFlow(false)
+    val leaderboardOptInBusy: StateFlow<Boolean> = _leaderboardOptInBusy.asStateFlow()
+
     fun loadProfile(userId: String) {
         // Pre-populate from cache so the greeting shows the real name immediately
         val cached = userPrefsManager.getCachedDisplayName()
@@ -124,47 +137,69 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
 
     fun loadLeaderboardOptIn(userId: String) {
         viewModelScope.launch(Dispatchers.IO) {
-            _leaderboardOptedIn.value = leaderboardService.isOptedIn(userId)
+            leaderboardService.getOptInStatus(userId)
+                // A read that did not complete says nothing about the preference. Leave whatever is
+                // already known in place rather than rendering an unread value as "off".
+                .onSuccess { stored -> if (stored != null) _leaderboardOptedIn.value = stored }
+                .onFailure { Log.w(TAG, "Opt-in status unavailable; leaving switch state unchanged", it) }
         }
     }
 
     /**
      * Opt the user into the leaderboard on login if they have never set a preference.
      * If they previously opted out (false), their choice is respected and they stay opted out.
+     *
+     * Auto-opt-in requires *positive* evidence that no preference exists. A read that failed is not
+     * that evidence — treating it as such put opted-out users back on a public board whenever the
+     * app cold-started offline.
      */
     fun autoOptInOnLogin(userId: String) {
         viewModelScope.launch(Dispatchers.IO) {
             _leaderboardLoading.value = true
-            when (leaderboardService.getOptInStatus(userId)) {
-                null -> {
-                    // No preference ever set — opt them in automatically
-                    leaderboardService.optIn(userId)
-                        .onSuccess { _leaderboardOptedIn.value = true }
-                        .onFailure { _leaderboardOptedIn.value = false }
-                    loadLeaderboard(userId)
+            leaderboardService.getOptInStatus(userId)
+                .onSuccess { stored ->
+                    when (stored) {
+                        null -> {
+                            // Confirmed absent — no preference ever set, so opt them in automatically.
+                            leaderboardService.optIn(userId)
+                                .onSuccess { _leaderboardOptedIn.value = true }
+                                .onFailure { _leaderboardOptedIn.value = false }
+                        }
+                        // User explicitly opted out — respect their choice.
+                        false -> _leaderboardOptedIn.value = false
+                        // Already opted in — just load fresh data.
+                        true -> _leaderboardOptedIn.value = true
+                    }
                 }
-                false -> {
-                    // User explicitly opted out — respect their choice
-                    _leaderboardOptedIn.value = false
-                    loadLeaderboard(userId)
+                .onFailure {
+                    // Unknown, not absent. Change nothing and try again on the next launch.
+                    Log.w(TAG, "Could not read opt-in preference; skipping auto opt-in", it)
                 }
-                true -> {
-                    // Already opted in — just load fresh data
-                    _leaderboardOptedIn.value = true
-                    loadLeaderboard(userId)
-                }
-            }
+            loadLeaderboard(userId)
             _leaderboardLoading.value = false
         }
     }
 
+    /** Surfaced when the switch is tapped before Firebase auth has produced a uid to write against. */
+    fun showLeaderboardSignInRequired() {
+        _errorMessage.value = "Please sign in to change your leaderboard preference."
+    }
+
     fun setLeaderboardOptIn(userId: String, enabled: Boolean) {
+        // Ignore a second tap while a write is still in flight rather than disabling the control.
+        if (_leaderboardOptInBusy.value) return
         viewModelScope.launch(Dispatchers.IO) {
             _errorMessage.value = null
-            _leaderboardLoading.value = true
+            _leaderboardOptInBusy.value = true
+            // Move the switch immediately. `optIn` aggregates the user's entire Firestore session
+            // history before it writes the flag, so waiting for success left the control sitting in
+            // its old position for seconds — it read as an ignored tap. Reverted below if the write
+            // fails, which is the only case where the switch should snap back.
+            val previous = _leaderboardOptedIn.value
+            _leaderboardOptedIn.value = enabled
             val result = if (enabled) leaderboardService.optIn(userId) else leaderboardService.optOut(userId)
-            result.onSuccess { _leaderboardOptedIn.value = enabled }
             result.onFailure { e ->
+                _leaderboardOptedIn.value = previous
                 val msg = (e.message ?: "Unknown error").lowercase()
                 _errorMessage.value = when {
                     msg.contains("permission") || msg.contains("insufficient") ->
@@ -176,7 +211,7 @@ class ProfileViewModel(application: Application) : AndroidViewModel(application)
                     else -> "Failed to update leaderboard: ${e.message?.take(60) ?: "Unknown error"}"
                 }
             }
-            _leaderboardLoading.value = false
+            _leaderboardOptInBusy.value = false
             if (enabled) loadLeaderboard(userId)
         }
     }

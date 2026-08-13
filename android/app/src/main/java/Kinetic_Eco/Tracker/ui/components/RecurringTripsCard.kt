@@ -24,6 +24,8 @@ import Kinetic_Eco.Tracker.data.ActivityColors
 import Kinetic_Eco.Tracker.data.RouteCluster
 import Kinetic_Eco.Tracker.data.UnitSystem
 import Kinetic_Eco.Tracker.ui.utils.usesMetricDistance
+import dev.chrisbanes.haze.HazeState
+import Kinetic_Eco.Tracker.ui.theme.glassTile
 
 private val PremiumGold = Color(0xFFFFB300)
 
@@ -47,7 +49,8 @@ fun RecurringTripsCard(
     unitSystem: UnitSystem,
     onGoPremium: () -> Unit,
     onClusterClick: (RouteCluster) -> Unit = {},
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    hazeState: HazeState? = null
 ) {
     val colorScheme = MaterialTheme.colorScheme
     var expanded by rememberSaveable { mutableStateOf(false) }
@@ -59,10 +62,15 @@ fun RecurringTripsCard(
         clusters.filter { it.greenerAlternative != null }
     }
 
+    val shape = RoundedCornerShape(16.dp)
     Card(
-        modifier = modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(containerColor = colorScheme.surfaceVariant),
-        shape = RoundedCornerShape(16.dp)
+        modifier = modifier
+            .fillMaxWidth()
+            .then(if (hazeState != null) Modifier.glassTile(hazeState, shape) else Modifier),
+        colors = CardDefaults.cardColors(
+            containerColor = if (hazeState != null) Color.Transparent else colorScheme.surfaceVariant
+        ),
+        shape = shape
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Row(

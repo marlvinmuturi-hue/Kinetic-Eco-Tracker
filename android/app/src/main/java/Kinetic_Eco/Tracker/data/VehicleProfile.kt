@@ -26,10 +26,43 @@ package Kinetic_Eco.Tracker.data
 enum class PrimaryFuelType {
     PETROL,
     DIESEL,
-    ELECTRIC;
+    ELECTRIC,
+
+    /**
+     * Self-charging hybrid (HEV). Never plugged in — every kilometre is ultimately
+     * paid for at the pump, just fewer litres of it. Modelled as the equivalent
+     * petrol vehicle scaled by [HYBRID_VS_PETROL], so it inherits the whole
+     * displacement × body-type model rather than needing a table of its own.
+     */
+    HYBRID,
+
+    /**
+     * Plug-in hybrid (PHEV). Two energy sources, so it is the only fuel type whose
+     * cost is split across a pump price *and* an electricity tariff. The share of
+     * distance driven on battery is [PHEV_ELECTRIC_SHARE] — an assumption, and the
+     * single biggest source of error for this category; a PHEV that is never plugged
+     * in is simply a heavy hybrid, and one charged nightly is nearly an EV.
+     */
+    PLUG_IN_HYBRID;
 
     companion object {
         val DEFAULT = PETROL
+
+        /**
+         * A hybrid's consumption as a share of the same car on petrol alone.
+         * Applied to both CO₂ and energy, since the saving comes from burning
+         * less fuel rather than from burning it differently.
+         */
+        const val HYBRID_VS_PETROL = 0.70
+
+        /**
+         * Share of a plug-in hybrid's distance assumed to run on battery.
+         *
+         * Real-world utility factors vary enormously with charging habit — this is a
+         * mid-range figure, not a measurement, and is labelled as an estimate wherever
+         * it reaches the user.
+         */
+        const val PHEV_ELECTRIC_SHARE = 0.5
 
         fun fromStoredName(name: String?): PrimaryFuelType {
             if (name.isNullOrBlank()) return DEFAULT
@@ -208,6 +241,16 @@ enum class IceFuel {
  */
 enum class ElectricVehicleClass(val baseCo2KgPerKm: Double, val baseWhPerKm: Double) {
     TWO_WHEELER(0.018, 30.0),
+    /**
+     * A full electric motorcycle, as distinct from the e-scooters and e-mopeds that
+     * [TWO_WHEELER] describes — heavier, faster, and drawing appreciably more per km.
+     *
+     * 40 Wh/km is the stated base, before [ElectricMotorPowerBand] scales it. The CO₂
+     * figure keeps the same ratio to energy that [TWO_WHEELER] already uses
+     * (0.018 / 30 Wh), so the two-wheel classes stay consistent with each other rather
+     * than each implying a different grid.
+     */
+    MOTORCYCLE(0.024, 40.0),
     THREE_WHEELER(0.035, 60.0),
     CAR(0.053, 165.0);
 

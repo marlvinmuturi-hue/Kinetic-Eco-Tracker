@@ -47,6 +47,13 @@ import Kinetic_Eco.Tracker.data.VehicleProfile
 import Kinetic_Eco.Tracker.services.EnergyPriceRepository
 import Kinetic_Eco.Tracker.services.FuelLogRepository
 import Kinetic_Eco.Tracker.services.UserPreferencesManager
+import Kinetic_Eco.Tracker.ui.utils.FuelUnit
+import Kinetic_Eco.Tracker.ui.utils.convertFuelEconomy
+import Kinetic_Eco.Tracker.ui.utils.convertFuelVolume
+import Kinetic_Eco.Tracker.ui.utils.convertPricePerVolume
+import Kinetic_Eco.Tracker.ui.utils.fuelEconomyToKmPerL
+import Kinetic_Eco.Tracker.ui.utils.pricePerVolumeToPerLitre
+import Kinetic_Eco.Tracker.ui.utils.toFuelUnit
 import Kinetic_Eco.Tracker.ui.utils.usesMetricDistance
 import kotlin.math.abs
 
@@ -181,7 +188,8 @@ fun Co2CalculatorCard(
                     VehicleOverrideSection(
                         activity = selectedActivity,
                         profile = effectiveProfile,
-                        onProfileChange = { overrideProfile = it }
+                        onProfileChange = { overrideProfile = it },
+                        unitSystem = unitSystem
                     )
                 }
             }
@@ -210,7 +218,8 @@ fun Co2CalculatorCard(
                     prices = prices,
                     measured = measuredEconomy,
                     receiptPrice = receiptPrice,
-                    onLogFuel = onLogFuel
+                    onLogFuel = onLogFuel,
+                    unitSystem = unitSystem
                 )
 
                 EstimateResult(estimate = estimate, distanceUnit = distanceUnit)
@@ -261,20 +270,43 @@ fun Co2CalculatorCard(
 private fun VehicleOverrideSection(
     activity: ActivityType,
     profile: VehicleProfile,
-    onProfileChange: (VehicleProfile) -> Unit
+    onProfileChange: (VehicleProfile) -> Unit,
+    unitSystem: UnitSystem
 ) {
     Column(modifier = Modifier.padding(top = 4.dp)) {
         if (activity == ActivityType.DRIVING || activity == ActivityType.MOTORCYCLE) {
-            FuelEconomyField(profile = profile, onProfileChange = onProfileChange)
+            FuelEconomyField(
+                profile = profile,
+                onProfileChange = onProfileChange,
+                unitSystem = unitSystem
+            )
         }
         when (activity) {
             ActivityType.DRIVING -> {
+                // Was an IceFuel (petrol/diesel) row. Promoted to the full fuel type so
+                // the hybrid categories are reachable here at all — Electric is omitted
+                // because the Electric vehicle mode is the supported route for an EV,
+                // and picking it here would silently price and rate the trip as petrol.
                 EnumChipRow(
-                    labelRes = R.string.vehicle_profile_ice_fuel,
-                    options = IceFuel.entries,
-                    selected = profile.iceFuel,
+                    labelRes = R.string.vehicle_profile_primary_fuel,
+                    options = COMBUSTION_FUEL_TYPES,
+                    selected = profile.primaryFuelType.takeIf { it in COMBUSTION_FUEL_TYPES }
+                        ?: PrimaryFuelType.PETROL,
                     labelOf = { it.labelResId() },
-                    onSelect = { onProfileChange(profile.copy(iceFuel = it)) }
+                    onSelect = { chosen ->
+                        onProfileChange(
+                            profile.copy(
+                                primaryFuelType = chosen,
+                                // Keep the legacy IceFuel field coherent — the hybrid
+                                // maths scales a petrol-equivalent figure, so it needs a
+                                // real fuel underneath. Mirrors VehicleProfileSection.
+                                iceFuel = when (chosen) {
+                                    PrimaryFuelType.DIESEL -> IceFuel.DIESEL
+                                    else -> IceFuel.PETROL
+                                }
+                            )
+                        )
+                    }
                 )
                 EnumChipRow(
                     labelRes = R.string.vehicle_profile_driving_cc,
@@ -290,6 +322,17 @@ private fun VehicleOverrideSection(
                     labelOf = { it.labelResId() },
                     onSelect = { onProfileChange(profile.copy(bodyType = it)) }
                 )
+                // A plug-in's battery half is scaled by the motor band, so it has to be
+                // settable here too or the split silently uses the default.
+                if (profile.primaryFuelType == PrimaryFuelType.PLUG_IN_HYBRID) {
+                    EnumChipRow(
+                        labelRes = R.string.vehicle_profile_ev_motor_power,
+                        options = ElectricMotorPowerBand.entries,
+                        selected = profile.electricMotorPower,
+                        labelOf = { it.labelResId() },
+                        onSelect = { onProfileChange(profile.copy(electricMotorPower = it)) }
+                    )
+                }
             }
 
             ActivityType.ELECTRIC_VEHICLE -> {
@@ -405,11 +448,20 @@ private fun <T> EnumChipRow(
 @Composable
 private fun FuelEconomyField(
     profile: VehicleProfile,
-    onProfileChange: (VehicleProfile) -> Unit
+    onProfileChange: (VehicleProfile) -> Unit,
+    unitSystem: UnitSystem
 ) {
     val colorScheme = MaterialTheme.colorScheme
-    var text by rememberSaveable(profile.fuelEconomyKmPerL) {
-        mutableStateOf(profile.fuelEconomyKmPerL?.let { String.format("%.1f", it) } ?: "")
+    val fuelUnit = unitSystem.toFuelUnit()
+    // Stored km/L, shown in the user's unit. Keyed on the unit as well as the value so
+    // switching Appearance to miles re-renders the field as MPG instead of leaving a
+    // km/L number sitting under an MPG label.
+    var text by rememberSaveable(profile.fuelEconomyKmPerL, fuelUnit) {
+        mutableStateOf(
+            profile.fuelEconomyKmPerL
+                ?.let { String.format("%.1f", convertFuelEconomy(it, fuelUnit)) }
+                ?: ""
+        )
     }
 
     Column(modifier = Modifier.padding(bottom = 10.dp)) {
@@ -422,12 +474,22 @@ private fun FuelEconomyField(
                     // zero, which would read as infinite consumption.
                     onProfileChange(
                         profile.copy(
-                            fuelEconomyKmPerL = raw.replace(',', '.').toDoubleOrNull()?.takeIf { it > 0.0 }
+                            fuelEconomyKmPerL = raw.replace(',', '.').toDoubleOrNull()
+                                ?.takeIf { it > 0.0 }
+                                // Typed in the display unit; stored canonically as km/L.
+                                ?.let { fuelEconomyToKmPerL(it, fuelUnit) }
                         )
                     )
                 }
             },
-            label = { Text(stringResource(R.string.vehicle_profile_km_per_l)) },
+            label = {
+                Text(
+                    stringResource(
+                        if (fuelUnit == FuelUnit.US_GALLONS_MPG) R.string.vehicle_profile_mpg
+                        else R.string.vehicle_profile_km_per_l
+                    )
+                )
+            },
             singleLine = true,
             keyboardOptions = KeyboardOptions(
                 keyboardType = KeyboardType.Decimal,
@@ -688,10 +750,14 @@ private fun MobilityCostRow(
     prices: EnergyPrices?,
     measured: MeasuredEconomy?,
     receiptPrice: Double?,
-    onLogFuel: (() -> Unit)?
+    onLogFuel: (() -> Unit)?,
+    unitSystem: UnitSystem
 ) {
     val colorScheme = MaterialTheme.colorScheme
     val context = LocalContext.current
+    // Volume and price are stored per litre and converted only for display. Electricity is
+    // unaffected — a kWh is a kWh in every unit system.
+    val fuelUnit = unitSystem.toFuelUnit()
     val cost = remember(estimate, profile, prices, measured) {
         prices?.let { MobilityCostCalculator.costOf(estimate, profile, it, measured) }
     }
@@ -701,17 +767,20 @@ private fun MobilityCostRow(
     // the failure mode this whole feature was supposed to avoid.
     if (cost == null) {
         if (estimate.hasVehicleEnergy && prices == null) {
-            UnknownPricePrompt(profile = profile)
+            UnknownPricePrompt(profile = profile, unitSystem = unitSystem)
             CostSectionDivider()
         }
         return
     }
 
     var editing by rememberSaveable { mutableStateOf(false) }
-    var priceText by rememberSaveable(cost.unitPrice) {
-        mutableStateOf(String.format("%.2f", cost.unitPrice))
-    }
     val isElectric = cost.kWh != null
+    // Electricity keeps its per-kWh price untouched; only liquid fuel converts to gallons.
+    val displayPrice =
+        if (isElectric) cost.unitPrice else convertPricePerVolume(cost.unitPrice, fuelUnit)
+    var priceText by rememberSaveable(displayPrice) {
+        mutableStateOf(String.format("%.2f", displayPrice))
+    }
     val fuelKind = when {
         isElectric -> UserPreferencesManager.FuelKind.ELECTRICITY
         profile.iceFuel == IceFuel.DIESEL -> UserPreferencesManager.FuelKind.DIESEL
@@ -731,7 +800,12 @@ private fun MobilityCostRow(
             text = if (isElectric) {
                 stringResource(R.string.co2_calc_kwh, String.format("%.2f", cost.kWh ?: 0.0))
             } else {
-                stringResource(R.string.co2_calc_litres, String.format("%.2f", cost.litres ?: 0.0))
+                val volume = convertFuelVolume(cost.litres ?: 0.0, fuelUnit)
+                stringResource(
+                    if (fuelUnit == FuelUnit.US_GALLONS_MPG) R.string.co2_calc_gallons
+                    else R.string.co2_calc_litres,
+                    String.format("%.2f", volume)
+                )
             },
             style = MaterialTheme.typography.titleLarge,
             fontWeight = FontWeight.Bold,
@@ -763,9 +837,13 @@ private fun MobilityCostRow(
     Text(
         text = stringResource(
             R.string.co2_calc_price_provenance,
-            "${cost.currencyCode} ${String.format("%.2f", cost.unitPrice)}",
+            "${cost.currencyCode} ${String.format("%.2f", displayPrice)}",
             stringResource(
-                if (isElectric) R.string.co2_calc_per_kwh else R.string.co2_calc_per_litre
+                when {
+                    isElectric -> R.string.co2_calc_per_kwh
+                    fuelUnit == FuelUnit.US_GALLONS_MPG -> R.string.co2_calc_per_gallon
+                    else -> R.string.co2_calc_per_litre
+                }
             ),
             when (cost.source) {
                 PriceSource.USER -> stringResource(R.string.co2_calc_price_source_user)
@@ -826,7 +904,9 @@ private fun MobilityCostRow(
             Text(
                 text = stringResource(
                     R.string.co2_calc_receipt_price,
-                    "${cost.currencyCode} ${String.format("%.2f", suggestion)}"
+                    // Shown converted; applied below unconverted, since the receipt price
+                    // is already per litre and that is what an override stores.
+                    "${cost.currencyCode} ${String.format("%.2f", convertPricePerVolume(suggestion, fuelUnit))}"
                 ),
                 style = MaterialTheme.typography.bodySmall,
                 color = colorScheme.onSurfaceVariant,
@@ -856,7 +936,11 @@ private fun MobilityCostRow(
                             R.string.co2_calc_your_price_label,
                             cost.currencyCode,
                             stringResource(
-                                if (isElectric) R.string.co2_calc_per_kwh else R.string.co2_calc_per_litre
+                                when {
+                                    isElectric -> R.string.co2_calc_per_kwh
+                                    fuelUnit == FuelUnit.US_GALLONS_MPG -> R.string.co2_calc_per_gallon
+                                    else -> R.string.co2_calc_per_litre
+                                }
                             )
                         )
                     )
@@ -871,6 +955,8 @@ private fun MobilityCostRow(
             Spacer(Modifier.width(8.dp))
             TextButton(onClick = {
                 val parsed = priceText.replace(',', '.').toDoubleOrNull()
+                    // Typed in the displayed unit; stored per litre.
+                    ?.let { if (isElectric) it else pricePerVolumeToPerLitre(it, fuelUnit) }
                 EnergyPriceRepository.setOverride(context, fuelKind, parsed)
                 editing = false
             }) {
@@ -925,7 +1011,7 @@ private fun CostSectionDivider() {
  * whatever currency the device uses.
  */
 @Composable
-private fun UnknownPricePrompt(profile: VehicleProfile) {
+private fun UnknownPricePrompt(profile: VehicleProfile, unitSystem: UnitSystem) {
     val colorScheme = MaterialTheme.colorScheme
     val context = LocalContext.current
     var editing by rememberSaveable { mutableStateOf(false) }
@@ -933,13 +1019,18 @@ private fun UnknownPricePrompt(profile: VehicleProfile) {
 
     val currency = remember { EnergyPriceRepository.currentCurrencyCode() }
     val isElectric = profile.primaryFuelType == PrimaryFuelType.ELECTRIC
+    val fuelUnit = unitSystem.toFuelUnit()
     val fuelKind = when {
         isElectric -> UserPreferencesManager.FuelKind.ELECTRICITY
         profile.iceFuel == IceFuel.DIESEL -> UserPreferencesManager.FuelKind.DIESEL
         else -> UserPreferencesManager.FuelKind.PETROL
     }
     val unitLabel = stringResource(
-        if (isElectric) R.string.co2_calc_per_kwh else R.string.co2_calc_per_litre
+        when {
+            isElectric -> R.string.co2_calc_per_kwh
+            fuelUnit == FuelUnit.US_GALLONS_MPG -> R.string.co2_calc_per_gallon
+            else -> R.string.co2_calc_per_litre
+        }
     )
 
     Spacer(Modifier.height(12.dp))
@@ -973,6 +1064,9 @@ private fun UnknownPricePrompt(profile: VehicleProfile) {
             Spacer(Modifier.width(8.dp))
             TextButton(onClick = {
                 val parsed = priceText.replace(',', '.').toDoubleOrNull()
+                    // Typed per gallon when the label says gallon; overrides are stored per
+                    // litre, like every other price in the app.
+                    ?.let { if (isElectric) it else pricePerVolumeToPerLitre(it, fuelUnit) }
                 // The currency travels with the amount, so the figure is never shown
                 // under a unit the user did not choose.
                 EnergyPriceRepository.setOverride(context, fuelKind, parsed, currency)
@@ -1167,10 +1261,24 @@ private fun IceFuel.labelResId(): Int = when (this) {
     IceFuel.DIESEL -> R.string.ice_fuel_diesel
 }
 
+/**
+ * Fuel types that burn something, in menu order. Excludes ELECTRIC, which has its own
+ * activity — `CO2Factors.drivingCo2` deliberately treats Electric-under-Driving as petrol,
+ * so offering it as a driving choice would quietly report the wrong number.
+ */
+private val COMBUSTION_FUEL_TYPES = listOf(
+    PrimaryFuelType.PETROL,
+    PrimaryFuelType.DIESEL,
+    PrimaryFuelType.HYBRID,
+    PrimaryFuelType.PLUG_IN_HYBRID
+)
+
 private fun PrimaryFuelType.labelResId(): Int = when (this) {
     PrimaryFuelType.PETROL -> R.string.primary_fuel_petrol
     PrimaryFuelType.DIESEL -> R.string.primary_fuel_diesel
     PrimaryFuelType.ELECTRIC -> R.string.primary_fuel_electric
+    PrimaryFuelType.HYBRID -> R.string.primary_fuel_hybrid
+    PrimaryFuelType.PLUG_IN_HYBRID -> R.string.primary_fuel_plug_in_hybrid
 }
 
 private fun DrivingEngineCcBand.labelResId(): Int = when (this) {
@@ -1191,6 +1299,7 @@ private fun VehicleBodyType.labelResId(): Int = when (this) {
 
 private fun ElectricVehicleClass.labelResId(): Int = when (this) {
     ElectricVehicleClass.TWO_WHEELER -> R.string.ev_class_two_wheeler
+    ElectricVehicleClass.MOTORCYCLE -> R.string.ev_class_motorcycle
     ElectricVehicleClass.THREE_WHEELER -> R.string.ev_class_three_wheeler
     ElectricVehicleClass.CAR -> R.string.ev_class_car
 }

@@ -105,9 +105,42 @@
 
 ## Full changelog
 
-### ↩️ New in versionCode 32 — the previous look is back
+### ↩️ New in versionCode 32 — the previous look, fuel units, and hybrid vehicles
 
-- **The frosted-glass appearance introduced in 31 is reverted.** `Glass.kt` is deleted, the
+**Fuel figures follow the unit you already chose.** On miles, the app now shows US gallons,
+MPG and price per gallon; on km it stays litres, km/L and price per litre. Applies to the
+calculator, the vehicle profile, the fuel log and the monthly statement. Everything remains
+*stored* metric — typed input converts back to litres and km/L before it is saved, so
+switching units never rewrites your figures. Electricity is untouched: a kWh is a kWh.
+- The gallon is the **US** gallon (3.785 L). The imperial gallon would read ~21% higher.
+- **L/100 km is not a selectable unit.** Fuel units are derived from the existing
+  metric/imperial setting, which cannot distinguish it from km/L. It does still appear, as
+  it always has, in the fuel log's measured-consumption readout.
+
+**Electric motorcycles, hybrids and plug-in hybrids.**
+- New `ElectricVehicleClass.MOTORCYCLE` at **40 Wh/km**, scaled by the motor-power band as
+  every other electric class is. E-scooters keep their 30 Wh/km rather than being silently
+  re-rated. A motorcycle on electricity now reads this class instead of the scooter's.
+- New `HYBRID` fuel type: 0.70× the equivalent petrol car for both CO₂ and energy, so it
+  inherits the whole displacement × body-type model instead of needing its own table.
+- New `PLUG_IN_HYBRID`: half the distance on battery, the rest on a hybrid-efficiency
+  engine. **The 50% share is an assumption and the largest error source for this
+  category** — a plug-in that is never plugged in is simply a heavy hybrid.
+- The calculator's Driving section now offers the full fuel type rather than just
+  petrol/diesel, or the hybrids would be unreachable there. Electric is deliberately
+  excluded: Electric-under-Driving is rated as petrol, so offering it would report a wrong
+  number. The Electric vehicle mode remains the route for EVs.
+
+**Fixed: electric motorcycles were billed for petrol.** `MobilityCostCalculator` priced
+every motorcycle through the pump regardless of fuel type. They are now charged at the
+electricity tariff, and plug-in hybrids are charged for both — computed from the profile,
+since the blended `energyWh` cannot be split back into litres and kWh.
+
+**Tests:** 22 new (11 unit-conversion, 11 vehicle-category), suite now 149 and green. The
+conversion tests round-trip every converter against its inverse, because each one sits on a
+write path where an asymmetry would corrupt stored figures invisibly.
+
+**The frosted-glass appearance introduced in 31 is reverted.** `Glass.kt` is deleted, the
   `dev.chrisbanes.haze:haze:0.7.3` dependency is dropped, and `Theme.kt`, the six screens
   and the three card components return to exactly their versionCode 30 source.
 - **Nothing else from 31 is lost.** The leaderboard toggle fixes and the opt-in-status fix

@@ -22,6 +22,11 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import Kinetic_Eco.Tracker.R
 import Kinetic_Eco.Tracker.data.MonthlyStatement
+import Kinetic_Eco.Tracker.data.Co2Calculator
+import Kinetic_Eco.Tracker.services.UserPreferencesManager
+import Kinetic_Eco.Tracker.ui.utils.FuelUnit
+import Kinetic_Eco.Tracker.ui.utils.convertFuelVolume
+import Kinetic_Eco.Tracker.ui.utils.toFuelUnit
 import Kinetic_Eco.Tracker.services.EntitlementRepository
 import Kinetic_Eco.Tracker.services.MonthlyStatementRepository
 import Kinetic_Eco.Tracker.util.MonthWindow
@@ -126,6 +131,11 @@ fun MonthlyStatementScreen(
 
 @Composable
 private fun StatementBody(s: MonthlyStatement) {
+    // Statement figures are stored metric; shown in the unit chosen under Appearance.
+    val context = LocalContext.current
+    val fuelUnit = remember(context) {
+        UserPreferencesManager(context.applicationContext).getUnitPreference().toFuelUnit()
+    }
     val colorScheme = MaterialTheme.colorScheme
 
     // ── Headline: what the driving cost ──────────────────────────────────────
@@ -155,9 +165,15 @@ private fun StatementBody(s: MonthlyStatement) {
             s.fuelLitres?.let {
                 Text(
                     text = stringResource(
-                        R.string.statement_litres_over,
-                        String.format("%.1f", it),
-                        String.format("%,.0f", s.motorisedDistanceKm)
+                        if (fuelUnit == FuelUnit.US_GALLONS_MPG) R.string.statement_gallons_over
+                        else R.string.statement_litres_over,
+                        String.format("%.1f", convertFuelVolume(it, fuelUnit)),
+                        String.format(
+                            "%,.0f",
+                            if (fuelUnit == FuelUnit.US_GALLONS_MPG)
+                                s.motorisedDistanceKm / Co2Calculator.KM_PER_MILE
+                            else s.motorisedDistanceKm
+                        )
                     ),
                     style = MaterialTheme.typography.bodySmall,
                     color = colorScheme.onSurfaceVariant

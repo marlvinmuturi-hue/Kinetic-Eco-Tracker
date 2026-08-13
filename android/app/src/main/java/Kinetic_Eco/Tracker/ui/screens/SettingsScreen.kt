@@ -29,6 +29,10 @@ import kotlin.math.roundToInt
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import Kinetic_Eco.Tracker.R
+import Kinetic_Eco.Tracker.ui.utils.FuelUnit
+import Kinetic_Eco.Tracker.ui.utils.convertFuelEconomy
+import Kinetic_Eco.Tracker.ui.utils.fuelEconomyToKmPerL
+import Kinetic_Eco.Tracker.ui.utils.toFuelUnit
 import Kinetic_Eco.Tracker.data.AircraftCategory
 import Kinetic_Eco.Tracker.data.DrivingEngineCcBand
 import Kinetic_Eco.Tracker.data.ElectricMotorPowerBand
@@ -1069,6 +1073,8 @@ private fun PrimaryFuelType.labelString(): String = when (this) {
     PrimaryFuelType.PETROL -> stringResource(R.string.primary_fuel_petrol)
     PrimaryFuelType.DIESEL -> stringResource(R.string.primary_fuel_diesel)
     PrimaryFuelType.ELECTRIC -> stringResource(R.string.primary_fuel_electric)
+    PrimaryFuelType.HYBRID -> stringResource(R.string.primary_fuel_hybrid)
+    PrimaryFuelType.PLUG_IN_HYBRID -> stringResource(R.string.primary_fuel_plug_in_hybrid)
 }
 
 @Composable
@@ -1083,6 +1089,7 @@ private fun VehicleBodyType.labelString(): String = when (this) {
 @Composable
 private fun ElectricVehicleClass.labelString(): String = when (this) {
     ElectricVehicleClass.TWO_WHEELER -> stringResource(R.string.ev_class_two_wheeler)
+    ElectricVehicleClass.MOTORCYCLE -> stringResource(R.string.ev_class_motorcycle)
     ElectricVehicleClass.THREE_WHEELER -> stringResource(R.string.ev_class_three_wheeler)
     ElectricVehicleClass.CAR -> stringResource(R.string.ev_class_car)
 }
@@ -1115,10 +1122,18 @@ fun VehicleProfileSection(
     var primaryFuel by remember(diskProfile) { mutableStateOf(diskProfile.primaryFuelType) }
     var drivingCc by remember(diskProfile) { mutableStateOf(diskProfile.drivingCcBand) }
     var bodyType by remember(diskProfile) { mutableStateOf(diskProfile.bodyType) }
+    // Economy is stored km/L and shown in whatever the Appearance unit implies — km/L on
+    // metric, MPG on miles. Read from prefs rather than threaded through ProfileScreen,
+    // which has no unit parameter and does not otherwise need one.
+    val fuelUnit = remember(prefsManager) { prefsManager.getUnitPreference().toFuelUnit() }
     // Kept as text, not a Double, so a half-typed "12." survives recomposition instead
     // of snapping back while the user is still typing.
-    var kmPerL by remember(diskProfile) {
-        mutableStateOf(diskProfile.fuelEconomyKmPerL?.let { String.format("%.1f", it) } ?: "")
+    var kmPerL by remember(diskProfile, fuelUnit) {
+        mutableStateOf(
+            diskProfile.fuelEconomyKmPerL
+                ?.let { String.format("%.1f", convertFuelEconomy(it, fuelUnit)) }
+                ?: ""
+        )
     }
     var evClass by remember(diskProfile) { mutableStateOf(diskProfile.electricVehicleClass) }
     var evMotor by remember(diskProfile) { mutableStateOf(diskProfile.electricMotorPower) }
@@ -1210,8 +1225,12 @@ fun VehicleProfileSection(
                     }
                 }
 
-                // ── Step 2A: Petrol/Diesel sub-fields ──────────────────────
-                if (primaryFuel == PrimaryFuelType.PETROL || primaryFuel == PrimaryFuelType.DIESEL) {
+                // ── Step 2A: combustion sub-fields ─────────────────────────
+                // Both hybrid types are scaled versions of the petrol-equivalent figure,
+                // so displacement and body type drive their maths exactly as they drive
+                // a pure combustion car's. Hiding these would leave the hybrid branches
+                // reading whatever defaults happened to be on disk.
+                if (primaryFuel != PrimaryFuelType.ELECTRIC) {
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(
                         text = stringResource(R.string.vehicle_profile_driving_cc),
@@ -1309,7 +1328,14 @@ fun VehicleProfileSection(
                                 kmPerL = raw
                             }
                         },
-                        label = { Text(stringResource(R.string.vehicle_profile_km_per_l)) },
+                        label = {
+                            Text(
+                                stringResource(
+                                    if (fuelUnit == FuelUnit.US_GALLONS_MPG) R.string.vehicle_profile_mpg
+                                    else R.string.vehicle_profile_km_per_l
+                                )
+                            )
+                        },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(
                             keyboardType = KeyboardType.Decimal,
@@ -1329,27 +1355,36 @@ fun VehicleProfileSection(
                     )
                 }
 
-                // ── Step 2B: Electric sub-fields ──────────────────────────
-                if (primaryFuel == PrimaryFuelType.ELECTRIC) {
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text(
-                        text = stringResource(R.string.vehicle_profile_ev_class),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(bottom = 8.dp)
-                    )
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        ElectricVehicleClass.entries.forEach { option ->
-                            FilterChip(
-                                selected = evClass == option,
-                                onClick = { evClass = option },
-                                label = { Text(option.labelString()) },
-                                modifier = Modifier.weight(1f),
-                                colors = settingsMonoFilterChipColors()
-                            )
+                // ── Step 2B: electric sub-fields ──────────────────────────
+                // A plug-in hybrid draws its battery figure through the same motor-power
+                // band, so it needs that control — but not the vehicle-class chips, which
+                // only describe pure EVs.
+                if (primaryFuel == PrimaryFuelType.ELECTRIC ||
+                    primaryFuel == PrimaryFuelType.PLUG_IN_HYBRID
+                ) {
+                    if (primaryFuel == PrimaryFuelType.ELECTRIC) {
+                        Spacer(modifier = Modifier.height(16.dp))
+                        Text(
+                            text = stringResource(R.string.vehicle_profile_ev_class),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(bottom = 8.dp)
+                        )
+                        // Four classes no longer fit side by side at equal weight on a
+                        // narrow phone, so they wrap instead of being squeezed.
+                        @OptIn(ExperimentalLayoutApi::class)
+                        FlowRow(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            ElectricVehicleClass.entries.forEach { option ->
+                                FilterChip(
+                                    selected = evClass == option,
+                                    onClick = { evClass = option },
+                                    label = { Text(option.labelString()) },
+                                    colors = settingsMonoFilterChipColors()
+                                )
+                            }
                         }
                     }
 
@@ -1532,6 +1567,11 @@ fun VehicleProfileSection(
                             PrimaryFuelType.PETROL -> IceFuel.PETROL
                             PrimaryFuelType.DIESEL -> IceFuel.DIESEL
                             PrimaryFuelType.ELECTRIC -> diskProfile.iceFuel
+                            // Both hybrid types run their engine on petrol, and the
+                            // hybrid maths scales the petrol-equivalent figure — so this
+                            // has to be a real fuel, not whatever was last on disk.
+                            PrimaryFuelType.HYBRID,
+                            PrimaryFuelType.PLUG_IN_HYBRID -> IceFuel.PETROL
                         }
                         val profile = VehicleProfile(
                             primaryFuelType = primaryFuel,
@@ -1550,6 +1590,8 @@ fun VehicleProfileSection(
                             fuelEconomyKmPerL = kmPerL.replace(',', '.')
                                 .toDoubleOrNull()
                                 ?.takeIf { it > 0.0 }
+                                // Typed in the displayed unit; stored canonically as km/L.
+                                ?.let { fuelEconomyToKmPerL(it, fuelUnit) }
                         )
                         onSave(profile)
                         saveMessage = savedSuccessMsg

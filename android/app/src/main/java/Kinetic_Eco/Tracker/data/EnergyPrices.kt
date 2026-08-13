@@ -152,6 +152,20 @@ object MobilityCostCalculator {
 
         return when (estimate.activity) {
             ActivityType.DRIVING, ActivityType.MOTORCYCLE -> {
+                // Fuel type decides what is actually being bought. This branch used to
+                // price every motorcycle at the pump regardless, so an *electric*
+                // motorcycle was billed for petrol it never burned.
+                when (profile.primaryFuelType) {
+                    PrimaryFuelType.ELECTRIC ->
+                        return electricCost(kWh, prices)
+                    PrimaryFuelType.PLUG_IN_HYBRID ->
+                        return plugInHybridCost(estimate, profile, prices)
+                    PrimaryFuelType.PETROL,
+                    PrimaryFuelType.DIESEL,
+                    // A self-charging hybrid only ever buys petrol. The litres already
+                    // fall out of the scaled energy model, so nothing extra is needed.
+                    PrimaryFuelType.HYBRID -> Unit
+                }
                 val perLitre = when (profile.iceFuel) {
                     IceFuel.DIESEL -> prices.dieselPerLitre
                     else -> prices.petrolPerLitre
@@ -189,16 +203,7 @@ object MobilityCostCalculator {
                 )
             }
 
-            ActivityType.ELECTRIC_VEHICLE -> if (prices.electricityPerKwh <= 0.0) null else TripCost(
-                litres = null,
-                kWh = kWh,
-                amount = kWh * prices.electricityPerKwh,
-                currencyCode = prices.currencyCode,
-                unitPrice = prices.electricityPerKwh,
-                source = prices.source,
-                effectiveMonth = prices.effectiveMonth,
-                sourceName = prices.sourceName
-            )
+            ActivityType.ELECTRIC_VEHICLE -> electricCost(kWh, prices)
 
             // Fare-based or unpowered — see the KDoc above.
             ActivityType.TRAIN,
@@ -208,5 +213,70 @@ object MobilityCostCalculator {
             ActivityType.CYCLING,
             ActivityType.IDLE -> null
         }
+    }
+
+    /** Straight electricity billing — used by EVs and now by electric motorcycles. */
+    private fun electricCost(kWh: Double, prices: EnergyPrices): TripCost? =
+        if (prices.electricityPerKwh <= 0.0) null else TripCost(
+            litres = null,
+            kWh = kWh,
+            amount = kWh * prices.electricityPerKwh,
+            currencyCode = prices.currencyCode,
+            unitPrice = prices.electricityPerKwh,
+            source = prices.source,
+            effectiveMonth = prices.effectiveMonth,
+            sourceName = prices.sourceName
+        )
+
+    /**
+     * A plug-in hybrid buys both. The distance is split by
+     * [PrimaryFuelType.PHEV_ELECTRIC_SHARE]; each portion is charged at its own price
+     * and the two are added.
+     *
+     * Deliberately recomputed from the profile rather than divided out of
+     * `estimate.energyWh`, which is a blend of battery and chemical watt-hours and
+     * cannot be separated back into the two things the user actually pays for.
+     *
+     * `unitPrice` reports the pump price, since that is the number a driver recognises
+     * and can correct; the electricity portion still moves the total.
+     */
+    private fun plugInHybridCost(
+        estimate: Co2Estimate,
+        profile: VehicleProfile,
+        prices: EnergyPrices
+    ): TripCost? {
+        val share = PrimaryFuelType.PHEV_ELECTRIC_SHARE
+        val perLitre = when (profile.iceFuel) {
+            IceFuel.DIESEL -> prices.dieselPerLitre
+            else -> prices.petrolPerLitre
+        }
+        val kWhPerLitre = when (profile.iceFuel) {
+            IceFuel.DIESEL -> DIESEL_KWH_PER_LITRE
+            else -> PETROL_KWH_PER_LITRE
+        }
+        if (perLitre <= 0.0 || prices.electricityPerKwh <= 0.0) return null
+
+        val engineKm = estimate.distanceKm * (1.0 - share)
+        val batteryKm = estimate.distanceKm * share
+
+        val engineWhPerKm = IceFuel.energyWhFromCcBandAndBody(
+            profile.drivingCcBand, profile.bodyType, profile.iceFuel
+        ) * PrimaryFuelType.HYBRID_VS_PETROL
+        val batteryWhPerKm = ElectricVehicleClass.CAR.baseWhPerKm *
+            profile.electricMotorPower.multiplier
+
+        val litres = (engineKm * engineWhPerKm / 1000.0) / kWhPerLitre
+        val kWh = batteryKm * batteryWhPerKm / 1000.0
+
+        return TripCost(
+            litres = litres,
+            kWh = kWh,
+            amount = litres * perLitre + kWh * prices.electricityPerKwh,
+            currencyCode = prices.currencyCode,
+            unitPrice = perLitre,
+            source = prices.source,
+            effectiveMonth = prices.effectiveMonth,
+            sourceName = prices.sourceName
+        )
     }
 }

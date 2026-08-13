@@ -457,6 +457,8 @@
     <string name="primary_fuel_petrol">汽油</string>
     <string name="primary_fuel_diesel">柴油</string>
     <string name="primary_fuel_electric">电动</string>
+    <string name="primary_fuel_hybrid">混合动力</string>
+    <string name="primary_fuel_plug_in_hybrid">插电式混合动力</string>
     <string name="vehicle_profile_body_type">车身形式</string>
     <string name="body_type_hatchback">两厢车</string>
     <string name="body_type_sedan">三厢轿车</string>
@@ -465,6 +467,7 @@
     <string name="body_type_minivan">MPV / 商务车</string>
     <string name="vehicle_profile_ev_class">车辆类型</string>
     <string name="ev_class_two_wheeler">两轮车</string>
+    <string name="ev_class_motorcycle">摩托车</string>
     <string name="ev_class_three_wheeler">三轮车</string>
     <string name="ev_class_car">汽车</string>
     <string name="vehicle_profile_ev_motor_power">电机功率</string>
@@ -656,9 +659,11 @@
     <string name="co2_calc_fuel_needed">所需燃料</string>
     <string name="co2_calc_energy_needed">所需电量</string>
     <string name="co2_calc_litres">%1$s 升</string>
+    <string name="co2_calc_gallons">%1$s 加仑</string>
     <string name="co2_calc_kwh">%1$s 千瓦时</string>
     <string name="co2_calc_cost_label">费用</string>
     <string name="co2_calc_per_litre">每升</string>
+    <string name="co2_calc_per_gallon">每加仑</string>
     <string name="co2_calc_per_kwh">每千瓦时</string>
     <string name="co2_calc_price_provenance">按 %1$s %2$s · %3$s</string>
     <string name="co2_calc_price_source_user">您设定的价格</string>
@@ -673,6 +678,7 @@
     <string name="fuel_log_title">加油记录</string>
     <string name="fuel_log_add_title">添加一次加油</string>
     <string name="fuel_log_litres">升数</string>
+    <string name="fuel_log_gallons">加仑</string>
     <string name="fuel_log_amount">金额（%1$s）</string>
     <string name="fuel_log_full_tank">加满油箱</string>
     <string name="fuel_log_full_tank_hint">只有加满到油箱口的记录才能测算油耗。未加满的记录同样会保存。</string>
@@ -681,10 +687,13 @@
     <string name="fuel_log_partial">未加满</string>
     <string name="fuel_log_delete">删除</string>
     <string name="fuel_log_entry_line">%1$s 升 · %2$s %3$s</string>
+    <string name="fuel_log_entry_line_gal">%1$s 加仑 · %2$s %3$s</string>
     <string name="fuel_log_not_yet_title">数据还不够</string>
     <string name="fuel_log_not_yet_body">记录两次加满油箱，我们就能根据已记录的行驶距离算出您车辆的真实油耗 — 无需查看里程表。</string>
     <string name="fuel_log_economy_value">%1$s 升/100 公里</string>
+    <string name="fuel_log_economy_value_mpg">%1$s MPG</string>
     <string name="fuel_log_economy_basis">依据 %1$d 次加油、共 %2$s 公里测算</string>
+    <string name="fuel_log_economy_basis_mi">基于 %1$d 次加油，行驶 %2$s 英里</string>
     <string name="fuel_log_economy_early">目前仅基于一箱油 — 记录越多结果越稳定。</string>
     <string name="co2_calc_cost_is_measured">依据您最近 %1$d 次加油测算。</string>
     <string name="co2_calc_log_fillup">记录一次加油</string>
@@ -698,6 +707,7 @@
     <string name="statement_spend_so_far">目前燃料支出</string>
     <string name="statement_no_cost_basis">本月没有驾车</string>
     <string name="statement_litres_over">行驶 %2$s 公里，用油 %1$s 升</string>
+    <string name="statement_gallons_over">行驶 %2$s 英里消耗 %1$s 加仑</string>
     <string name="statement_basis_measured">依据您自己的加油记录和小票。</string>
     <string name="statement_basis_estimated">估算值 — 记录一次加油即可得到精确值。</string>
     <string name="statement_trips">行程</string>
@@ -734,6 +744,7 @@
     <string name="settings_pricing_region_no_data">%1$s 暂无公布价格 — 请设置您自己的价格。</string>
     <string name="settings_pricing_region_active">正在使用 %1$s 的价格，货币为 %2$s</string>
     <string name="vehicle_profile_km_per_l">您的车油耗为（公里/升）</string>
+    <string name="vehicle_profile_mpg">您的车油耗为（英里/加仑）</string>
     <string name="vehicle_profile_km_per_l_hint">可选。留空则按排量估算。</string>
     <string name="co2_calc_cost_is_owner_stated">依据您填写的公里/升 — 记录一次加油即可精确测算。</string>
     <string name="analysis_view_week_sessions">查看本周记录</string>

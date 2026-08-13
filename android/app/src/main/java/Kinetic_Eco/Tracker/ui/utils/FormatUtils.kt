@@ -1,5 +1,6 @@
 package Kinetic_Eco.Tracker.ui.utils
 
+import Kinetic_Eco.Tracker.data.Co2Calculator
 import Kinetic_Eco.Tracker.data.UnitSystem
 import java.util.concurrent.TimeUnit
 
@@ -110,5 +111,95 @@ fun formatEnergyValue(kcal: Double, unit: EnergyUnit): String {
             }
         }
     }
+}
+
+// ── Fuel volume, economy, and price ─────────────────────────
+//
+// Everything is *stored* metric — litres, km/L, price per litre — and converted only for
+// display, the same way distance is stored in metres and rendered as km or miles. Nothing
+// below is ever written back to a profile, a fuel entry, or a price document.
+
+/** Fuel presentation: litres + km/L, or US gallons + MPG. */
+enum class FuelUnit { LITRES_KM_PER_L, US_GALLONS_MPG }
+
+/** Litres in one **US** liquid gallon. The imperial gallon is 4.546 L — a 21% different MPG. */
+const val LITRES_PER_US_GALLON = 3.785411784
+
+/**
+ * Fuel units follow the distance unit already chosen in Appearance: km → litres and km/L,
+ * miles → gallons and MPG. There is deliberately no separate setting.
+ *
+ * Consequence: **L/100km is not reachable.** It is a metric unit, so it cannot be
+ * distinguished from km/L by a metric/imperial flag; exposing it needs its own preference.
+ */
+fun UnitSystem.toFuelUnit(): FuelUnit =
+    if (usesMetricDistance()) FuelUnit.LITRES_KM_PER_L else FuelUnit.US_GALLONS_MPG
+
+/** Converts a canonical litre volume into the display unit. */
+fun convertFuelVolume(litres: Double, unit: FuelUnit): Double = when (unit) {
+    FuelUnit.LITRES_KM_PER_L -> litres
+    FuelUnit.US_GALLONS_MPG -> litres / LITRES_PER_US_GALLON
+}
+
+/** Inverse of [convertFuelVolume] — for turning a typed volume back into stored litres. */
+fun fuelVolumeToLitres(volume: Double, unit: FuelUnit): Double = when (unit) {
+    FuelUnit.LITRES_KM_PER_L -> volume
+    FuelUnit.US_GALLONS_MPG -> volume * LITRES_PER_US_GALLON
+}
+
+/**
+ * Converts canonical km/L into the display unit.
+ *
+ * MPG(US) = km/L × (miles per km) × (litres per gallon). Expressed via [Co2Calculator.KM_PER_MILE]
+ * rather than a baked-in 2.352 so the factor cannot drift from the one distance already uses.
+ */
+fun convertFuelEconomy(kmPerL: Double, unit: FuelUnit): Double = when (unit) {
+    FuelUnit.LITRES_KM_PER_L -> kmPerL
+    FuelUnit.US_GALLONS_MPG -> kmPerL * LITRES_PER_US_GALLON / Co2Calculator.KM_PER_MILE
+}
+
+/**
+ * Converts canonical **L/100 km** (as measured from fill-ups) into the display unit.
+ *
+ * Note this stays L/100 km on metric rather than becoming km/L: the fuel log has always
+ * reported measured consumption that way, and it is the one place L/100 km is reachable.
+ * Consumption and economy are reciprocals, so MPG = 235.2 / (L/100 km).
+ */
+fun convertConsumption(lPer100Km: Double, unit: FuelUnit): Double = when (unit) {
+    FuelUnit.LITRES_KM_PER_L -> lPer100Km
+    // A zero would mean a tank that covers infinite distance; guard rather than divide.
+    FuelUnit.US_GALLONS_MPG ->
+        if (lPer100Km <= 0.0) 0.0
+        else 100.0 * LITRES_PER_US_GALLON / (Co2Calculator.KM_PER_MILE * lPer100Km)
+}
+
+/** Inverse of [convertFuelEconomy] — for turning typed input back into stored km/L. */
+fun fuelEconomyToKmPerL(displayed: Double, unit: FuelUnit): Double = when (unit) {
+    FuelUnit.LITRES_KM_PER_L -> displayed
+    FuelUnit.US_GALLONS_MPG -> displayed * Co2Calculator.KM_PER_MILE / LITRES_PER_US_GALLON
+}
+
+/** Converts a canonical price-per-litre into price per displayed volume unit. */
+fun convertPricePerVolume(perLitre: Double, unit: FuelUnit): Double = when (unit) {
+    FuelUnit.LITRES_KM_PER_L -> perLitre
+    FuelUnit.US_GALLONS_MPG -> perLitre * LITRES_PER_US_GALLON
+}
+
+/** Inverse of [convertPricePerVolume] — for turning a typed price back into a stored per-litre one. */
+fun pricePerVolumeToPerLitre(perVolume: Double, unit: FuelUnit): Double = when (unit) {
+    FuelUnit.LITRES_KM_PER_L -> perVolume
+    FuelUnit.US_GALLONS_MPG -> perVolume / LITRES_PER_US_GALLON
+}
+
+/** "L" or "gal". */
+fun fuelVolumeUnitLabel(unit: FuelUnit): String = when (unit) {
+    FuelUnit.LITRES_KM_PER_L -> "L"
+    FuelUnit.US_GALLONS_MPG -> "gal"
+}
+
+/** "km/L" or "MPG". */
+fun fuelEconomyUnitLabel(unit: FuelUnit): String = when (unit) {
+    FuelUnit.LITRES_KM_PER_L -> "km/L"
+    FuelUnit.US_GALLONS_MPG -> "MPG"
 }
 

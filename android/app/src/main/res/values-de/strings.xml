@@ -461,6 +461,8 @@
     <string name="primary_fuel_petrol">Benzin</string>
     <string name="primary_fuel_diesel">Diesel</string>
     <string name="primary_fuel_electric">Elektrisch</string>
+    <string name="primary_fuel_hybrid">Hybrid</string>
+    <string name="primary_fuel_plug_in_hybrid">Plug-in-Hybrid</string>
     <string name="vehicle_profile_body_type">Karosserieform</string>
     <string name="body_type_hatchback">Schrägheck</string>
     <string name="body_type_sedan">Limousine</string>
@@ -469,6 +471,7 @@
     <string name="body_type_minivan">Van / Großraumlimousine</string>
     <string name="vehicle_profile_ev_class">Fahrzeugtyp</string>
     <string name="ev_class_two_wheeler">Zweirad</string>
+    <string name="ev_class_motorcycle">Motorrad</string>
     <string name="ev_class_three_wheeler">Dreirad</string>
     <string name="ev_class_car">Auto</string>
     <string name="vehicle_profile_ev_motor_power">Motorleistung</string>
@@ -660,9 +663,11 @@
     <string name="co2_calc_fuel_needed">Benötigter Kraftstoff</string>
     <string name="co2_calc_energy_needed">Benötigte Ladung</string>
     <string name="co2_calc_litres">%1$s L</string>
+    <string name="co2_calc_gallons">%1$s gal</string>
     <string name="co2_calc_kwh">%1$s kWh</string>
     <string name="co2_calc_cost_label">Kosten</string>
     <string name="co2_calc_per_litre">pro Liter</string>
+    <string name="co2_calc_per_gallon">pro Gallone</string>
     <string name="co2_calc_per_kwh">pro kWh</string>
     <string name="co2_calc_price_provenance">Zu %1$s %2$s · %3$s</string>
     <string name="co2_calc_price_source_user">dein Preis</string>
@@ -677,6 +682,7 @@
     <string name="fuel_log_title">Tankbuch</string>
     <string name="fuel_log_add_title">Tankfüllung hinzufügen</string>
     <string name="fuel_log_litres">Liter</string>
+    <string name="fuel_log_gallons">Gallonen</string>
     <string name="fuel_log_amount">Betrag (%1$s)</string>
     <string name="fuel_log_full_tank">Randvoll getankt</string>
     <string name="fuel_log_full_tank_hint">Nur randvolle Tankfüllungen können den Verbrauch messen. Teilbetankungen werden trotzdem erfasst.</string>
@@ -685,10 +691,13 @@
     <string name="fuel_log_partial">Teilbetankung</string>
     <string name="fuel_log_delete">Löschen</string>
     <string name="fuel_log_entry_line">%1$s L · %2$s %3$s</string>
+    <string name="fuel_log_entry_line_gal">%1$s gal · %2$s %3$s</string>
     <string name="fuel_log_not_yet_title">Noch nicht genug Daten</string>
     <string name="fuel_log_not_yet_body">Erfasse zwei randvolle Tankfüllungen, und wir ermitteln den tatsächlichen Verbrauch deines Autos aus der bereits aufgezeichneten Strecke — ganz ohne Kilometerstand.</string>
     <string name="fuel_log_economy_value">%1$s L/100 km</string>
+    <string name="fuel_log_economy_value_mpg">%1$s MPG</string>
     <string name="fuel_log_economy_basis">Gemessen über %1$d Tankfüllungen und %2$s km</string>
+    <string name="fuel_log_economy_basis_mi">Gemessen aus %1$d Tankfüllungen über %2$s mi</string>
     <string name="fuel_log_economy_early">Bisher auf einer Tankfüllung basierend — der Wert wird mit weiteren genauer.</string>
     <string name="co2_calc_cost_is_measured">Gemessen an deinen letzten %1$d Tankfüllungen.</string>
     <string name="co2_calc_log_fillup">Tankfüllung erfassen</string>
@@ -702,6 +711,7 @@
     <string name="statement_spend_so_far">Bisher für Kraftstoff ausgegeben</string>
     <string name="statement_no_cost_basis">Diesen Monat nicht gefahren</string>
     <string name="statement_litres_over">%1$s L auf %2$s km Fahrstrecke</string>
+    <string name="statement_gallons_over">%1$s gal auf %2$s mi Fahrt</string>
     <string name="statement_basis_measured">Basiert auf deinen eigenen Tankfüllungen und Belegen.</string>
     <string name="statement_basis_estimated">Geschätzt — trage eine Tankfüllung ein, um es genau zu machen.</string>
     <string name="statement_trips">Fahrten</string>
@@ -738,6 +748,7 @@
     <string name="settings_pricing_region_no_data">Für %1$s gibt es noch keine veröffentlichten Preise — lege deinen eigenen fest.</string>
     <string name="settings_pricing_region_active">Preise aus %1$s werden verwendet, in %2$s</string>
     <string name="vehicle_profile_km_per_l">Dein Auto schafft (km/L)</string>
+    <string name="vehicle_profile_mpg">Dein Auto schafft (MPG)</string>
     <string name="vehicle_profile_km_per_l_hint">Optional. Leer lassen, um aus dem Hubraum zu schätzen.</string>
     <string name="co2_calc_cost_is_owner_stated">Basiert auf den von dir eingegebenen km/L — trage eine Tankfüllung ein, um es genau zu messen.</string>
     <string name="analysis_view_week_sessions">Sitzungen dieser Woche ansehen</string>

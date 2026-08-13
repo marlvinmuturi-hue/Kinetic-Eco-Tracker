@@ -239,6 +239,8 @@
     <string name="primary_fuel_petrol">Petrol</string>
     <string name="primary_fuel_diesel">Diesel</string>
     <string name="primary_fuel_electric">Electric</string>
+    <string name="primary_fuel_hybrid">Hybrid</string>
+    <string name="primary_fuel_plug_in_hybrid">Plug-in hybrid</string>
     <!-- Body type (combustion only) -->
     <string name="vehicle_profile_body_type">Body type</string>
     <string name="body_type_hatchback">Hatchback</string>
@@ -249,6 +251,7 @@
     <!-- Electric vehicle class -->
     <string name="vehicle_profile_ev_class">Vehicle type</string>
     <string name="ev_class_two_wheeler">2-wheeler</string>
+    <string name="ev_class_motorcycle">Motorcycle</string>
     <string name="ev_class_three_wheeler">3-wheeler</string>
     <string name="ev_class_car">Car</string>
     <!-- Electric motor power band -->
@@ -740,9 +743,11 @@
     <string name="co2_calc_fuel_needed">Fuel needed</string>
     <string name="co2_calc_energy_needed">Charge needed</string>
     <string name="co2_calc_litres">%1$s L</string>
+    <string name="co2_calc_gallons">%1$s gal</string>
     <string name="co2_calc_kwh">%1$s kWh</string>
     <string name="co2_calc_cost_label">Cost</string>
     <string name="co2_calc_per_litre">per litre</string>
+    <string name="co2_calc_per_gallon">per gallon</string>
     <string name="co2_calc_per_kwh">per kWh</string>
     <!-- %1$s = price with currency, %2$s = "per litre"/"per kWh", %3$s = source -->
     <string name="co2_calc_price_provenance">At %1$s %2$s · %3$s</string>
@@ -761,6 +766,7 @@
     <string name="fuel_log_title">Fuel log</string>
     <string name="fuel_log_add_title">Add a fill-up</string>
     <string name="fuel_log_litres">Litres</string>
+    <string name="fuel_log_gallons">Gallons</string>
     <!-- %1$s = currency code -->
     <string name="fuel_log_amount">Amount (%1$s)</string>
     <string name="fuel_log_full_tank">Filled to the brim</string>
@@ -771,12 +777,15 @@
     <string name="fuel_log_delete">Delete</string>
     <!-- %1$s = litres, %2$s = currency, %3$s = amount -->
     <string name="fuel_log_entry_line">%1$s L · %2$s %3$s</string>
+    <string name="fuel_log_entry_line_gal">%1$s gal · %2$s %3$s</string>
     <string name="fuel_log_not_yet_title">Not enough data yet</string>
     <string name="fuel_log_not_yet_body">Log two brim-full fill-ups and we will work out the real fuel economy of your car from the distance you have already tracked — no odometer needed.</string>
     <!-- %1$s = litres per 100 km -->
     <string name="fuel_log_economy_value">%1$s L/100 km</string>
+    <string name="fuel_log_economy_value_mpg">%1$s MPG</string>
     <!-- %1$d = number of fill-up intervals, %2$s = km covered -->
     <string name="fuel_log_economy_basis">Measured from %1$d fill-ups over %2$s km</string>
+    <string name="fuel_log_economy_basis_mi">Measured from %1$d fill-ups over %2$s mi</string>
     <string name="fuel_log_economy_early">Based on one tankful so far — it will settle as you log more.</string>
     <!-- Calculator: measured vs estimated -->
     <!-- %1$d = number of fill-ups -->
@@ -795,6 +804,7 @@
     <string name="statement_no_cost_basis">No driving this month</string>
     <!-- %1$s = litres, %2$s = km -->
     <string name="statement_litres_over">%1$s L over %2$s km driven</string>
+    <string name="statement_gallons_over">%1$s gal over %2$s mi driven</string>
     <string name="statement_basis_measured">Based on your own fill-ups and receipts.</string>
     <string name="statement_basis_estimated">Estimated — log a fill-up to make this exact.</string>
     <string name="statement_trips">Trips</string>
@@ -842,6 +852,7 @@
     <!-- %1$s = country, %2$s = currency code -->
     <string name="settings_pricing_region_active">Using %1$s prices in %2$s</string>
     <string name="vehicle_profile_km_per_l">Your car does (km/L)</string>
+    <string name="vehicle_profile_mpg">Your car does (MPG)</string>
     <string name="vehicle_profile_km_per_l_hint">Optional. Leave blank to estimate from engine size.</string>
     <string name="co2_calc_cost_is_owner_stated">Based on the km/L you entered — log a fill-up to measure it exactly.</string>
     <string name="analysis_view_week_sessions">View this week\'s sessions</string>

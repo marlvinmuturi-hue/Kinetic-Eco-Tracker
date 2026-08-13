@@ -22,6 +22,13 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import Kinetic_Eco.Tracker.R
+import Kinetic_Eco.Tracker.data.Co2Calculator
+import Kinetic_Eco.Tracker.services.UserPreferencesManager
+import Kinetic_Eco.Tracker.ui.utils.FuelUnit
+import Kinetic_Eco.Tracker.ui.utils.convertConsumption
+import Kinetic_Eco.Tracker.ui.utils.convertFuelVolume
+import Kinetic_Eco.Tracker.ui.utils.fuelVolumeToLitres
+import Kinetic_Eco.Tracker.ui.utils.toFuelUnit
 import Kinetic_Eco.Tracker.data.FuelEconomyCalculator
 import Kinetic_Eco.Tracker.services.EnergyPriceRepository
 import Kinetic_Eco.Tracker.services.FuelLogRepository
@@ -56,6 +63,12 @@ fun FuelLogScreen(
     val currencyCode = prices?.currencyCode ?: EnergyPriceRepository.currentCurrencyCode()
     val entries by repo.observeEntries(userId).collectAsStateWithLifecycle(initialValue = emptyList())
 
+    // Fill-ups are stored in litres; the field accepts whatever unit the user reads on the
+    // pump. Nothing below writes a converted value anywhere except through toLitres.
+    val fuelUnit = remember(context) {
+        UserPreferencesManager(context.applicationContext).getUnitPreference().toFuelUnit()
+    }
+
     var litresText by rememberSaveable { mutableStateOf("") }
     var amountText by rememberSaveable { mutableStateOf("") }
     var fullTank by rememberSaveable { mutableStateOf(true) }
@@ -65,7 +78,10 @@ fun FuelLogScreen(
     // side of every interval, so a cached figure would quietly go stale.
     LaunchedEffect(userId) { if (userId.isNotBlank()) repo.sync(userId) }
 
+    // Typed in the displayed unit, normalised to litres immediately so every downstream
+    // use — validation, storage, the economy calculation — sees one canonical quantity.
     val litres = litresText.replace(',', '.').toDoubleOrNull()
+        ?.let { fuelVolumeToLitres(it, fuelUnit) }
     val amount = amountText.replace(',', '.').toDoubleOrNull()
     val canSave = litres != null && litres > 0.0 && amount != null && amount >= 0.0
 
@@ -90,7 +106,11 @@ fun FuelLogScreen(
             )
         }
 
-        EconomyCard(economy = economy, intervalsNeeded = FuelEconomyCalculator.MIN_INTERVALS_FOR_CONFIDENCE)
+        EconomyCard(
+            economy = economy,
+            intervalsNeeded = FuelEconomyCalculator.MIN_INTERVALS_FOR_CONFIDENCE,
+            fuelUnit = fuelUnit
+        )
 
         // ── Add a fill-up ────────────────────────────────────────────────────
         Card(
@@ -111,7 +131,14 @@ fun FuelLogScreen(
                     OutlinedTextField(
                         value = litresText,
                         onValueChange = { if (it.length <= 7) litresText = it },
-                        label = { Text(stringResource(R.string.fuel_log_litres)) },
+                        label = {
+                            Text(
+                                stringResource(
+                                    if (fuelUnit == FuelUnit.US_GALLONS_MPG) R.string.fuel_log_gallons
+                                    else R.string.fuel_log_litres
+                                )
+                            )
+                        },
                         singleLine = true,
                         keyboardOptions = KeyboardOptions(
                             keyboardType = KeyboardType.Decimal,
@@ -200,8 +227,9 @@ fun FuelLogScreen(
                             Column(modifier = Modifier.weight(1f)) {
                                 Text(
                                     text = stringResource(
-                                        R.string.fuel_log_entry_line,
-                                        String.format("%.2f", entry.litres),
+                                        if (fuelUnit == FuelUnit.US_GALLONS_MPG) R.string.fuel_log_entry_line_gal
+                                        else R.string.fuel_log_entry_line,
+                                        String.format("%.2f", convertFuelVolume(entry.litres, fuelUnit)),
                                         entry.currencyCode,
                                         String.format("%,.0f", entry.amountPaid)
                                     ),
@@ -238,7 +266,8 @@ fun FuelLogScreen(
 @Composable
 private fun EconomyCard(
     economy: Kinetic_Eco.Tracker.data.MeasuredEconomy?,
-    intervalsNeeded: Int
+    intervalsNeeded: Int,
+    fuelUnit: FuelUnit
 ) {
     val colorScheme = MaterialTheme.colorScheme
     Card(
@@ -265,8 +294,9 @@ private fun EconomyCard(
             } else {
                 Text(
                     text = stringResource(
-                        R.string.fuel_log_economy_value,
-                        String.format("%.1f", economy.lPer100Km)
+                        if (fuelUnit == FuelUnit.US_GALLONS_MPG) R.string.fuel_log_economy_value_mpg
+                        else R.string.fuel_log_economy_value,
+                        String.format("%.1f", convertConsumption(economy.lPer100Km, fuelUnit))
                     ),
                     style = MaterialTheme.typography.headlineMedium,
                     fontWeight = FontWeight.Bold,
@@ -274,9 +304,15 @@ private fun EconomyCard(
                 )
                 Text(
                     text = stringResource(
-                        R.string.fuel_log_economy_basis,
+                        if (fuelUnit == FuelUnit.US_GALLONS_MPG) R.string.fuel_log_economy_basis_mi
+                        else R.string.fuel_log_economy_basis,
                         economy.intervals,
-                        String.format("%,.0f", economy.totalDistanceKm)
+                        String.format(
+                            "%,.0f",
+                            if (fuelUnit == FuelUnit.US_GALLONS_MPG)
+                                economy.totalDistanceKm / Co2Calculator.KM_PER_MILE
+                            else economy.totalDistanceKm
+                        )
                     ),
                     style = MaterialTheme.typography.bodySmall,
                     color = colorScheme.onSurfaceVariant

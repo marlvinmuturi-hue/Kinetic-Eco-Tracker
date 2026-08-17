@@ -1,5 +1,6 @@
 package Kinetic_Eco.Tracker.services
 
+import Kinetic_Eco.Tracker.data.SessionPlausibility
 import android.app.*
 import android.content.Context
 import android.content.Intent
@@ -283,6 +284,12 @@ class TrackingService : LifecycleService() {
     private var stepCountAtLastGps = 0
     private val MAX_ACCURACY_METERS_FOR_DISTANCE = 25f
     /**
+     * Doppler speed below which a sub-accuracy position step is treated as noise rather than
+     * travel. Set under walking pace on purpose: anything genuinely moving faster than this
+     * reports it, and anything slower is walking, which the pedometer veto already covers.
+     */
+    private val GPS_NOISE_SPEED_FLOOR_MPS = 1.0f
+    /**
      * Walking-specific accuracy ceiling for accepting GPS into distance.
      * Raised from 25 m — at 25 m we threw away most urban-canyon fixes and
      * the step-cap blending below was already strong enough to bound multipath
@@ -416,8 +423,14 @@ class TrackingService : LifecycleService() {
         val statsWithRoute = adjustedStats.copy(routePath = routePath, segments = segments)
         val app = applicationContext as KineticEcoApplication
 
-        if (rawStats.totalDistance < 200.0) {
-            android.util.Log.d("TrackingService", "Stop&save from notification: session too short (${rawStats.totalDistance}m < 200m), discarding")
+        // Judged on the stats that carry the route, not the raw ones — the drift rule needs
+        // geometry, and rawStats has none.
+        SessionPlausibility.reasonToDiscard(statsWithRoute)?.let { reason ->
+            android.util.Log.d(
+                "TrackingService",
+                "Stop&save from notification: discarding session ($reason, " +
+                    "${statsWithRoute.totalDistance}m path)"
+            )
             stopTracking()
             return
         }
@@ -792,8 +805,12 @@ class TrackingService : LifecycleService() {
         }
 
         if (userId != null && userId.isNotEmpty()) {
-            if (stats.totalDistance < 200.0) {
-                android.util.Log.d("TrackingService", "Auto-stop: session too short (${stats.totalDistance}m < 200m), discarding")
+            val discardReason = SessionPlausibility.reasonToDiscard(statsWithRoute)
+            if (discardReason != null) {
+                android.util.Log.d(
+                    "TrackingService",
+                    "Auto-stop: discarding session ($discardReason, ${statsWithRoute.totalDistance}m path)"
+                )
             } else {
                 app.applicationScope.launch(Dispatchers.IO) {
                     try {
@@ -2333,7 +2350,22 @@ class TrackingService : LifecycleService() {
             }
             if (refinedActivity != ActivityType.FLYING && position.accuracy > accLimit) {
                 dd = 0.0
-            } else if (refinedActivity == ActivityType.WALKING && dd > 0) {
+            }
+
+            // A step shorter than the fix's own error radius carries no information: the phone
+            // could equally have not moved. Doppler speed is far more robust to multipath than
+            // differencing two positions, so a near-zero reported speed alongside a
+            // sub-accuracy step means the device is sitting still — which is exactly the indoor
+            // case where motor mode had no cap at all and 4 minutes on a table accumulated
+            // 390 m. Walking and running already veto on the pedometer below; this closes the
+            // same hole for every other mode.
+            if (dd > 0 && refinedActivity != ActivityType.FLYING &&
+                dd < position.accuracy && position.speed < GPS_NOISE_SPEED_FLOOR_MPS
+            ) {
+                dd = 0.0
+            }
+
+            if (dd > 0 && refinedActivity == ActivityType.WALKING) {
                 val stepsThisInterval = (lastStepCount - stepCountAtLastGps).coerceAtLeast(0)
                 // When the device has a step counter and it reports nothing, GPS-only speed is
                 // unreliable (drift, being driven, early warm-up) — discard the segment entirely.

@@ -1,13 +1,17 @@
-# Release Notes — V1.9.19 (versionCode 32)
+# Release Notes — V1.9.20 (versionCode 33)
 
-> **32 is the single release that carries everything. Production is on versionCode
-> 20**, so users jump 20 → 32 in one step: Play Billing, the paywall, the
+> **33 is the single release that carries everything. Production is on versionCode
+> 20**, so users jump 20 → 33 in one step: Play Billing, the paywall, the
 > week-window fix, the calculator changes, recurring-trip mining, Room schema v9 and
 > kotlinx-serialization 1.8.1, plus fuel-and-cost figures in the calculator.
-> versionCodes 21–31 were build/test iterations and
+> versionCodes 21–32 were build/test iterations and
 > none of them should be promoted — the notes below record why each was superseded.
 >
-> **32 reverts the frosted-glass appearance that shipped in 31** and returns the app to
+> **33 stops the app recording sessions that never happened.** A phone sitting indoors
+> logged a 4-minute, 0.39 km "trip" at 33 km/h top speed from GPS drift alone. 32 was
+> uploaded, so its versionCode is permanently consumed and cannot be reused.
+>
+> **32 reverted the frosted-glass appearance that shipped in 31** and returned the app to
 > its previous look. The leaderboard fixes 31 introduced are kept in full. 31 was
 > uploaded, so its versionCode is permanently consumed and cannot be reused.
 >
@@ -104,6 +108,48 @@
 ---
 
 ## Full changelog
+
+### 🛰️ New in versionCode 33 — false sessions from GPS drift are filtered out
+
+**A phone sitting still indoors recorded a trip.** Four minutes, 0.39 km, 33.1 km/h top
+speed, without leaving the house. Three things had to line up, and all three did:
+
+- **The only save-time guard was a 200 m path-length floor, and drift outgrows it.** GPS
+  scatter accumulates *monotonically* — every jitter adds a positive segment and nothing
+  ever subtracts — so sitting still for longer produces a bigger fake number, not a
+  rejected one. 390 m cleared the floor by nearly 2×.
+- **Nothing checked net displacement.** Path length cannot tell 390 m of walking from
+  390 m of jitter around a sofa. Distance from the start can.
+- **Motor modes had no consumption cap.** Walking and running veto a segment when the
+  pedometer reports no steps; every other mode accepted whatever GPS claimed. Indoor
+  multipath cleared the 30 m accuracy gate for motor promotion, and a single 9 m jump
+  between fixes latched as a 33 km/h top speed.
+
+**New `SessionPlausibility`** is now the one place the "should this be saved?" rule lives,
+and **all four save paths call it** — notification stop-and-save, idle auto-stop, manual
+stop, and crash recovery. The rule was previously a bare `totalDistance < 200.0` copied
+into three of them, with recovery checking the checkpoint *before* its route was attached,
+so it could never see geometry at all.
+
+A session is dropped as drift when it stayed under 75 m from its start, *and* that
+displacement is either under 15% of the path or under 50 m, *and* the step count does not
+corroborate the distance. Each clause protects a real trip: the 75 m ceiling keeps laps of
+a running track and park loops, and the step clause keeps someone pacing a small yard.
+
+**Sub-accuracy GPS steps no longer count toward distance.** A displacement smaller than the
+fix's own error radius, with Doppler speed under 1 m/s, is discarded — Doppler is far more
+robust to multipath than differencing two positions, so near-zero reported speed alongside
+a tiny step means the device is stationary.
+
+**Tests:** 13 new, suite now 162 and green. Deliberately weighted toward false positives —
+this filter *deletes* the user's trip, and a wrongly deleted session is invisible while a
+wrongly kept one is merely wrong. Track laps, out-and-back walks, tight loops and
+route-less sessions are all pinned. One of those tests caught a real hole during
+development: a ratio-only rule let a 250 m drift through, which is why the absolute 50 m
+floor exists.
+
+**Not verified on a device.** Compile- and unit-verified only; the tests use synthetic
+geometry rather than recorded routes.
 
 ### ↩️ New in versionCode 32 — the previous look, fuel units, and hybrid vehicles
 
@@ -381,6 +427,6 @@ failure once the document has been cached. That branch is reasoned and compiled 
 
 ---
 
-_Build: versionName `V1.9.19`, versionCode `32`, targetSdk 36, minSdk 24. Signed
+_Build: versionName `V1.9.20`, versionCode `33`, targetSdk 36, minSdk 24. Signed
 with the Kinetic Eco Tracker upload key. Artifact:
 `app/build/outputs/bundle/release/app-release.aab`._

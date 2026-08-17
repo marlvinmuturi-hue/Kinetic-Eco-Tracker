@@ -1,5 +1,6 @@
 package Kinetic_Eco.Tracker.viewmodel
 
+import Kinetic_Eco.Tracker.data.SessionPlausibility
 import android.app.Application
 import android.content.ComponentName
 import android.content.Context
@@ -239,8 +240,13 @@ class TrackerViewModel(application: Application) : AndroidViewModel(application)
             val segments = trackingService?.getFinalSegments() ?: emptyList()
             val adjustedStats = adjustStatsForSimplifiedPath(stats, routePath)
             val statsWithRoute = adjustedStats.copy(routePath = routePath, segments = segments)
-            if (stats.totalDistance < 200.0) {
-                android.util.Log.d(TAG, "⏭️ Session discarded: ${stats.totalDistance}m < 200m minimum")
+            // Judged on statsWithRoute, not the pre-adjustment stats: the drift rule needs the
+            // route geometry, and adjustStatsForSimplifiedPath can move totalDistance.
+            SessionPlausibility.reasonToDiscard(statsWithRoute)?.let { reason ->
+                android.util.Log.d(
+                    TAG,
+                    "⏭️ Session discarded ($reason): ${statsWithRoute.totalDistance}m path"
+                )
                 return
             }
             android.util.Log.d(TAG, "💾 Calling sessionManager.saveSession...")

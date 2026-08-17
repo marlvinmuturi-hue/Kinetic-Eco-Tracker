@@ -1,5 +1,6 @@
 package Kinetic_Eco.Tracker.services
 
+import Kinetic_Eco.Tracker.data.SessionPlausibility
 import android.content.Context
 import android.util.Log
 import Kinetic_Eco.Tracker.data.SessionCheckpoint
@@ -55,12 +56,22 @@ object SessionRecovery {
             return null
         }
 
+        val stats = checkpoint.stats.copy(
+            routePath = checkpoint.routePath,
+            segments = checkpoint.segments,
+            sessionEndTimeMs = checkpoint.savedAtMs
+        )
+
+        // The distance floor above runs on the checkpoint before its route is attached, so it
+        // cannot see geometry. Re-judge the assembled session against the same rule the live
+        // save paths use: a crash is no reason to resurrect a session that was drift anyway.
+        SessionPlausibility.reasonToDiscard(stats)?.let { reason ->
+            Log.d(TAG, "Orphaned session rejected ($reason, ${stats.totalDistance}m path); dropping")
+            store.clear()
+            return null
+        }
+
         return try {
-            val stats = checkpoint.stats.copy(
-                routePath = checkpoint.routePath,
-                segments = checkpoint.segments,
-                sessionEndTimeMs = checkpoint.savedAtMs
-            )
             val sessionId = SessionManager(appContext).saveSession(
                 userId = userId,
                 stats = stats,

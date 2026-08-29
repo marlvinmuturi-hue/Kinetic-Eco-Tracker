@@ -160,6 +160,11 @@ fun DashboardScreen(
     // Last-week aggregates for week-over-week delta on tiles and hero card.
     val lastWeekCo2Saved = lastWeekSessions.sumOf { it.co2Conserved }
 
+    // Lifetime total — every session, unfiltered by any window. Deliberately not derived
+    // from thisWeekCutoff: it is the one number on this screen that survives the Monday
+    // rollover, which is what stops an empty week reading as lost history.
+    val allTimeCo2Saved = remember(allSessions) { allSessions.sumOf { it.co2Conserved } }
+
     // Per-day CO2 saved buckets for the mini chart inside the hero card.
     // Index 0 = Monday … 6 = Sunday, matching the hero total directly above it.
     // Previously these were rolling "days ago" buckets fed calendar-week-filtered
@@ -415,6 +420,7 @@ fun DashboardScreen(
             WeeklyReportHeroCard(
                 co2SavedThisWeek = weekCo2Saved,
                 co2SavedLastWeek = lastWeekCo2Saved,
+                co2SavedAllTime = allTimeCo2Saved,
                 dailyCo2Saved = dailyCo2Saved,
                 highlights = highlights,
                 equivalencyLine = heroEquivalency,
@@ -568,6 +574,7 @@ private fun WeeklyGoalDialog(
 private fun WeeklyReportHeroCard(
     co2SavedThisWeek: Double,
     co2SavedLastWeek: Double,
+    co2SavedAllTime: Double,
     dailyCo2Saved: List<Double>,
     highlights: WeekHighlights,
     equivalencyLine: String?,
@@ -706,11 +713,26 @@ private fun WeeklyReportHeroCard(
                         color = colorScheme.onSurface
                     )
                     Text(
-                        text = motivationalHeroSubtitle(co2SavedThisWeek),
+                        text = motivationalHeroSubtitle(co2SavedThisWeek, co2SavedLastWeek),
                         style = MaterialTheme.typography.bodyMedium,
                         fontWeight = FontWeight.Medium,
                         color = colorScheme.onSurface.copy(alpha = 0.9f)
                     )
+                    // Lifetime total: the one figure here that does not reset at the week
+                    // boundary. Everything else on this card is calendar-week filtered and
+                    // empties every Monday; this stays put, so the history is always visible
+                    // somewhere. Hidden until there is something to show, so a genuinely new
+                    // user isn't greeted with a second zero.
+                    if (co2SavedAllTime >= 0.05) {
+                        Text(
+                            text = stringResource(
+                                R.string.hero_lifetime_total,
+                                co2SavedAllTime.format(2)
+                            ),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = colorScheme.onSurface.copy(alpha = 0.7f)
+                        )
+                    }
                     // Friendly equivalency, only when we actually have something
                     // worth comparing against. Keeps the hero feeling concrete
                     // instead of abstract "how much is X kg". When [onCycleEquivalency]
@@ -2333,12 +2355,30 @@ private fun SproutingPlantScene(
     }
 }
 
+/**
+ * Subtitle under the hero number.
+ *
+ * The [lastWeekCo2SavedKg] branch exists for the week boundary. Every surface on this
+ * dashboard is filtered to the calendar week, so at local Monday 00:00 the headline, the
+ * tiles, the chart, the highlights and the equivalency line all go to zero at once — which
+ * reads as the app having discarded the user's history rather than as a new week starting.
+ * The headline stays honest at 0.00; this line supplies the continuity, so a user opening
+ * the app on a Monday morning sees evidence their data is still there.
+ *
+ * Deliberately not a nudge about doing better: at the start of a week there is nothing the
+ * user could yet have done, so a prompt would be scolding them for the calendar.
+ */
 @Composable
-private fun motivationalHeroSubtitle(weekCo2SavedKg: Double): String = when {
+private fun motivationalHeroSubtitle(
+    weekCo2SavedKg: Double,
+    lastWeekCo2SavedKg: Double = 0.0
+): String = when {
     weekCo2SavedKg >= 10.0 -> stringResource(R.string.motivation_crushing_it)
     weekCo2SavedKg >= 5.0  -> stringResource(R.string.motivation_great_week)
     weekCo2SavedKg >= 1.0  -> stringResource(R.string.motivation_nice_work)
     weekCo2SavedKg > 0.0   -> stringResource(R.string.motivation_every_step)
+    lastWeekCo2SavedKg >= 0.05 ->
+        stringResource(R.string.motivation_new_week, lastWeekCo2SavedKg.format(2))
     else                   -> stringResource(R.string.motivation_ready)
 }
 

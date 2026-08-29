@@ -188,6 +188,35 @@ class TrackingService : LifecycleService() {
     // Auto-stop on idle: when we transitioned to IDLE
     private var idleStartTimeMs: Long = 0
 
+    // ── Travel-based idle detection ──────────────────────────────────────────
+    //
+    // The idle auto-stop used to key on `_currentActivity == IDLE`, so any single non-IDLE
+    // tick reset the timer. That made it defeatable by anything that fakes an activity label —
+    // GPS drift reclassified by speed, or step events from a phone being shaken or jostled —
+    // and a session could then run indefinitely banking phantom distance. Net displacement is
+    // the one thing none of those can fake, so the timer now runs on ground covered.
+    /** Anchor position for the current no-travel window; null until the first fix. */
+    private var idleAnchorLat: Double? = null
+    private var idleAnchorLon: Double? = null
+    /** When the device was last found to have travelled meaningfully. 0 = not yet established. */
+    private var noTravelSinceMs: Long = 0L
+    /** Recent per-poll displacements from the idle anchor; travel must be sustained across it. */
+    private val idleTravelRing = ArrayDeque<Double>()
+
+    // ── Step corroboration ───────────────────────────────────────────────────
+    //
+    // A hardware pedometer counts oscillation, not travel: shaking or jostling a phone
+    // produces step events indistinguishable from walking. Left uncorroborated those steps
+    // suppress the sensor idle lock and mint step-based distance. Real gait moves the device
+    // over the ground; shaking does not, so each window of steps is checked against the
+    // displacement it should have produced.
+    private var stepCorrobLat: Double? = null
+    private var stepCorrobLon: Double? = null
+    private var stepCorrobAnchorSteps: Int = 0
+    private var stepCorrobSinceMs: Long = 0L
+    /** False once a window of steps has produced far too little ground movement to be gait. */
+    @Volatile private var stepsCorroborated: Boolean = true
+
     /**
      * When [ActivityType.DRIVING] or [ActivityType.ELECTRIC_VEHICLE] but GPS speed drops below driving min
      * (traffic, parking), keep motor mode until low speed persists for [MOTOR_LOW_SPEED_EXIT_MS].
@@ -526,6 +555,15 @@ class TrackingService : LifecycleService() {
         idleCheckJob = null
         deadReckoningJob = null
         idleStartTimeMs = 0
+        idleAnchorLat = null
+        idleAnchorLon = null
+        idleTravelRing.clear()
+        noTravelSinceMs = 0L
+        stepCorrobLat = null
+        stepCorrobLon = null
+        stepCorrobAnchorSteps = 0
+        stepCorrobSinceMs = 0L
+        stepsCorroborated = true
         motorLowSpeedSinceMs = 0L
         lastDrivingBandMs = 0L
         pedestrianToMotorRiseSinceMs = 0L
@@ -686,17 +724,68 @@ class TrackingService : LifecycleService() {
             while (isActive && _isTracking.value) {
                 delay(15_000)
                 if (!_isTracking.value) break
-                if (_currentActivity.value == ActivityType.IDLE) {
-                    if (idleStartTimeMs == 0L) idleStartTimeMs = System.currentTimeMillis()
-                    val idleMinutes = userPrefsManager.getIdleStopMinutes()
-                    val elapsedMs = System.currentTimeMillis() - idleStartTimeMs
-                    if (elapsedMs >= idleMinutes * 60 * 1000L) {
-                        android.util.Log.d("TrackingService", "Auto-stop: idle for $idleMinutes minutes")
-                        performAutoStopAndSave()
-                        break
-                    }
+                // Idle is judged by ground covered, not by the activity label. A label can be
+                // faked by drift reclassified on speed, or by step events from a shaken phone;
+                // displacement from the anchor cannot. Anything that genuinely travels clears
+                // IDLE_TRAVEL_RADIUS_M within one poll interval many times over.
+                val pos = lastPosition
+                val nowMs = System.currentTimeMillis()
+                val anchorLat = idleAnchorLat
+                val anchorLon = idleAnchorLon
+
+                if (pos == null) {
+                    // No fix yet — nothing to judge. Don't start counting until we can.
+                    noTravelSinceMs = 0L
+                } else if (anchorLat == null || anchorLon == null) {
+                    idleAnchorLat = pos.latitude
+                    idleAnchorLon = pos.longitude
+                    noTravelSinceMs = nowMs
                 } else {
-                    idleStartTimeMs = 0
+                    val movedM = locationService.calculateDistance(
+                        anchorLat, anchorLon, pos.latitude, pos.longitude
+                    )
+                    // The radius scales with the fix's own error, because a 40 m "excursion"
+                    // measured on a 45 m fix is noise, not travel. Indoors this device drifts
+                    // hundreds of metres from a fixed point, so a flat radius re-anchored the
+                    // clock constantly and the auto-stop never fired.
+                    val accM = pos.accuracy.takeIf { it.isFinite() && it > 0f }?.toDouble() ?: 20.0
+                    val travelThreshold = maxOf(
+                        IDLE_TRAVEL_RADIUS_M, accM * IDLE_TRAVEL_ACCURACY_FACTOR
+                    )
+                    // Drift oscillates around a point; travel keeps going. Requiring the device
+                    // to stay beyond the radius for consecutive polls separates the two — a
+                    // single excursion that comes straight back is not travel.
+                    idleTravelRing.addLast(movedM)
+                    while (idleTravelRing.size > IDLE_TRAVEL_CONFIRM_POLLS) idleTravelRing.removeFirst()
+                    val sustainedTravel = idleTravelRing.size >= IDLE_TRAVEL_CONFIRM_POLLS &&
+                        idleTravelRing.min() >= travelThreshold
+
+                    android.util.Log.d("TrackingService",
+                        "Idle poll: ${movedM.toInt()}m from anchor (need ${travelThreshold.toInt()}m " +
+                            "x${IDLE_TRAVEL_CONFIRM_POLLS}, acc=${accM.toInt()}m), " +
+                            "noTravelFor=${if (noTravelSinceMs == 0L) 0 else (nowMs - noTravelSinceMs) / 1000}s, " +
+                            "activity=${_currentActivity.value}")
+
+                    if (sustainedTravel) {
+                        // Real travel: re-anchor here and restart the clock.
+                        idleAnchorLat = pos.latitude
+                        idleAnchorLon = pos.longitude
+                        idleTravelRing.clear()
+                        noTravelSinceMs = nowMs
+                        idleStartTimeMs = 0
+                    } else {
+                        if (noTravelSinceMs == 0L) noTravelSinceMs = nowMs
+                        idleStartTimeMs = noTravelSinceMs
+                        val idleMinutes = userPrefsManager.getIdleStopMinutes()
+                        val elapsedMs = nowMs - noTravelSinceMs
+                        if (elapsedMs >= idleMinutes * 60 * 1000L) {
+                            android.util.Log.d("TrackingService",
+                                "Auto-stop: no travel for $idleMinutes minutes " +
+                                    "(${movedM.toInt()}m from anchor, activity=${_currentActivity.value})")
+                            performAutoStopAndSave()
+                            break
+                        }
+                    }
                 }
             }
         }
@@ -989,6 +1078,15 @@ class TrackingService : LifecycleService() {
         _sessionStats.value = SessionStats()
         _currentActivity.value = ActivityType.IDLE
         idleStartTimeMs = 0L
+        idleAnchorLat = null
+        idleAnchorLon = null
+        idleTravelRing.clear()
+        noTravelSinceMs = 0L
+        stepCorrobLat = null
+        stepCorrobLon = null
+        stepCorrobAnchorSteps = 0
+        stepCorrobSinceMs = 0L
+        stepsCorroborated = true
         motorLowSpeedSinceMs = 0L
         lastDrivingBandMs = 0L
         pedestrianToMotorRiseSinceMs = 0L
@@ -1117,8 +1215,33 @@ class TrackingService : LifecycleService() {
         lon: Double,
         altitudeMeters: Double?,
         refinedActivity: ActivityType,
-        now: Long
+        now: Long,
+        horizontalAccuracyM: Float
     ) {
+        // Admit a point only on a fix good enough to have counted toward distance.
+        //
+        // These two rules had diverged: distance zeroes its delta above accLimit, while the
+        // route recorded every fix regardless. The map and the elevation profile were therefore
+        // drawn from geometry the app's own distance maths had already rejected as untrustworthy
+        // — an indoor session measured 418 m of credited distance against 2.45 km of drawn path,
+        // so the elevation chart's x-axis read nearly six times the trip's actual length, and
+        // scatter the distance total never saw was still inflating SessionPlausibility's
+        // displacement check.
+        //
+        // FLYING is exempt for the same reason it is exempt downstream: cabin fixes are poor by
+        // nature and the route is the only record of the flight path.
+        val accLimit = if (refinedActivity == ActivityType.WALKING) {
+            MAX_ACCURACY_METERS_WALKING_DISTANCE
+        } else {
+            MAX_ACCURACY_METERS_FOR_DISTANCE
+        }
+        val accuracyAdmits = refinedActivity == ActivityType.FLYING ||
+            !horizontalAccuracyM.isFinite() ||
+            horizontalAccuracyM <= accLimit
+        // Never drop the very first point: it anchors the route, and an empty route is worse
+        // than one that starts on a mediocre fix.
+        if (!accuracyAdmits && pathPoints.isNotEmpty()) return
+
         val isFirstPoint = pathPoints.isEmpty()
         val positionChanged = isFirstPoint ||
             pathPoints.last().latitude != lat ||
@@ -1207,7 +1330,10 @@ class TrackingService : LifecycleService() {
                 updateStepsInStats(stepDelta, statsActivity)
                 // Step-based distance fallback when GPS hasn't updated (urban/indoor)
                 val gpsStale = lastUpdateTime > 0 && (now - lastGpsDistanceUpdateMs) > STEP_BASED_GAP_THRESHOLD_MS
-                if (gpsStale) {
+                // Only credit step-based distance when the steps have been shown to move the
+                // device over the ground. Otherwise a shaken phone mints distance fastest
+                // exactly when GPS is unavailable to contradict it.
+                if (gpsStale && stepsCorroborated) {
                     val stepLength = if (statsActivity == ActivityType.RUNNING) {
                         STEP_LENGTH_RUNNING
                     } else {
@@ -1401,6 +1527,60 @@ class TrackingService : LifecycleService() {
         return speed
     }
     
+    /**
+     * Re-evaluates whether recent step events are backed by ground movement.
+     *
+     * Runs on each GPS fix. Once [STEP_CORROB_MIN_STEPS] have accumulated since the anchor, the
+     * net displacement over that window is divided by the step count: real walking clears
+     * [STEP_CORROB_MIN_M_PER_STEP] comfortably (a normal stride is 0.6–0.8 m even along a
+     * curve), while a shaken or jostled phone produces essentially none.
+     *
+     * The window is deliberately short — a few dozen steps, twenty-odd metres of real walking —
+     * so a genuine loop that returns to its start is never mistaken for shaking. It measures
+     * local progress, not whether the trip ends where it began.
+     *
+     * A window that ages out without enough steps re-anchors without a verdict, so a stationary
+     * user is not judged on a handful of stray counts.
+     */
+    private fun updateStepCorroboration(lat: Double, lon: Double, now: Long) {
+        if (!sensorService.hasStepCounter()) return
+        val anchorLat = stepCorrobLat
+        val anchorLon = stepCorrobLon
+        if (anchorLat == null || anchorLon == null) {
+            stepCorrobLat = lat
+            stepCorrobLon = lon
+            stepCorrobAnchorSteps = lastStepCount
+            stepCorrobSinceMs = now
+            return
+        }
+        val stepsInWindow = (lastStepCount - stepCorrobAnchorSteps).coerceAtLeast(0)
+        if (stepsInWindow < STEP_CORROB_MIN_STEPS) {
+            // Not enough evidence yet. Age the window out so a long quiet stretch doesn't leave
+            // a stale anchor that later produces a misleadingly large displacement.
+            if (now - stepCorrobSinceMs > STEP_CORROB_WINDOW_MS) {
+                stepCorrobLat = lat
+                stepCorrobLon = lon
+                stepCorrobAnchorSteps = lastStepCount
+                stepCorrobSinceMs = now
+            }
+            return
+        }
+        val moved = locationService.calculateDistance(anchorLat, anchorLon, lat, lon)
+        val perStep = moved / stepsInWindow
+        val corroborated = perStep >= STEP_CORROB_MIN_M_PER_STEP
+        if (corroborated != stepsCorroborated) {
+            android.util.Log.d("TrackingService",
+                "Step corroboration ${if (corroborated) "restored" else "LOST"}: " +
+                    "$stepsInWindow steps moved ${moved.toInt()}m " +
+                    "(${"%.2f".format(perStep)} m/step, need ${STEP_CORROB_MIN_M_PER_STEP})")
+        }
+        stepsCorroborated = corroborated
+        stepCorrobLat = lat
+        stepCorrobLon = lon
+        stepCorrobAnchorSteps = lastStepCount
+        stepCorrobSinceMs = now
+    }
+
     /** The ground-motor activity set — shared so the several places that test it cannot drift apart. */
     private fun isMotorActivity(activity: ActivityType): Boolean =
         activity == ActivityType.DRIVING ||
@@ -1554,6 +1734,13 @@ class TrackingService : LifecycleService() {
             ) newSpeed else 0f
         }
         val maxChange = outlierWindowFor(newSpeed, activity, dtSec)
+        // Mirror the collapse rule in smoothSpeedWithOutlierRejection: a reading that drops to
+        // a standstill is shown at once rather than held at the previous value. Without this
+        // the dial keeps displaying a phantom speed while the EMA is being corrected, which is
+        // the visible half of the same fault.
+        if (newSpeed < smoothedSpeed && newSpeed < SpeedThresholds.WALKING_MIN.toFloat()) {
+            return newSpeed
+        }
         return if (Math.abs(newSpeed - smoothedSpeed) > maxChange) smoothedSpeed else newSpeed
     }
 
@@ -1586,6 +1773,33 @@ class TrackingService : LifecycleService() {
         // Reject outliers (sudden massive speed changes)
         val speedChange = newSpeed - smoothedSpeed
         if (Math.abs(speedChange) > maxChange) {
+            // Collapse to a standstill: accept it immediately, never ramp.
+            //
+            // The ramp below exists to converge on a new *higher* truth without letting a
+            // single spike in. Applied downward to a near-zero reading it does real damage: a
+            // multipath spike latches the EMA at a phantom speed, the true 0 then reads as the
+            // outlier, and the EMA is walked back down one maxChange per tick — crediting
+            // distance the whole way at a speed the device never travelled. Observed indoors on
+            // a stationary phone: one 38 km/h spike, then 29 → 20 → 11 → 2 km/h over 18 s, all
+            // of it counted. That ramp is the main generator of phantom indoor distance.
+            //
+            // Accepting a zero can only ever under-report, and a genuine stop should read as
+            // stopped immediately anyway. A spurious zero during real travel is already handled
+            // upstream, where a suspicious zero holds the previous speed while the sensors say
+            // the user is moving — so anything reaching here has passed that check.
+            //
+            // Deliberately narrow: only a *downward* divergence landing below walking pace
+            // snaps. Ordinary deceleration stays smoothed, and upward spikes stay gated.
+            val collapsingToRest = speedChange < 0f &&
+                newSpeed < SpeedThresholds.WALKING_MIN.toFloat()
+            if (collapsingToRest) {
+                android.util.Log.d("TrackingService",
+                    "Speed collapse accepted without ramp: ${(smoothedSpeed * 3.6f).toInt()} → " +
+                        "${(newSpeed * 3.6f).toInt()} km/h (ramping would credit phantom distance)")
+                smoothedSpeed = newSpeed
+                consecutiveSpeedOutliers = 0
+                return smoothedSpeed
+            }
             consecutiveSpeedOutliers++
             if (consecutiveSpeedOutliers >= SPEED_OUTLIER_RECOVERY_TICKS) {
                 // The divergence has persisted across multiple ticks — smoothedSpeed
@@ -2134,6 +2348,8 @@ class TrackingService : LifecycleService() {
             wallNow
         }
 
+        updateStepCorroboration(filtered.latitude, filtered.longitude, now)
+
         // GPS hover detection: real travel covers ground over time. If fixes stay within
         // HOVER_RADIUS_M of an anchor point for HOVER_CONFIRM_MS, the device is parked —
         // any further "movement" is chip jitter, not travel. This catches drift the
@@ -2375,27 +2591,43 @@ class TrackingService : LifecycleService() {
         // unconditional zero silenced real driving too, which is unrecoverable: speed 0 →
         // IDLE → speed capped in the idle band → never crosses DRIVING_MIN again.
         //
-        // The escape hatch is back, but qualified by GPS accuracy rather than speed alone.
-        // Indoor multipath — the case the unconditional zero was defending against — comes
-        // with poor accuracy; a genuinely moving vehicle outdoors does not. A motor-band
-        // speed on a clean outdoor fix is now allowed to survive a STILL verdict.
+        // The escape hatch is back, but it demands *vehicle context*, not a good accuracy
+        // figure. An earlier version of this gate qualified on `accuracy <=
+        // GPS_MOTOR_ACCURACY_GATE_M`, on the assumption that indoor multipath always reports
+        // poor accuracy. Measured on a stationary phone indoors, that assumption is false: the
+        // hatch opened ten times in one session on fixes reporting 10–28 m accuracy, one of
+        // them claiming 49 km/h at 10 m. Each admitted phantom flipped IDLE → RUNNING, reset
+        // the idle timer, and defeated the idle auto-stop — the session ran 831 s and banked
+        // 1059 m without the phone ever moving.
+        //
+        // Accuracy cannot distinguish the two cases, so the gate asks a different question:
+        // is there independent evidence a vehicle is involved? Activity Recognition reporting
+        // IN_VEHICLE, or an established motor activity that was in the driving band recently.
+        //
+        // This bootstraps correctly. Pulling away from rest is real acceleration, which raises
+        // the mean linear-acceleration magnitude and so is not classified STILL at all (see
+        // SensorActivityClassifier.ACCEL_STILL_MEAN). The vehicle therefore reaches motor
+        // context while accelerating, and the hatch then protects the constant-velocity cruise
+        // that follows — the case it exists for. A phone sitting on a desk never enters motor
+        // context and never gets an IN_VEHICLE reading, so it is always zeroed.
         if (_manualActivityMode.value == null && sensorHint == SensorHint.STILL) {
-            val motorBandOnCleanFix = speed >= SpeedThresholds.DRIVING_MIN.toFloat() &&
+            val recentlyDriving = isMotorActivity(_currentActivity.value) &&
+                lastDrivingBandMs > 0L &&
+                (now - lastDrivingBandMs) < STICKY_RECENT_DRIVING_MS
+            val vehicleRecognised = isRecentVehicleRecognition()
+            val vehicleContext = recentlyDriving || vehicleRecognised
+            // Still require the reading itself to be plausible, so vehicle context alone
+            // cannot wave through an arbitrary spike.
+            val plausibleReading = speed >= SpeedThresholds.DRIVING_MIN.toFloat() &&
                 position.accuracy <= GPS_MOTOR_ACCURACY_GATE_M
-            // Activity Recognition is derived from different hardware than the variance
-            // classifier, so a confident IN_VEHICLE is exactly the independent evidence needed
-            // to overrule a STILL verdict the accelerometer reached on its own.
-            val vehicleRecognised = isRecentVehicleRecognition() &&
-                speed >= SpeedThresholds.WALKING_MIN.toFloat() &&
-                position.accuracy <= GPS_MOTOR_ACCURACY_GATE_M
-            if (!motorBandOnCleanFix && !vehicleRecognised) {
+            if (!vehicleContext || !plausibleReading) {
                 speed = 0f
             } else {
                 android.util.Log.d("TrackingService",
                     "STILL zeroing skipped: ${(speed * 3.6f).toInt()} km/h on a " +
-                        "${position.accuracy.toInt()}m fix" +
-                        (if (vehicleRecognised) " (AR: IN_VEHICLE)" else "") +
-                        " — steady motion reads as low variance")
+                        "${position.accuracy.toInt()}m fix (" +
+                        (if (vehicleRecognised) "AR: IN_VEHICLE" else "recent driving band") +
+                        ") — steady motion reads as low variance")
             }
         }
 
@@ -2581,7 +2813,10 @@ class TrackingService : LifecycleService() {
             // wallNow, not now: lastStepTimestamp is stamped in updateSensors from the wall
             // clock, while `now` here is the GPS fix's own timestamp. Comparing the two mixes
             // clocks and biases the elapsed figure by the fix's age.
-            (wallNow - lastStepTimestamp) >= SENSOR_IDLE_LOCK_MS
+            //
+            // Uncorroborated steps count as quiet: a shaken phone emits step events forever,
+            // and without this the idle lock could never engage while it was being jostled.
+            !stepsCorroborated || (wallNow - lastStepTimestamp) >= SENSOR_IDLE_LOCK_MS
         } else {
             true
         }
@@ -2724,7 +2959,7 @@ class TrackingService : LifecycleService() {
                 stepCountAtLastGps = lastStepCount
                 updateStats(ddScaled, refinedActivity, speed.toDouble(), elevationGainDelta, elevationLossDelta)
                 // Record route point on movement (in addition to time interval)
-                recordPathPointIfNeeded(filtered.latitude, filtered.longitude, routeAltitudeMeters, refinedActivity, now)
+                recordPathPointIfNeeded(filtered.latitude, filtered.longitude, routeAltitudeMeters, refinedActivity, now, position.accuracy)
             }
         }
         
@@ -2741,7 +2976,7 @@ class TrackingService : LifecycleService() {
         
         // Record path point: first point immediately, then on position change or every PATH_RECORD_INTERVAL_MS
         // This ensures route displays even when autodetect shows IDLE (slow movement) or GPS is delayed
-        recordPathPointIfNeeded(filtered.latitude, filtered.longitude, routeAltitudeMeters, refinedActivity, now)
+        recordPathPointIfNeeded(filtered.latitude, filtered.longitude, routeAltitudeMeters, refinedActivity, now, position.accuracy)
         
         // Update notification
         updateNotification()
@@ -3563,6 +3798,26 @@ class TrackingService : LifecycleService() {
         private const val GPS_IDENTICAL_SPEED_COUNT = 3
         /** After sensors confirm STILL for this long, bypass sticky-motor hysteresis. */
         private const val STILL_MOTOR_OVERRIDE_MS = 10_000L
+        /**
+         * Distance from the idle anchor that counts as having travelled, resetting the
+         * auto-stop clock. Comfortably above GPS scatter on a stationary device, and trivially
+         * cleared by anything actually moving — 40 m is under 6 seconds of walking.
+         */
+        private const val IDLE_TRAVEL_RADIUS_M = 75.0
+        /** Anchor radius also scales with fix accuracy: an excursion inside the error circle is noise. */
+        private const val IDLE_TRAVEL_ACCURACY_FACTOR = 2.0
+        /** Consecutive 15 s polls that must all exceed the radius before it counts as travel. */
+        private const val IDLE_TRAVEL_CONFIRM_POLLS = 2
+        /** Steps needed before a corroboration window is judged. ~20–30 m of real walking. */
+        private const val STEP_CORROB_MIN_STEPS = 30
+        /**
+         * Ground covered per step below which the step events are not gait. A real stride is
+         * 0.6–0.8 m; this sits well under that so curves, GPS error and short pauses inside the
+         * window can't produce a false verdict, while a shaken phone (≈0 m/step) fails clearly.
+         */
+        private const val STEP_CORROB_MIN_M_PER_STEP = 0.25
+        /** A corroboration window with too few steps re-anchors after this long. */
+        private const val STEP_CORROB_WINDOW_MS = 90_000L
         /** Linear acceleration (m/s²) above which live sensor motion contradicts a GPS hover verdict.
          *  Set well above SENSOR_STILL_ACCEL_THRESHOLD so idle engine vibration alone cannot clear it. */
         private const val HOVER_MOTION_CONTRADICTION_ACCEL = 0.8f

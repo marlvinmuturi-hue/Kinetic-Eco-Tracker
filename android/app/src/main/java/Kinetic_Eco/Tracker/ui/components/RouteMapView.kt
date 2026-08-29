@@ -138,7 +138,8 @@ fun RouteMapMultiSessionView(
     routePaths: List<List<RoutePoint>>,
     modifier: Modifier = Modifier.fillMaxWidth(),
     heightDp: Int = 250,
-    showElevationProfile: Boolean = true
+    showElevationProfile: Boolean = true,
+    totalDistanceMeters: Double? = null
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
@@ -228,7 +229,14 @@ fun RouteMapMultiSessionView(
 
     val elevationPath = remember(routePaths, showElevationProfile) {
         if (!showElevationProfile || routePaths.size != 1) return@remember emptyList()
-        routePaths.firstOrNull() ?: emptyList()
+        val path = routePaths.firstOrNull() ?: return@remember emptyList()
+        // Self-hide when there is no altitude to draw. The chart's own empty state renders a
+        // titled "no elevation data" panel, which on a route card costs ~170dp to say nothing —
+        // and altitude is legitimately absent on many sessions, since AltitudeFilter drops
+        // readings whose vertical accuracy is worse than MAX_VERTICAL_ACCURACY_M rather than
+        // storing a fake value. Deciding here keeps those sessions looking exactly as they did
+        // before the profile existed.
+        if (hasUsableElevation(path)) path else emptyList()
     }
 
     val activitiesInRoute = remember(routePaths) {
@@ -277,7 +285,8 @@ fun RouteMapMultiSessionView(
         if (elevationPath.isNotEmpty()) {
             RouteElevationProfile(
                 routePath = elevationPath,
-                modifier = Modifier.padding(top = 8.dp)
+                modifier = Modifier.padding(top = 8.dp),
+                totalDistanceMeters = totalDistanceMeters
             )
         }
         
@@ -334,7 +343,8 @@ fun RouteMapView(
     routePath: List<RoutePoint>,
     modifier: Modifier = Modifier.fillMaxWidth(),
     heightDp: Int = 250,
-    showElevationProfile: Boolean = true
+    showElevationProfile: Boolean = true,
+    totalDistanceMeters: Double? = null
 ) {
     val paths = remember(routePath) {
         if (routePath.isEmpty()) emptyList() else listOf(routePath)
@@ -343,6 +353,7 @@ fun RouteMapView(
         routePaths = paths,
         modifier = modifier,
         heightDp = heightDp,
-        showElevationProfile = showElevationProfile
+        showElevationProfile = showElevationProfile,
+        totalDistanceMeters = totalDistanceMeters
     )
 }

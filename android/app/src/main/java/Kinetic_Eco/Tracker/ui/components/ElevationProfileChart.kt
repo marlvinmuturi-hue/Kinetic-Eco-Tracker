@@ -39,8 +39,47 @@ import kotlin.math.roundToInt
 
 private const val MAX_DRAW_SAMPLES = 280
 
-/** Distance (m) vs elevation (m) along the route; null if not enough altitude data. */
-internal fun routeElevationSamples(points: List<RoutePoint>): List<Pair<Double, Double>>? {
+/**
+ * Minimum gap between the final axis tick and the one before it, as a fraction of the tick step.
+ * Below this the two labels collide, so the endpoint replaces its neighbour rather than joining
+ * it. Matters most once the axis maximum is a real measured distance rather than a round number.
+ */
+private const val MIN_TICK_SEPARATION_FRACTION = 0.35
+
+/**
+ * Whether [points] can produce a profile at all — i.e. whether [routeElevationSamples] would
+ * return non-null. Lets a caller decide not to render the chart *before* laying it out, so a
+ * session with no altitude shows nothing rather than an empty "no elevation data" panel.
+ *
+ * Deliberately cheap: no haversine, no trig, no downsampling. It mirrors the exact conditions
+ * [routeElevationSamples] fails on — fewer than two points, or no finite altitude anywhere.
+ * One finite reading is sufficient, because [filledAltitudesAlongRoute] fills forwards and then
+ * backwards, so a single anchor populates the whole series.
+ *
+ * Kept next to [routeElevationSamples] so the two conditions cannot drift apart.
+ */
+internal fun hasUsableElevation(points: List<RoutePoint>): Boolean =
+    points.size >= 2 && points.any { it.altitudeMeters?.isFinite() == true }
+
+/**
+ * Distance (m) vs elevation (m) along the route; null if not enough altitude data.
+ *
+ * When [totalDistanceMeters] is supplied, the distance axis is rescaled so its final value is
+ * the session's credited distance. Summing raw haversine between stored points measures the
+ * drawn polyline, which is not the same quantity as the distance the app reports: the distance
+ * pipeline discards segments on poor fixes, applies a minimum segment length, and scales for
+ * path simplification. On a clean trip the two are close; on an indoor session with multipath
+ * they are not — one real session recorded 418 m of credited distance against 2.45 km of raw
+ * polyline, so an unscaled axis ran to nearly six times the trip's length and disagreed with
+ * every other distance figure in the app.
+ *
+ * Rescaling preserves the profile's shape — each point keeps its proportional position along
+ * the route — while making the axis mean what its label says.
+ */
+internal fun routeElevationSamples(
+    points: List<RoutePoint>,
+    totalDistanceMeters: Double? = null
+): List<Pair<Double, Double>>? {
     if (points.size < 2) return null
     val filled = filledAltitudesAlongRoute(points) ?: return null
     val pairs = mutableListOf<Pair<Double, Double>>()
@@ -55,7 +94,19 @@ internal fun routeElevationSamples(points: List<RoutePoint>): List<Pair<Double, 
         )
         pairs.add(cumDist to filled[i])
     }
-    return downsamplePairs(pairs, MAX_DRAW_SAMPLES)
+
+    // Rescale only when both figures are usable. A zero or absent credited distance leaves the
+    // raw axis alone rather than collapsing the chart to a single point.
+    val rawTotal = cumDist
+    val scale = if (
+        totalDistanceMeters != null &&
+        totalDistanceMeters.isFinite() &&
+        totalDistanceMeters > 0.0 &&
+        rawTotal > 0.0
+    ) totalDistanceMeters / rawTotal else 1.0
+
+    val scaled = if (scale == 1.0) pairs else pairs.map { (d, alt) -> (d * scale) to alt }
+    return downsamplePairs(scaled, MAX_DRAW_SAMPLES)
 }
 
 private fun filledAltitudesAlongRoute(points: List<RoutePoint>): List<Double>? {
@@ -119,7 +170,7 @@ private fun elevationAxisTicks(yLow: Double, yHigh: Double, target: Int = 4): Li
     return out
 }
 
-private fun distanceAxisTicks(distMax: Double, target: Int = 4): List<Double> {
+internal fun distanceAxisTicks(distMax: Double, target: Int = 4): List<Double> {
     if (distMax <= 0) return listOf(0.0)
     val step = niceStep(distMax / (target - 1).coerceAtLeast(1))
     val out = mutableListOf<Double>()
@@ -129,9 +180,16 @@ private fun distanceAxisTicks(distMax: Double, target: Int = 4): List<Double> {
         d += step
         if (out.size > 12) break
     }
+    // Always finish the axis at the true maximum, but never print it right next to the previous
+    // tick — two labels a few pixels apart overlap into unreadable glyphs ("400 m" and "419 m"
+    // rendering as "40019 mm"). When the endpoint would crowd its neighbour, it replaces it
+    // instead of joining it: the endpoint is the more informative of the two, since it states
+    // the route's actual length.
     val last = out.lastOrNull() ?: 0.0
-    if (distMax - last > distMax * 0.02 || (distMax > 0 && last < distMax - 1e-6)) {
-        if (!out.any { kotlin.math.abs(it - distMax) < step * 0.01 }) {
+    if (distMax > last + 1e-6) {
+        if (distMax - last < step * MIN_TICK_SEPARATION_FRACTION) {
+            out[out.lastIndex] = distMax
+        } else {
             out.add(distMax)
         }
     }
@@ -145,9 +203,12 @@ private fun distanceAxisTicks(distMax: Double, target: Int = 4): List<Double> {
 @Composable
 fun RouteElevationProfile(
     routePath: List<RoutePoint>,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    totalDistanceMeters: Double? = null
 ) {
-    val samples = remember(routePath) { routeElevationSamples(routePath) }
+    val samples = remember(routePath, totalDistanceMeters) {
+        routeElevationSamples(routePath, totalDistanceMeters)
+    }
     val colorScheme = MaterialTheme.colorScheme
     val typography = MaterialTheme.typography
 

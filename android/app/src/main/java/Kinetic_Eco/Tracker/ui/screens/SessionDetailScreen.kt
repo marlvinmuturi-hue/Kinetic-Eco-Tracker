@@ -123,7 +123,10 @@ fun SessionDetailScreen(
                         routePath = displayStats.routePath,
                         modifier = Modifier.fillMaxWidth(),
                         heightDp = 160,
-                        showElevationProfile = false
+                        showElevationProfile = true,
+                        // Scale the profile's distance axis to the session's credited distance
+                        // so it agrees with the figure shown everywhere else on this screen.
+                        totalDistanceMeters = displayStats.totalDistance
                     )
                 }
             }

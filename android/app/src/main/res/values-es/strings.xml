@@ -275,6 +275,8 @@
     <string name="motivation_nice_work">Buen trabajo esta semana 🌱</string>
     <string name="motivation_every_step">¡Cada paso cuenta!</string>
     <string name="motivation_ready">Listo cuando quieras — empecemos poco a poco.</string>
+    <string name="motivation_new_week">Nueva semana — la semana pasada ahorraste %1$s kg 🌱</string>
+    <string name="hero_lifetime_total">%1$s kg ahorrados en total</string>
 
     <string name="streak_30_days">🌳 ¡Racha verde de %1$d días!</string>
     <string name="streak_7_days">🌿 Racha de %1$d días</string>

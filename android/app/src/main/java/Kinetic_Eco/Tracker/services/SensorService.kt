@@ -233,6 +233,18 @@ class SensorActivityClassifier(private val deviceHasGyro: Boolean = true) {
         private const val ACCEL_MOTOR_MAX   = 0.70f  // below = motor-smooth or still
         private const val ACCEL_CYCLING_MAX = 5.0f   // above = foot activity (running)
 
+        /**
+         * Mean linear-acceleration magnitude ceiling for STILL (m/s²).
+         *
+         * Variance alone measures *jerk*, not motion: a vehicle under steady power pins the
+         * magnitude at a near-constant 1–3 m/s², which has almost no variance and was therefore
+         * being classified STILL — the same verdict as a phone on a table. Constant-velocity
+         * cruising on smooth tarmac reads the same way. Requiring a low *mean* as well
+         * distinguishes the two: a genuinely stationary device sits near zero, while a car that
+         * is accelerating (or riding road forces) does not.
+         */
+        private const val ACCEL_STILL_MEAN  = 0.35f
+
         // Gyro mean thresholds (rad/s)
         private const val GYRO_STILL     = 0.06f
         private const val GYRO_MOTOR_MAX = 0.18f     // below + no steps = cycling or motor
@@ -258,6 +270,7 @@ class SensorActivityClassifier(private val deviceHasGyro: Boolean = true) {
         if (samples.size < MIN_SAMPLES) return SensorHint.UNKNOWN
 
         val accelVar   = variance(samples.map { it.accel })
+        val accelMean  = samples.map { it.accel }.average().toFloat()
         val gyroMean   = if (deviceHasGyro) samples.map { it.gyro }.average().toFloat() else 0f
         val stepActive = lastStepMs > 0 &&
             (System.currentTimeMillis() - lastStepMs) < STEP_ACTIVE_WINDOW_MS
@@ -267,7 +280,9 @@ class SensorActivityClassifier(private val deviceHasGyro: Boolean = true) {
         val gyroOk    = !deviceHasGyro || gyroMean < GYRO_MOTOR_MAX
         val gyroStill = !deviceHasGyro || gyroMean < GYRO_STILL
 
-        if (accelVar < ACCEL_STILL && gyroStill) return SensorHint.STILL
+        // Both a low variance AND a low mean are required — see ACCEL_STILL_MEAN. Variance
+        // on its own cannot separate "not moving" from "moving at a constant rate".
+        if (accelVar < ACCEL_STILL && accelMean < ACCEL_STILL_MEAN && gyroStill) return SensorHint.STILL
 
         // Frequency-domain refinement: analyse spectral content of the acceleration signal
         val freq = freqAnalyzer.analyze()

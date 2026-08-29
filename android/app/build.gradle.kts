@@ -5,6 +5,9 @@ val keystoreProperties = Properties().apply {
     if (keystorePropertiesFile.exists()) load(keystorePropertiesFile.inputStream())
 }
 
+/** Set via -PsideloadTest to build under the alternate application id — see defaultConfig. */
+val isSideloadTest = project.hasProperty("sideloadTest")
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -32,7 +35,21 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.kineticecotracker"
+        // Opt-in side-by-side install for on-device testing: ./gradlew assembleDebug -PsideloadTest
+        //
+        // The Play Store build is signed with Google's Play App Signing key, which no local
+        // build can match, so a same-package debug install demands an uninstall first — and
+        // that wipes the Room DB and preferences on the test device. Building under the app's
+        // namespace instead installs as a separate app, leaving the Play install untouched.
+        //
+        // Kinetic_Eco.Tracker is already registered as a client in google-services.json, so
+        // the Google Services plugin resolves it and Firebase initialises. Google Sign-In and
+        // Play Billing do NOT work under this id (the debug keystore's SHA-1 is not
+        // registered, and Play entitlements are keyed to com.kineticecotracker). It is for
+        // exercising GPS, sensors and classification on device — not auth or purchases.
+        //
+        // Without the flag nothing changes, so release builds are unaffected.
+        applicationId = if (isSideloadTest) "Kinetic_Eco.Tracker" else "com.kineticecotracker"
         minSdk = 24
         targetSdk = 36
         versionCode = 33
@@ -73,6 +90,10 @@ android {
             if (keystorePropertiesFile.exists()) {
                 signingConfig = signingConfigs.getByName("release")
             }
+        }
+
+        debug {
+            if (isSideloadTest) versionNameSuffix = "-test"
         }
     }
     

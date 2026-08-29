@@ -183,12 +183,80 @@ class ActivityTransitionManager(private val context: Context) {
         }
     }
 
+    /**
+     * Register periodic activity-recognition updates delivered to [TrackingService] for the
+     * duration of an active session.
+     *
+     * Distinct from [registerActivityUpdates], which feeds [AutoStartMonitorService] and only
+     * runs while auto-start monitoring is armed. Activity Recognition was previously consulted
+     * *only* at session start (the `EXTRA_COLD_START_VEHICLE` flag) and never again, leaving the
+     * classifier with no independent vehicle evidence mid-session — so when the accelerometer
+     * and GPS heuristics both went wrong together, nothing could break the tie.
+     *
+     * IN_VEHICLE from the fused activity sensor is the strongest such signal Android offers and
+     * is derived from hardware the app is already listening to, so the battery cost is nil.
+     */
+    fun registerSessionActivityUpdates() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val ok = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.ACTIVITY_RECOGNITION
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!ok) {
+                Log.w(TAG, "ACTIVITY_RECOGNITION not granted — session activity updates unavailable")
+                return
+            }
+        }
+
+        client.requestActivityUpdates(SESSION_DETECTION_INTERVAL_MS, sessionUpdatesPendingIntent())
+            .addOnSuccessListener { Log.d(TAG, "Session activity updates registered") }
+            .addOnFailureListener { e -> Log.e(TAG, "Failed to register session activity updates", e) }
+    }
+
+    /** Unregister the session-scoped activity-recognition updates. */
+    fun unregisterSessionActivityUpdates() {
+        // Same synchronous-SecurityException guard as unregisterActivityUpdates: the permission
+        // can be revoked mid-session, and addOnFailureListener does not catch a direct throw.
+        try {
+            client.removeActivityUpdates(sessionUpdatesPendingIntent())
+                .addOnFailureListener { e -> Log.e(TAG, "Failed to unregister session activity updates", e) }
+        } catch (e: SecurityException) {
+            Log.w(TAG, "removeActivityUpdates(session): ACTIVITY_RECOGNITION not held — skipping", e)
+        }
+    }
+
+    /**
+     * Deliberately a plain `getService` PendingIntent, unlike the two above.
+     *
+     * Those must be able to *start* a service from the background, so they need
+     * `getForegroundService`. This one only ever targets a [TrackingService] that is already
+     * running in the foreground, where a plain `startService` is permitted. Using
+     * `getForegroundService` here would be actively dangerous: if the subscription outlived the
+     * service (OS kill, process death), a delivery would start a location foreground service
+     * with nothing ready to call `startForeground()` in time, crashing the app. With
+     * `getService`, a delivery to a dead service is simply refused by background-start limits —
+     * the safe failure.
+     */
+    private fun sessionUpdatesPendingIntent(): PendingIntent =
+        PendingIntent.getService(
+            context,
+            REQUEST_CODE_SESSION_UPDATES,
+            Intent(context, TrackingService::class.java).apply {
+                action = TrackingService.ACTION_PROCESS_ACTIVITY_RESULT
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
     companion object {
         private const val TAG = "ActivityTransitionMgr"
         private const val REQUEST_CODE = 2001
         private const val REQUEST_CODE_UPDATES = 2002
+        private const val REQUEST_CODE_SESSION_UPDATES = 2003
         /** How often periodic activity updates are delivered. 30 s balances prompt vehicle
          *  detection against battery — the fused activity sensor is low-power regardless. */
         private const val DETECTION_INTERVAL_MS = 30_000L
+        /** Faster cadence while a session is actually running: the reading is used to veto
+         *  false IDLE within a drive, so 30 s would be too coarse to catch a traffic stop. */
+        private const val SESSION_DETECTION_INTERVAL_MS = 10_000L
     }
 }

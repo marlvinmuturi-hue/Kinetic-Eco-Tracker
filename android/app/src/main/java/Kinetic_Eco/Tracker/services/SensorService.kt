@@ -500,10 +500,21 @@ class SensorService(private val context: Context) {
             sensorManager.registerListener(listener, it, SensorManager.SENSOR_DELAY_GAME)
             android.util.Log.d("SensorService", "Accelerometer registered")
         }
-        stepCounter?.let {
-            sensorManager.registerListener(listener, it, SensorManager.SENSOR_DELAY_UI)
-            android.util.Log.d("SensorService", "Step counter registered")
-        } ?: android.util.Log.w("SensorService", "Step counter not available!")
+        // Registering the step counter without ACTIVITY_RECOGNITION is not an error on most
+        // devices — it just silently never fires, which is the hardest failure to diagnose.
+        // Say so explicitly instead, and distinguish it from "no such hardware".
+        when {
+            stepCounter == null ->
+                android.util.Log.w("SensorService", "Step counter: no hardware on this device")
+            !hasActivityRecognitionPermission() ->
+                android.util.Log.w("SensorService",
+                    "Step counter present but ACTIVITY_RECOGNITION not granted — " +
+                        "no step events will be delivered, steps will read 0 all session")
+            else -> {
+                sensorManager.registerListener(listener, stepCounter, SensorManager.SENSOR_DELAY_UI)
+                android.util.Log.d("SensorService", "Step counter registered")
+            }
+        }
         gyroscope?.let {
             // SENSOR_DELAY_UI (~16 Hz), not GAME (~50 Hz): the gyro is only consumed as a
             // windowed *mean* angular rate in SensorActivityClassifier, so a lower rate is
@@ -522,9 +533,38 @@ class SensorService(private val context: Context) {
         }
     }
 
+    /**
+     * Whether step counting is actually usable — hardware present **and** permitted.
+     *
+     * This used to report only [PackageManager.FEATURE_SENSOR_STEP_COUNTER], i.e. whether the
+     * device has the hardware. From Android 10, TYPE_STEP_COUNTER additionally requires the
+     * ACTIVITY_RECOGNITION runtime permission, and without it the sensor simply never delivers
+     * an event. The feature check still returned true, so callers believed steps were available
+     * while the count stayed at zero for the whole session — silently, with nothing in the logs
+     * to say why. One recorded 11-minute indoor walk finished with `totalSteps = 0` for exactly
+     * this reason, which also denied SessionPlausibility the step corroboration it uses to
+     * judge whether a low-displacement session was real.
+     *
+     * [AutoStartMonitorService] already made this distinction before using the step counter;
+     * this brings the shared accessor in line with it, so every caller gets the honest answer.
+     */
     fun hasStepCounter(): Boolean {
-        return context.packageManager.hasSystemFeature(PackageManager.FEATURE_SENSOR_STEP_COUNTER)
+        if (!context.packageManager.hasSystemFeature(PackageManager.FEATURE_SENSOR_STEP_COUNTER)) {
+            return false
+        }
+        return hasActivityRecognitionPermission()
     }
+
+    /** Hardware presence alone, ignoring permission — for diagnostics and messaging. */
+    fun hasStepCounterHardware(): Boolean =
+        context.packageManager.hasSystemFeature(PackageManager.FEATURE_SENSOR_STEP_COUNTER)
+
+    /** ACTIVITY_RECOGNITION is only required — and only exists — from API 29. */
+    private fun hasActivityRecognitionPermission(): Boolean =
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.Q) true
+        else context.checkSelfPermission(
+            android.Manifest.permission.ACTIVITY_RECOGNITION
+        ) == PackageManager.PERMISSION_GRANTED
 
     fun hasAccelerometer(): Boolean {
         return accelerometer != null

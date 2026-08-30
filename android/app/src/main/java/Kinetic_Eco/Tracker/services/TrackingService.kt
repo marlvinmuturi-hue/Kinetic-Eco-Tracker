@@ -760,7 +760,9 @@ class TrackingService : LifecycleService() {
                     val sustainedTravel = idleTravelRing.size >= IDLE_TRAVEL_CONFIRM_POLLS &&
                         idleTravelRing.min() >= travelThreshold
 
-                    android.util.Log.d("TrackingService",
+                    // Debug-only: this fires every 15 s for the whole session, which is far too
+                    // chatty for production, and R8 is not configured to strip Log.d.
+                    if (Kinetic_Eco.Tracker.BuildConfig.DEBUG) android.util.Log.d("TrackingService",
                         "Idle poll: ${movedM.toInt()}m from anchor (need ${travelThreshold.toInt()}m " +
                             "x${IDLE_TRAVEL_CONFIRM_POLLS}, acc=${accM.toInt()}m), " +
                             "noTravelFor=${if (noTravelSinceMs == 0L) 0 else (nowMs - noTravelSinceMs) / 1000}s, " +
@@ -1302,10 +1304,13 @@ class TrackingService : LifecycleService() {
             val stepDelta = data.stepCount - lastStepCount
             val isFirstStepEvent = lastStepCount == 0
             lastStepCount = data.stepCount
-            // TYPE_STEP_COUNTER reports a cumulative count since last reboot. On the first event
-            // of each session, lastStepCount jumps from 0 to the boot-total (e.g. 52,847). Aligning
-            // stepCountAtLastGps here prevents the sensor-idle gate's stepsNow from seeing a huge
-            // spurious delta and falsely suppressing the idle lock for the rest of the session.
+            // Align stepCountAtLastGps on the first event of a session so downstream deltas
+            // start from the same baseline.
+            //
+            // (An earlier comment here said data.stepCount is the raw boot-total and jumps to
+            // e.g. 52,847 on the first event. It isn't: SensorService subtracts `initialSteps`
+            // and emits a session-relative count starting at 0. The alignment is still correct,
+            // the stated reason was not.)
             if (isFirstStepEvent) stepCountAtLastGps = lastStepCount
             lastStepTimestamp = now
             
@@ -1322,7 +1327,19 @@ class TrackingService : LifecycleService() {
             // vehicle — even if classification briefly reads IDLE (e.g. the first second of
             // a walk, or a momentary pause). Gating this strictly to WALKING/RUNNING dropped
             // real steps from the total and made step counts read low.
-            if (!isMotorised) {
+            //
+            // The motorised exclusion is for road vibration registering as steps in a car. It
+            // trusts the classifier, which indoors is exactly what cannot be trusted: an indoor
+            // walk misclassified as DRIVING by drift had its real steps thrown away. So the
+            // exclusion now applies only when the vehicle classification has independent
+            // support — Activity Recognition, or a recent genuine driving-band speed. A
+            // DRIVING label reached purely from drift no longer suppresses real steps.
+            val motorisedForReal = isMotorised && (
+                isRecentVehicleRecognition() ||
+                    (lastDrivingBandMs > 0L &&
+                        (System.currentTimeMillis() - lastDrivingBandMs) < STICKY_RECENT_DRIVING_MS)
+                )
+            if (!motorisedForReal) {
                 _sessionSteps.value += stepDelta
             }
 

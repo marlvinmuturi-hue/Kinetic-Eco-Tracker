@@ -22,8 +22,10 @@ dist-ssr
 firebase-debug.log
 firestore-debug.log
 ui-debug.log
-android/app/google-services.json
-android/app/google-services.json
+# Unanchored so it matches at any depth: the rule used to be android/app-only
+# (and duplicated), which left a copy at the repo root untracked but committable
+# by `git add -A`. It carries Firebase project config and API keys.
+google-services.json
 
 # Android Gradle build outputs (never commit)
 android/app/build/

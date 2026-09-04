@@ -131,6 +131,8 @@ fun TrackerScreen(
     val warmUpPosition by viewModel.warmUpPosition.collectAsStateWithLifecycle()
     var showStopDialog by remember { mutableStateOf(false) }
     var showSessionSummary by remember { mutableStateOf(false) }
+    /** Full-screen share card, opened from the end-of-session summary. */
+    var showRecapFor by remember { mutableStateOf<SessionStats?>(null) }
     var savedSessionStats by remember { mutableStateOf<SessionStats?>(null) }
     var isSavingSession by remember { mutableStateOf(false) }
     var saveError by remember { mutableStateOf<String?>(null) }
@@ -440,11 +442,31 @@ fun TrackerScreen(
             unitSystem = unitSystem,
             energyUnit = energyUnit,
             saveError = saveError,
+            onShare = {
+                // Hand off to the recap card. The interstitial is deliberately NOT shown here:
+                // interrupting someone on their way to share the app is the worst possible
+                // moment for an ad. It still fires when they close the summary or the card.
+                showRecapFor = savedSessionStats
+                showSessionSummary = false
+            },
             onClose = {
                 showSessionSummary = false
                 savedSessionStats = null
                 saveError = null
                 // Show the preloaded interstitial (guards: 1 per session, 3-min cooldown).
+                (context as? android.app.Activity)?.let { InterstitialAdManager.showIfReady(it) }
+            }
+        )
+    }
+
+    showRecapFor?.let { recapStats ->
+        SessionRecapScreen(
+            stats = recapStats,
+            unitSystem = unitSystem,
+            onClose = {
+                showRecapFor = null
+                savedSessionStats = null
+                saveError = null
                 (context as? android.app.Activity)?.let { InterstitialAdManager.showIfReady(it) }
             }
         )
@@ -1254,12 +1276,19 @@ private fun formatElevation(value: Double, unitSystem: UnitSystem): String {
     }
 }
 
+/**
+ * Minimum CO2 saved before the end-of-session share prompt is offered. A card headlining
+ * 0.00 kg is not something anyone posts, and asking would be nagging rather than inviting.
+ */
+private const val SHARE_PROMPT_MIN_CO2_KG = 0.05
+
 @Composable
 fun SessionSummaryDialog(
     stats: SessionStats,
     unitSystem: UnitSystem = UnitSystem.METRIC,
     energyUnit: EnergyUnit = EnergyUnit.KCAL,
     saveError: String? = null,
+    onShare: (() -> Unit)? = null,
     onClose: () -> Unit
 ) {
     val colorScheme = MaterialTheme.colorScheme
@@ -1465,6 +1494,38 @@ fun SessionSummaryDialog(
                 
                 Spacer(modifier = Modifier.height(24.dp))
                 
+                // Share prompt — offered at the moment the session ends, which is when a user
+                // actually feels like sharing. The card renderer and share sheet already
+                // existed but sat behind a share icon inside session detail, a screen reached
+                // by opening a past session from a list, so the feature was effectively
+                // undiscoverable at the point it matters.
+                //
+                // Only offered when there is an impact worth showing: a card headlining 0.00 kg
+                // is not something anyone posts, and prompting for it would be nagging.
+                if (onShare != null && stats.co2Conserved >= SHARE_PROMPT_MIN_CO2_KG) {
+                    Button(
+                        onClick = onShare,
+                        modifier = Modifier.fillMaxWidth(),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = colorScheme.primary,
+                            contentColor = colorScheme.onPrimary
+                        )
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Share,
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = stringResource(R.string.share_my_impact),
+                            style = MaterialTheme.typography.labelLarge,
+                            modifier = Modifier.padding(vertical = 8.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(10.dp))
+                }
+
                 // Close Button
                 Button(
                     onClick = onClose,

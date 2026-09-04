@@ -275,6 +275,7 @@
     <string name="motivation_nice_work">本周做得不错 🌱</string>
     <string name="motivation_every_step">每一步都很重要！</string>
     <string name="motivation_ready">准备好了就出发——从小处开始。</string>
+    <string name="share_my_impact">分享我的成果</string>
     <string name="motivation_new_week">新的一周——上周你减少了 %1$s 公斤 🌱</string>
     <string name="hero_lifetime_total">累计减少 %1$s 公斤</string>
 

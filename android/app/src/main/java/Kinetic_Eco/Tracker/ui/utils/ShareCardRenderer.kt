@@ -1,6 +1,8 @@
 package Kinetic_Eco.Tracker.ui.utils
 
+import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.BitmapFactory
 import android.graphics.Canvas
 import android.graphics.Color
 import android.graphics.LinearGradient
@@ -29,8 +31,20 @@ object ShareCardRenderer {
     private const val W = 1080
     private const val H = 1350
     private const val PAD = 90f
+    /** Footer mark size (px on the 1080-wide card) — legible after a platform downscale. */
+    private const val LOGO_SIZE = 132f
 
-    fun render(stats: SessionStats, unitSystem: UnitSystem, equivalency: String?): Bitmap {
+    /**
+     * @param context when supplied, the app mark is drawn into the footer. Optional so existing
+     *   callers and any preview path keep working without one — the card degrades to the text
+     *   wordmark alone rather than failing to render.
+     */
+    fun render(
+        stats: SessionStats,
+        unitSystem: UnitSystem,
+        equivalency: String?,
+        context: Context? = null
+    ): Bitmap {
         val bmp = Bitmap.createBitmap(W, H, Bitmap.Config.ARGB_8888)
         val c = Canvas(bmp)
 
@@ -96,6 +110,29 @@ object ShareCardRenderer {
         }
 
         // ── Footer ────────────────────────────────────────────────────────────────
+        //
+        // The mark, not just the wordmark. A shared card is only an ad for the app if the app is
+        // identifiable in it, and a line of 38px grey text survives neither a crop nor a
+        // screenshot-of-a-screenshot. Drawn right-aligned so it sits clear of the two text lines
+        // and reads as a signature rather than competing with the CO₂ figure above.
+        val logo = context?.let {
+            runCatching {
+                BitmapFactory.decodeResource(it.resources, Kinetic_Eco.Tracker.R.mipmap.ic_launcher)
+            }.getOrNull()
+        }
+        if (logo != null) {
+            val size = LOGO_SIZE
+            val left = W - PAD - size
+            val top = H - 150f - size * 0.72f
+            val dst = RectF(left, top, left + size, top + size)
+            // Rounded-square mask so the icon matches the card's corner language.
+            val path = Path().apply { addRoundRect(dst, size * 0.24f, size * 0.24f, Path.Direction.CW) }
+            c.save()
+            c.clipPath(path)
+            c.drawBitmap(logo, null, dst, Paint(Paint.ANTI_ALIAS_FLAG).apply { isFilterBitmap = true })
+            c.restore()
+        }
+
         c.drawText("Track your real impact — Kinetic Eco", PAD, H - 150f, paint(dim, 38f, false))
         c.drawText("#KineticEco  #GreenCommute", PAD, H - 88f, paint(accent, 36f, true))
 

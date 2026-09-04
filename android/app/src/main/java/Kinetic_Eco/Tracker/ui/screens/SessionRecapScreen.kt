@@ -59,7 +59,9 @@ fun SessionRecapScreen(
     }
 
     // Render the share card once; the preview and the shared image are the same bitmap.
-    val cardBitmap = remember(stats) { ShareCardRenderer.render(stats, unitSystem, equivalency) }
+    val cardBitmap = remember(stats, context) {
+        ShareCardRenderer.render(stats, unitSystem, equivalency, context)
+    }
 
     Surface(modifier = Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
         Column(

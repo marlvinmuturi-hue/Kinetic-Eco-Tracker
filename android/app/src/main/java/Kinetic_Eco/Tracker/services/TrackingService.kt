@@ -2939,6 +2939,94 @@ class TrackingService : LifecycleService() {
                 dd = 0.0
             }
 
+            // Physics cap — applies to EVERY mode, ahead of the pedestrian caps below.
+            //
+            // Walking and running already bound distance by steps and a speed ceiling, but no
+            // other mode bounded it at all, and reported accuracy does not catch multipath: a
+            // fix can claim 10 m accuracy while being hundreds of metres wrong. Measured on a
+            // real walk that passed through a supermarket, ten teleports contributed 46% of the
+            // session's polyline, the largest a single 243 m hop implying 148 km/h. Two of
+            // those points were classified DRIVING, which put them beyond the pedestrian caps
+            // entirely and charged the user 0.088 kg of emissions for a walk. Drift is
+            // self-protecting that way: small jumps get capped, large ones get promoted out of
+            // the cap's reach.
+            //
+            // The bound is the device's own recently sustained speed, taken as the median of
+            // the raw-speed ring so one spike cannot lift it, times generous headroom. A floor
+            // keeps genuine acceleration from a standstill from being clipped, and FLYING is
+            // exempt as everywhere else.
+            if (dd > 0 && refinedActivity != ActivityType.FLYING && timeDelta > 0.1) {
+                val sustainedMps = if (speedSampleBuf.isEmpty()) 0f else {
+                    val sorted = speedSampleBuf.sorted()
+                    sorted[sorted.size / 2]
+                }
+                // The floor keeps a standstill start from being clipped, but a vehicle floor
+                // applied to a walk is far too generous: at a 6 s fix interval it permits 47 m
+                // per hop, so most teleports slip under it. Use the vehicle floor only when
+                // there is independent evidence of a vehicle — the drift teleports that need
+                // catching arrive labelled DRIVING without any such support, and would
+                // otherwise buy the loosest bound by being wrong.
+                val vehicleContext = isRecentVehicleRecognition() ||
+                    (lastDrivingBandMs > 0L &&
+                        (now - lastDrivingBandMs) < STICKY_RECENT_DRIVING_MS)
+                val floorMps = if (vehicleContext) PHYSICS_CAP_FLOOR_MPS
+                               else PHYSICS_CAP_FLOOR_PEDESTRIAN_MPS
+                // Do not let the ceiling grow without limit as fixes get sparser. A long gap
+                // between fixes means the receiver lost lock; it is not evidence the user
+                // covered that whole interval's worth of ground. Left unbounded the cap is
+                // loosest exactly when the data is least trustworthy — measured across 17 real
+                // sessions, the drifting ones averaged 8–25 s between points against 4.5–5.9 s
+                // for clean walks, so a 25 s gap was buying a 112 m allowance per hop.
+                //
+                // Beyond this bound, distance for the missing time is dead reckoning's job,
+                // which has its own evidence and its own limits.
+                val effectiveDt = minOf(timeDelta, PHYSICS_CAP_MAX_DT_SEC)
+                val ceiling = maxOf(
+                    sustainedMps * PHYSICS_CAP_HEADROOM,
+                    floorMps
+                ) * effectiveDt
+                if (dd > ceiling) {
+                    android.util.Log.d("TrackingService",
+                        "Physics distance cap: ${dd.toInt()}m in ${"%.1f".format(timeDelta)}s " +
+                            "(${(dd / timeDelta * 3.6).toInt()} km/h implied) vs sustained " +
+                            "${(sustainedMps * 3.6f).toInt()} km/h → ${ceiling.toInt()}m " +
+                            "[$refinedActivity, dt capped to ${effectiveDt.toInt()}s]")
+                    dd = ceiling
+                }
+            }
+
+            // Zero-step veto, for every mode without vehicle context.
+            //
+            // WALKING and RUNNING already discard a segment when the pedometer reports nothing,
+            // on the reasoning that GPS-only movement is untrustworthy. That reasoning does not
+            // stop at those two labels, but the check did — so a drift teleport classified
+            // DRIVING or IDLE skipped it entirely. Across 17 recorded sessions the split was
+            // unambiguous: every genuine walk carried 365–2160 steps, every false session
+            // carried 0–56, yet the false ones banked up to 2306 m and 0.24 kg of emissions
+            // because their label put them out of the veto's reach.
+            //
+            // Vehicle context is the exemption, since a car legitimately produces no steps.
+            // Without it, no steps and no Doppler speed means no evidence of travel from any
+            // source that multipath cannot fake.
+            if (dd > 0 && sensorService.hasStepCounter() &&
+                refinedActivity != ActivityType.FLYING &&
+                refinedActivity != ActivityType.WALKING &&
+                refinedActivity != ActivityType.RUNNING
+            ) {
+                val vehicleContext = isRecentVehicleRecognition() ||
+                    (lastDrivingBandMs > 0L &&
+                        (now - lastDrivingBandMs) < STICKY_RECENT_DRIVING_MS)
+                val stepsThisInterval = (lastStepCount - stepCountAtLastGps).coerceAtLeast(0)
+                if (!vehicleContext && stepsThisInterval == 0 &&
+                    position.speed < GPS_NOISE_SPEED_FLOOR_MPS
+                ) {
+                    android.util.Log.d("TrackingService",
+                        "Zero-step veto: dropped ${dd.toInt()}m as $refinedActivity — " +
+                            "no steps, no vehicle context, Doppler ${position.speed} m/s")
+                    dd = 0.0
+                }
+            }
+
             if (dd > 0 && refinedActivity == ActivityType.WALKING) {
                 val stepsThisInterval = (lastStepCount - stepCountAtLastGps).coerceAtLeast(0)
                 // When the device has a step counter and it reports nothing, GPS-only speed is
@@ -3820,6 +3908,32 @@ class TrackingService : LifecycleService() {
          * auto-stop clock. Comfortably above GPS scatter on a stationary device, and trivially
          * cleared by anything actually moving — 40 m is under 6 seconds of walking.
          */
+        /**
+         * Multiple of the recently sustained speed a single fix may claim before the physics
+         * cap trims it. Generous - real acceleration and GPS timing jitter both need room -
+         * while still an order of magnitude below a multipath teleport.
+         */
+        private const val PHYSICS_CAP_HEADROOM = 2.5f
+        /**
+         * Floor for the physics cap (m/s), so pulling away from a standstill is never clipped:
+         * with an all-zero speed ring the ceiling would otherwise be zero. 8 m/s is about
+         * 29 km/h, more than any vehicle covers in the first second of moving.
+         */
+        private const val PHYSICS_CAP_FLOOR_MPS = 8.0f
+        /**
+         * Physics-cap floor without vehicle context (m/s). Set at the running-speed cap, so any
+         * genuine human pace passes untouched while a teleport claiming vehicle speeds on a
+         * walk does not. A real drive raises the floor via [PHYSICS_CAP_FLOOR_MPS] as soon as
+         * it has evidence, and the sustained-speed term lifts the ceiling well before then.
+         */
+        private const val PHYSICS_CAP_FLOOR_PEDESTRIAN_MPS = 4.5f
+        /**
+         * Upper bound (seconds) on the interval the physics cap will credit. A gap longer than
+         * this means lost lock, not travel, and letting the ceiling scale with it made the cap
+         * most permissive exactly where the data was worst. Distance across a genuine outage is
+         * dead reckoning's responsibility, not the raw-geometry path's.
+         */
+        private const val PHYSICS_CAP_MAX_DT_SEC = 6.0
         private const val IDLE_TRAVEL_RADIUS_M = 75.0
         /** Anchor radius also scales with fix accuracy: an excursion inside the error circle is noise. */
         private const val IDLE_TRAVEL_ACCURACY_FACTOR = 2.0

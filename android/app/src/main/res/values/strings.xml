@@ -601,6 +601,7 @@
     <string name="motivation_nice_work">Nice work this week 🌱</string>
     <string name="motivation_every_step">Every step counts!</string>
     <string name="motivation_ready">Ready when you are — let\'s start small.</string>
+    <string name="share_my_impact">Share my impact</string>
     <!-- Shown at the top of a fresh calendar week, when this week is still empty but the
          previous one was not. Without it the hero reads as a bare 0.00 every Monday and the
          app looks like it discarded the user's history. -->

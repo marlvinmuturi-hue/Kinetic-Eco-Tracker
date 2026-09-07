@@ -258,7 +258,7 @@
     <string name="tap_switch_comparison">点击切换对比</string>
     <string name="hide_wins">隐藏成就</string>
     <string name="see_wins">查看成就</string>
-    <string name="new_this_week">✨ 本周新增</string>
+    <string name="new_this_week">✨ 7 天内新增</string>
     <string name="vs_last_week"> 对比上周</string>
     <string name="tap_full_breakdown">查看完整分析 →</string>
     <string name="run_ai_analysis_prompt">运行 AI 分析以解锁个性化洞察</string>
@@ -331,14 +331,14 @@
     <string name="analysis_legend_saved">已节省（%1$.2f 千克）</string>
     <string name="analysis_legend_emitted">已排放</string>
     <string name="analysis_net_co2_saved">净节省 CO₂</string>
-    <string name="analysis_weeks_footprint">本周碳足迹</string>
+    <string name="analysis_weeks_footprint">你的过去 7 天</string>
     <string name="analysis_equivalent_to">相当于：</string>
     <string name="analysis_source_ademe">数据来源：ADEME Base Carbone (impactco2.fr)</string>
     <string name="analysis_run_ai_button">运行 AI 分析</string>
     <string name="analysis_ai_cta_text">点击按钮，获取过去 7 天的个性化 AI 分析。</string>
     <string name="analysis_session_one">1 次会话</string>
     <string name="analysis_sessions_count">%1$d 次会话</string>
-    <string name="analysis_no_sessions_week">本周尚无已记录的会话。</string>
+    <string name="analysis_no_sessions_week">过去 7 天没有记录。</string>
 
     <!-- Weekly stats tile labels -->
     <string name="stat_distance">距离</string>
@@ -521,7 +521,7 @@
     <string name="activity_time_chart_empty">保存几次记录后即可看到您最活跃的时段。</string>
     <string name="activity_time_chart_empty_day">这一天没有记录到活动。</string>
     <string name="no_route_recorded">未记录路线</string>
-    <string name="analysis_week_map_title">本周地图</string>
+    <string name="analysis_week_map_title">过去 7 天的路线</string>
     <string name="analysis_week_map_subtitle">点按下方某一天 — 最近 7 天（定位图标表示当天有路线）</string>
     <string name="analysis_week_map_gps_sessions">%1$d 次带 GPS</string>
     <string name="analysis_week_map_co2_total_day">节省的 CO₂（当日合计）</string>
@@ -638,10 +638,10 @@
     <string name="co2_calc_energy_fuel_note">燃料能量 — 内燃机大约只有四分之一转化为动力。</string>
     <string name="co2_calc_energy_battery_note">取自电池。</string>
     <string name="analysis_source_multi">数据来源：ADEME Base Carbone · DEFRA 2023 · Carbon Trust · IPCC AR6</string>
-    <string name="stat_co2_saved_week">本周节省的 CO₂</string>
+    <string name="stat_co2_saved_week">减排 CO₂（过去 7 天）</string>
     <string name="stat_co2_saved_week_value">%1$s 千克</string>
     <string name="see_all_this_week">查看本周全部</string>
-    <string name="this_weeks_sessions">本周记录</string>
+    <string name="this_weeks_sessions">过去 7 天</string>
     <string name="analysis_weekly_collapsed_summary">%1$s · 节省 %2$s 千克</string>
     <string name="analysis_weekly_expand">展开每周报告</string>
     <string name="analysis_weekly_collapse">收起每周报告</string>
@@ -750,7 +750,7 @@
     <string name="vehicle_profile_mpg">您的车油耗为（英里/加仑）</string>
     <string name="vehicle_profile_km_per_l_hint">可选。留空则按排量估算。</string>
     <string name="co2_calc_cost_is_owner_stated">依据您填写的公里/升 — 记录一次加油即可精确测算。</string>
-    <string name="analysis_view_week_sessions">查看本周记录</string>
+    <string name="analysis_view_week_sessions">查看过去 7 天</string>
     <string name="fuel_economy_channel_name">油耗</string>
     <string name="fuel_economy_channel_desc">当您的加油记录得出真实油耗时的一次性提示</string>
     <string name="fuel_economy_measured_title">您的真实油耗</string>

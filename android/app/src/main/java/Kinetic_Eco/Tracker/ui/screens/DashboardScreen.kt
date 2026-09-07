@@ -140,7 +140,11 @@ fun DashboardScreen(
     val sevenDayMs = TimeUnit.DAYS.toMillis(7)
     // "This week" = local calendar week, Monday 00:00. Single definition in [WeekWindow];
     // do not reintroduce a local copy — four divergent copies are what broke this screen.
-    val thisWeekCutoff = WeekWindow.startOfWeekMs(now)
+    // Rolling seven days, not the calendar week: a calendar week empties at Monday 00:00 and
+    // takes the hero, the tiles, the chart and the highlights with it, which reads as lost
+    // history. The window always covers seven days of real activity. Labelled "last 7 days"
+    // wherever it is shown, since it is no longer "this week".
+    val thisWeekCutoff = WeekWindow.rollingStartMs(now)
     val lastWeekCutoff = thisWeekCutoff - sevenDayMs
 
     val weekSessions = remember(allSessions, thisWeekCutoff) {
@@ -1972,7 +1976,7 @@ private fun computeDailyCo2Saved(sessions: List<SessionStats>, weekStartMs: Long
     val buckets = DoubleArray(WeekWindow.DAYS)
     sessions.forEach { s ->
         val ts = s.sessionEndTimeMs.takeIf { it > 0 } ?: return@forEach
-        val idx = WeekWindow.dayIndexInWeek(ts, weekStartMs) ?: return@forEach
+        val idx = WeekWindow.dayIndexInWindow(ts, weekStartMs) ?: return@forEach
         buckets[idx] += s.co2Conserved
     }
     return buckets.toList()
@@ -2062,7 +2066,7 @@ private fun activityDisplayName(context: Context, a: ActivityType): String = whe
  */
 /** Mon…Sun labels for the hero chart, matching [computeDailyCo2Saved]'s bucket order. */
 private fun weekdayLabels(now: Long): List<String> =
-    WeekWindow.weekdayLabels("EEE", WeekWindow.startOfWeekMs(now))
+    WeekWindow.weekdayLabels("EEE", WeekWindow.rollingStartMs(now))
 
 /**
  * Percentage delta of [current] vs [previous]. Returns null when [previous] is

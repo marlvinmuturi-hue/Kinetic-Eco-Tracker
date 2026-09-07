@@ -258,7 +258,7 @@
     <string name="tap_switch_comparison">Tocar para cambiar comparación</string>
     <string name="hide_wins">Ocultar tus logros</string>
     <string name="see_wins">Ver tus logros</string>
-    <string name="new_this_week">✨ NUEVO ESTA SEMANA</string>
+    <string name="new_this_week">✨ NUEVO EN 7 DÍAS</string>
     <string name="vs_last_week"> vs semana pasada</string>
     <string name="tap_full_breakdown">Ver el análisis completo →</string>
     <string name="run_ai_analysis_prompt">Ejecuta un análisis IA para desbloquear insights personalizados</string>
@@ -331,14 +331,14 @@
     <string name="analysis_legend_saved">Ahorrado (%1$.2f kg)</string>
     <string name="analysis_legend_emitted">Emitido</string>
     <string name="analysis_net_co2_saved">CO₂ neto ahorrado</string>
-    <string name="analysis_weeks_footprint">Huella de esta semana</string>
+    <string name="analysis_weeks_footprint">Tus últimos 7 días</string>
     <string name="analysis_equivalent_to">Eso equivale a:</string>
     <string name="analysis_source_ademe">Fuente: ADEME Base Carbone (impactco2.fr)</string>
     <string name="analysis_run_ai_button">Ejecutar análisis de IA</string>
     <string name="analysis_ai_cta_text">Pulsa el botón para obtener un desglose de IA personalizado de tus últimos 7 días.</string>
     <string name="analysis_session_one">1 sesión</string>
     <string name="analysis_sessions_count">%1$d sesiones</string>
-    <string name="analysis_no_sessions_week">No hay sesiones registradas esta semana.</string>
+    <string name="analysis_no_sessions_week">Sin sesiones en los últimos 7 días.</string>
 
     <!-- Weekly stats tile labels -->
     <string name="stat_distance">Distancia</string>
@@ -525,7 +525,7 @@
     <string name="activity_time_chart_empty">Guarda algunas sesiones para ver cuándo estás más activo.</string>
     <string name="activity_time_chart_empty_day">No hay actividad registrada este día.</string>
     <string name="no_route_recorded">No se registró ninguna ruta</string>
-    <string name="analysis_week_map_title">Esta semana en el mapa</string>
+    <string name="analysis_week_map_title">Últimos 7 días en el mapa</string>
     <string name="analysis_week_map_subtitle">Toca un día abajo: últimos 7 días (el icono de ubicación indica rutas ese día)</string>
     <string name="analysis_week_map_gps_sessions">%1$d con GPS</string>
     <string name="analysis_week_map_co2_total_day">CO₂ ahorrado (total del día)</string>
@@ -642,10 +642,10 @@
     <string name="co2_calc_energy_fuel_note">Energía del combustible: un motor de combustión convierte en movimiento alrededor de una cuarta parte.</string>
     <string name="co2_calc_energy_battery_note">Tomada de la batería.</string>
     <string name="analysis_source_multi">Fuentes: ADEME Base Carbone · DEFRA 2023 · Carbon Trust · IPCC AR6</string>
-    <string name="stat_co2_saved_week">CO₂ ahorrado esta semana</string>
+    <string name="stat_co2_saved_week">CO₂ ahorrado (últimos 7 días)</string>
     <string name="stat_co2_saved_week_value">%1$s kg</string>
     <string name="see_all_this_week">Ver todo de esta semana</string>
-    <string name="this_weeks_sessions">Sesiones de esta semana</string>
+    <string name="this_weeks_sessions">Últimos 7 días</string>
     <string name="analysis_weekly_collapsed_summary">%1$s · %2$s kg ahorrados</string>
     <string name="analysis_weekly_expand">Desplegar el informe semanal</string>
     <string name="analysis_weekly_collapse">Plegar el informe semanal</string>
@@ -754,7 +754,7 @@
     <string name="vehicle_profile_mpg">Tu coche hace (MPG)</string>
     <string name="vehicle_profile_km_per_l_hint">Opcional. Déjalo en blanco para estimarlo por la cilindrada.</string>
     <string name="co2_calc_cost_is_owner_stated">Basado en los km/L que has introducido: registra un repostaje para medirlo con exactitud.</string>
-    <string name="analysis_view_week_sessions">Ver las sesiones de esta semana</string>
+    <string name="analysis_view_week_sessions">Ver los últimos 7 días</string>
     <string name="fuel_economy_channel_name">Consumo</string>
     <string name="fuel_economy_channel_desc">Un aviso único cuando tus repostajes producen un consumo real</string>
     <string name="fuel_economy_measured_title">Tu consumo real</string>

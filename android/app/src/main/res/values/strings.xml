@@ -359,7 +359,7 @@
     <string name="activity_time_chart_empty">Save a few sessions to see when you are most active.</string>
     <string name="activity_time_chart_empty_day">No tracked activity on this day.</string>
     <string name="no_route_recorded">No route recorded</string>
-    <string name="analysis_week_map_title">This week on the map</string>
+    <string name="analysis_week_map_title">Last 7 days on the map</string>
     <string name="analysis_week_map_subtitle">Tap a day below — last 7 days (location icon = routes that day)</string>
     <string name="analysis_week_map_gps_sessions">%1$d with GPS</string>
     <string name="analysis_week_map_co2_total_day">CO₂ saved (day total)</string>
@@ -582,7 +582,7 @@
     <string name="tap_switch_comparison">Tap to switch comparison</string>
     <string name="hide_wins">Hide your wins</string>
     <string name="see_wins">See your wins</string>
-    <string name="new_this_week">✨ NEW THIS WEEK</string>
+    <string name="new_this_week">✨ NEW IN 7 DAYS</string>
     <string name="vs_last_week"> vs last week</string>
     <string name="tap_full_breakdown">Tap for the full breakdown →</string>
     <string name="run_ai_analysis_prompt">Run an AI analysis to unlock personalised insights</string>
@@ -690,7 +690,7 @@
     <string name="analysis_legend_saved">Saved (%1$.2f kg)</string>
     <string name="analysis_legend_emitted">Emitted</string>
     <string name="analysis_net_co2_saved">Net CO₂ saved</string>
-    <string name="analysis_weeks_footprint">This week\'s footprint</string>
+    <string name="analysis_weeks_footprint">Your last 7 days</string>
     <string name="analysis_equivalent_to">That\'s equivalent to:</string>
     <string name="analysis_source_ademe">Source: ADEME Base Carbone (impactco2.fr)</string>
     <string name="analysis_source_multi">Sources: ADEME Base Carbone · DEFRA 2023 · Carbon Trust · IPCC AR6</string>
@@ -698,7 +698,7 @@
     <string name="analysis_ai_cta_text">Tap the button to get a personalised AI breakdown of your last 7 days.</string>
     <string name="analysis_session_one">1 session</string>
     <string name="analysis_sessions_count">%1$d sessions</string>
-    <string name="analysis_no_sessions_week">No sessions recorded this week yet.</string>
+    <string name="analysis_no_sessions_week">No sessions in the last 7 days yet.</string>
 
     <!-- Weekly stats tile labels -->
     <string name="stat_distance">Distance</string>
@@ -709,13 +709,13 @@
     <string name="stat_co2_impact">CO₂ impact</string>
     <string name="stat_co2_impact_saved">%1$s kg saved</string>
     <string name="stat_co2_impact_net">%1$s kg net</string>
-    <string name="stat_co2_saved_week">CO₂ saved this week</string>
+    <string name="stat_co2_saved_week">CO₂ saved (last 7 days)</string>
     <string name="stat_co2_saved_week_value">%1$s kg</string>
 
     <!-- Recent sessions card -->
     <string name="recent_sessions">Recent sessions</string>
     <string name="see_all_this_week">See all this week</string>
-    <string name="this_weeks_sessions">This week\'s sessions</string>
+    <string name="this_weeks_sessions">Last 7 days</string>
 
     <!-- Hero card CO₂ suffix -->
     <string name="hero_co2_saved">saved</string>
@@ -863,7 +863,7 @@
     <string name="vehicle_profile_mpg">Your car does (MPG)</string>
     <string name="vehicle_profile_km_per_l_hint">Optional. Leave blank to estimate from engine size.</string>
     <string name="co2_calc_cost_is_owner_stated">Based on the km/L you entered — log a fill-up to measure it exactly.</string>
-    <string name="analysis_view_week_sessions">View this week\'s sessions</string>
+    <string name="analysis_view_week_sessions">View the last 7 days</string>
     <string name="fuel_economy_channel_name">Fuel economy</string>
     <string name="fuel_economy_channel_desc">A one-off note when your fill-ups produce a real economy figure</string>
     <string name="fuel_economy_measured_title">Your real fuel economy</string>

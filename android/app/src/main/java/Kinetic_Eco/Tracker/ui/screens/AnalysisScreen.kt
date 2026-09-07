@@ -124,7 +124,7 @@ fun AnalysisScreen(
     // "This week" is the local calendar week everywhere in the app — see [WeekWindow].
     // This screen previously headlined a rolling 7-day total while the Dashboard showed
     // a calendar-week one, so on a Monday the two disagreed with no label explaining why.
-    val thisWeekCutoff = remember { WeekWindow.startOfWeekMs() }
+    val thisWeekCutoff = remember { WeekWindow.rollingStartMs() }
     val calWeekSessions = remember(allSessions, thisWeekCutoff) {
         allSessions.filter { (it.sessionEndTimeMs.takeIf { t -> t > 0 } ?: 0L) >= thisWeekCutoff }
     }
@@ -430,7 +430,7 @@ private fun computeWeeklyCo2Buckets(
     val buckets = MutableList(WeekWindow.DAYS) { DailyCo2(0.0, 0.0) }
     sessions.forEach { s ->
         val ts = s.sessionEndTimeMs.takeIf { it > 0 } ?: return@forEach
-        val idx = WeekWindow.dayIndexInWeek(ts, weekStartMs) ?: return@forEach
+        val idx = WeekWindow.dayIndexInWindow(ts, weekStartMs) ?: return@forEach
         val cur = buckets[idx]
         buckets[idx] = DailyCo2(
             savedKg = cur.savedKg + s.co2Conserved,
@@ -452,7 +452,7 @@ private fun Co2WeeklyChart(
     val niceMaxEmit  = niceChartMax(max(daily.maxOfOrNull { it.emittedKg } ?: 0.0, 0.5))
 
     // Day letters for each bar: index 0 = Monday … 6 = Sunday, matching the buckets.
-    val dayLabels = remember { WeekWindow.weekdayLabels("EEEEE") }
+    val dayLabels = remember { WeekWindow.weekdayLabels("EEEEE", WeekWindow.rollingStartMs()) }
 
     Canvas(
         modifier = Modifier

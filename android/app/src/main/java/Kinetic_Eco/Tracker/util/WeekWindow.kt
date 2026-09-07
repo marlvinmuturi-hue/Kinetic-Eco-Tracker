@@ -26,6 +26,62 @@ object WeekWindow {
     /** Number of days in a week — the bucket count for any weekly chart. */
     const val DAYS = 7
 
+    /**
+     * Start of the rolling seven-day window ending today: local midnight, six days back.
+     *
+     * This is what every user-facing "recent activity" surface uses. The calendar week is
+     * honest but empties itself every Monday at 00:00 — the dashboard, the weekly report and
+     * the sessions list all went blank at once, which reads as the app having lost the user's
+     * history rather than as a week beginning. A rolling window always covers seven days of
+     * real activity, so there is no cliff.
+     *
+     * Day-aligned rather than `now - 7 days` so the seven chart buckets are whole days and
+     * "today" is always the last one, instead of every bucket straddling two dates.
+     *
+     * The calendar-week functions remain for the leaderboard, which needs a window shared by
+     * every user to rank them fairly — see [startOfWeekMs].
+     */
+    fun rollingStartMs(nowMs: Long = System.currentTimeMillis()): Long {
+        val cal = Calendar.getInstance()
+        cal.timeInMillis = nowMs
+        cal.set(Calendar.HOUR_OF_DAY, 0)
+        cal.set(Calendar.MINUTE, 0)
+        cal.set(Calendar.SECOND, 0)
+        cal.set(Calendar.MILLISECOND, 0)
+        cal.add(Calendar.DAY_OF_YEAR, -(DAYS - 1))
+        return cal.timeInMillis
+    }
+
+    /**
+     * Bucket index for [timestampMs] within the seven-day window beginning [windowStartMs]:
+     * 0 = the oldest day, 6 = today. Null when the timestamp falls outside the window.
+     *
+     * Counts whole calendar days rather than dividing by 86 400 000, so a daylight-saving
+     * transition inside the window cannot shift every later day by one.
+     */
+    fun dayIndexInWindow(timestampMs: Long, windowStartMs: Long): Int? {
+        if (timestampMs < windowStartMs) return null
+        val cursor = midnight(windowStartMs)
+        val target = midnight(timestampMs)
+        var idx = 0
+        while (idx < DAYS) {
+            // Does `target` fall inside the day starting at `cursor`?
+            val next = (cursor.clone() as Calendar).apply { add(Calendar.DAY_OF_YEAR, 1) }
+            if (target.timeInMillis < next.timeInMillis) return idx
+            cursor.add(Calendar.DAY_OF_YEAR, 1)
+            idx++
+        }
+        return null   // beyond the window's last day
+    }
+
+    private fun midnight(ms: Long): Calendar = Calendar.getInstance().apply {
+        timeInMillis = ms
+        set(Calendar.HOUR_OF_DAY, 0)
+        set(Calendar.MINUTE, 0)
+        set(Calendar.SECOND, 0)
+        set(Calendar.MILLISECOND, 0)
+    }
+
     /** Local Monday 00:00:00.000 of the calendar week containing [nowMs]. */
     fun startOfWeekMs(nowMs: Long = System.currentTimeMillis()): Long {
         val cal = Calendar.getInstance()

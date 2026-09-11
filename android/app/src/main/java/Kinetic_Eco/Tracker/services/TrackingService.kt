@@ -225,7 +225,22 @@ class TrackingService : LifecycleService() {
     private var motorLowSpeedSinceMs: Long = 0L
 
     /** Last fix time when smoothed speed was at/above [SpeedThresholds.DRIVING_MIN] (sticky window). */
+    /**
+     * Last GPS fix whose speed was in the driving band.
+     *
+     * STRICTLY for motor-mode hysteresis inside [applyStickyMotorActivity] — "was this thing
+     * recently going driving-fast?", so a traffic light does not drop the user out of DRIVING.
+     * It is derived from GPS speed and therefore must NEVER be read as evidence that a vehicle
+     * is genuinely present: GPS drift indoors routinely exceeds DRIVING_MIN, which let drift
+     * issue itself a vehicle permit and claim the exemptions built for real cars. Use
+     * [hasVehicleEvidence] for that question instead.
+     */
     private var lastDrivingBandMs: Long = 0L
+
+    /** Wall-clock ms at which a sustained non-GPS motor signature was last confirmed. */
+    @Volatile private var lastMotorSignatureMs = 0L
+    /** Start of the current unbroken run of motor-looking sensor samples; 0 when not in one. */
+    private var motorSignatureRunSinceMs = 0L
 
     /**
      * Timestamp of the first tick that wanted to promote a pedestrian activity
@@ -566,6 +581,8 @@ class TrackingService : LifecycleService() {
         stepsCorroborated = true
         motorLowSpeedSinceMs = 0L
         lastDrivingBandMs = 0L
+        lastMotorSignatureMs = 0L
+        motorSignatureRunSinceMs = 0L
         pedestrianToMotorRiseSinceMs = 0L
         speedSampleBuf.clear()
         evConfirmPromptShownThisSession = false
@@ -1091,6 +1108,8 @@ class TrackingService : LifecycleService() {
         stepsCorroborated = true
         motorLowSpeedSinceMs = 0L
         lastDrivingBandMs = 0L
+        lastMotorSignatureMs = 0L
+        motorSignatureRunSinceMs = 0L
         pedestrianToMotorRiseSinceMs = 0L
         speedSampleBuf.clear()
         evConfirmPromptShownThisSession = false
@@ -1334,11 +1353,7 @@ class TrackingService : LifecycleService() {
             // exclusion now applies only when the vehicle classification has independent
             // support — Activity Recognition, or a recent genuine driving-band speed. A
             // DRIVING label reached purely from drift no longer suppresses real steps.
-            val motorisedForReal = isMotorised && (
-                isRecentVehicleRecognition() ||
-                    (lastDrivingBandMs > 0L &&
-                        (System.currentTimeMillis() - lastDrivingBandMs) < STICKY_RECENT_DRIVING_MS)
-                )
+            val motorisedForReal = isMotorised && hasVehicleEvidence()
             if (!motorisedForReal) {
                 _sessionSteps.value += stepDelta
             }
@@ -1596,6 +1611,54 @@ class TrackingService : LifecycleService() {
         stepCorrobLon = lon
         stepCorrobAnchorSteps = lastStepCount
         stepCorrobSinceMs = now
+    }
+
+    /**
+     * Tracks whether the accelerometer currently shows a vehicle's physical signature.
+     *
+     * A car in motion transmits road and engine vibration into the device continuously: the
+     * linear-acceleration magnitude sits clearly above zero without the rhythmic peak of
+     * footfall. A phone on a desk shows neither — the same distinction [SensorActivityClassifier]
+     * draws for STILL, applied here to the opposite verdict. Requiring the run to be sustained
+     * stops a single knock or handling bump from counting.
+     */
+    private fun updateMotorSignature(sensorHint: SensorHint, wallNow: Long) {
+        val looksMotor = (sensorHint == SensorHint.MOTOR_LIKELY ||
+            sensorService.getMotionPattern() == MotionPattern.SMOOTH) &&
+            currentAcceleration >= VEHICLE_SIGNATURE_MIN_ACCEL
+        if (!looksMotor) {
+            motorSignatureRunSinceMs = 0L
+            return
+        }
+        if (motorSignatureRunSinceMs == 0L) motorSignatureRunSinceMs = wallNow
+        if (wallNow - motorSignatureRunSinceMs >= VEHICLE_SIGNATURE_CONFIRM_MS) {
+            if (lastMotorSignatureMs == 0L) {
+                android.util.Log.d("TrackingService",
+                    "Vehicle signature confirmed from sensors (accel=$currentAcceleration, hint=$sensorHint)")
+            }
+            lastMotorSignatureMs = wallNow
+        }
+    }
+
+    /**
+     * Whether anything *other than GPS* says a vehicle is involved.
+     *
+     * This is the question every exemption in the pipeline should be asking. Five gates
+     * previously asked [lastDrivingBandMs] instead, which is set from GPS speed — so indoor
+     * multipath above DRIVING_MIN granted itself vehicle status and, with it, exemption from
+     * the zero-step veto, a doubled physics-cap floor, an open STILL hatch, a bypassed idle
+     * lock and unsuppressed step counting. The gates were most permissive exactly when the
+     * GPS was least trustworthy, which is why drift kept surviving each new threshold.
+     *
+     * Both sources here are independent of the GPS chip. Neither is perfect — Activity
+     * Recognition has been observed reporting IN_VEHICLE indoors on this project's test device
+     * — but both are far harder to trip than "a drifting fix read 19 km/h".
+     */
+    private fun hasVehicleEvidence(): Boolean {
+        if (isRecentVehicleRecognition()) return true
+        val wall = System.currentTimeMillis()
+        return lastMotorSignatureMs > 0L &&
+            (wall - lastMotorSignatureMs) < VEHICLE_EVIDENCE_TTL_MS
     }
 
     /** The ground-motor activity set — shared so the several places that test it cannot drift apart. */
@@ -2588,6 +2651,9 @@ class TrackingService : LifecycleService() {
         val sensorHint = sensorService.getSensorHint()
         val hasAccelerometer = sensorService.hasAccelerometer()
 
+        // Keep the non-GPS vehicle signature current before any gate consults it.
+        updateMotorSignature(sensorHint, wallNow)
+
         // Track how long sensors have continuously confirmed STILL.
         if (sensorHint == SensorHint.STILL) {
             if (stillConfirmedSinceMs == 0L) stillConfirmedSinceMs = now
@@ -2628,11 +2694,8 @@ class TrackingService : LifecycleService() {
         // that follows — the case it exists for. A phone sitting on a desk never enters motor
         // context and never gets an IN_VEHICLE reading, so it is always zeroed.
         if (_manualActivityMode.value == null && sensorHint == SensorHint.STILL) {
-            val recentlyDriving = isMotorActivity(_currentActivity.value) &&
-                lastDrivingBandMs > 0L &&
-                (now - lastDrivingBandMs) < STICKY_RECENT_DRIVING_MS
             val vehicleRecognised = isRecentVehicleRecognition()
-            val vehicleContext = recentlyDriving || vehicleRecognised
+            val vehicleContext = hasVehicleEvidence()
             // Still require the reading itself to be plausible, so vehicle context alone
             // cannot wave through an arbitrary spike.
             val plausibleReading = speed >= SpeedThresholds.DRIVING_MIN.toFloat() &&
@@ -2818,9 +2881,9 @@ class TrackingService : LifecycleService() {
         // runs earlier and exists for exactly this case. Two guards fix that: an explicit
         // motor-context exemption, and requiring the accelerometer to *agree* rather than
         // treating it as a fallback only consulted on devices with no step counter.
-        val inMotorContext = isMotorActivity(_currentActivity.value) &&
-            lastDrivingBandMs > 0L && (now - lastDrivingBandMs) < STICKY_RECENT_DRIVING_MS
-        val vehicleConfirmed = inMotorContext || isRecentVehicleRecognition()
+        // Motor context must be corroborated by something other than GPS — an activity label
+        // reached from drift speed is not evidence that a vehicle exists.
+        val vehicleConfirmed = isMotorActivity(_currentActivity.value) && hasVehicleEvidence()
         val stepsQuiet = if (sensorService.hasStepCounter()) {
             // Time-based: gate fires only when no step has been detected for SENSOR_IDLE_LOCK_MS.
             // A count-based check (stepsNow == 0) is unreliable because the dead-reckoning path
@@ -2966,9 +3029,7 @@ class TrackingService : LifecycleService() {
                 // there is independent evidence of a vehicle — the drift teleports that need
                 // catching arrive labelled DRIVING without any such support, and would
                 // otherwise buy the loosest bound by being wrong.
-                val vehicleContext = isRecentVehicleRecognition() ||
-                    (lastDrivingBandMs > 0L &&
-                        (now - lastDrivingBandMs) < STICKY_RECENT_DRIVING_MS)
+                val vehicleContext = hasVehicleEvidence()
                 val floorMps = if (vehicleContext) PHYSICS_CAP_FLOOR_MPS
                                else PHYSICS_CAP_FLOOR_PEDESTRIAN_MPS
                 // Do not let the ceiling grow without limit as fixes get sparser. A long gap
@@ -3013,9 +3074,7 @@ class TrackingService : LifecycleService() {
                 refinedActivity != ActivityType.WALKING &&
                 refinedActivity != ActivityType.RUNNING
             ) {
-                val vehicleContext = isRecentVehicleRecognition() ||
-                    (lastDrivingBandMs > 0L &&
-                        (now - lastDrivingBandMs) < STICKY_RECENT_DRIVING_MS)
+                val vehicleContext = hasVehicleEvidence()
                 val stepsThisInterval = (lastStepCount - stepCountAtLastGps).coerceAtLeast(0)
                 if (!vehicleContext && stepsThisInterval == 0 &&
                     position.speed < GPS_NOISE_SPEED_FLOOR_MPS
@@ -3959,6 +4018,18 @@ class TrackingService : LifecycleService() {
         /** How long a confident IN_VEHICLE reading keeps vetoing the idle lock. Spans several
          *  10 s update cycles so a transient UNKNOWN at a traffic stop doesn't drop the veto. */
         private const val VEHICLE_RECOGNITION_TTL_MS = 90_000L
+        /**
+         * Linear acceleration (m/s²) a vehicle signature must exceed.
+         *
+         * A moving car transmits road and engine vibration continuously; a phone on a desk
+         * transmits none. Set above SENSOR_STILL_ACCEL_THRESHOLD so stillness can never
+         * qualify, but low enough that a cushioned seat on smooth tarmac still does.
+         */
+        private const val VEHICLE_SIGNATURE_MIN_ACCEL = 0.25f
+        /** How long that signature must hold unbroken before it counts — filters knocks and handling. */
+        private const val VEHICLE_SIGNATURE_CONFIRM_MS = 8_000L
+        /** How long a confirmed signature keeps granting vehicle status after it was last seen. */
+        private const val VEHICLE_EVIDENCE_TTL_MS = 90_000L
         /** Linear acceleration (m/s²) below which the phone is considered stationary (fallback for no-step-counter devices). */
         private const val SENSOR_STILL_ACCEL_THRESHOLD = 0.12f
         /**

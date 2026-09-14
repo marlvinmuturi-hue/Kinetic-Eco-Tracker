@@ -1676,10 +1676,26 @@ class TrackingService : LifecycleService() {
      * — but both are far harder to trip than "a drifting fix read 19 km/h".
      */
     private fun hasVehicleEvidence(): Boolean {
-        if (isRecentVehicleRecognition()) return true
         val wall = System.currentTimeMillis()
-        return lastMotorSignatureMs > 0L &&
+        val signature = lastMotorSignatureMs > 0L &&
             (wall - lastMotorSignatureMs) < VEHICLE_EVIDENCE_TTL_MS
+        if (signature) return true
+
+        // Activity Recognition is no longer sufficient on its own. It was observed reporting
+        // IN_VEHICLE with high confidence from a phone sitting indoors, which then granted every
+        // exemption a real car gets — the same self-certifying failure the GPS driving-band had,
+        // just with a different sensor signing the permit.
+        //
+        // It still counts, but only when the accelerometer does not contradict it. A vehicle
+        // transmits vibration continuously; a device the classifier reads as STILL is not in a
+        // moving car, whatever the fused activity API believes.
+        if (!isRecentVehicleRecognition()) return false
+        val contradicted = sensorService.getSensorHint() == SensorHint.STILL
+        if (contradicted) {
+            android.util.Log.d("TrackingService",
+                "AR says IN_VEHICLE but sensors read STILL — not granting vehicle evidence")
+        }
+        return !contradicted
     }
 
     /** The ground-motor activity set — shared so the several places that test it cannot drift apart. */

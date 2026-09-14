@@ -495,13 +495,19 @@ class AutoStartMonitorService : LifecycleService() {
             return
         }
 
-        // Vehicle cold-starts skip the indoor GPS gate — if the user is already driving,
-        // the indoor accuracy check would wrongly suppress the start in a parking garage.
-        if (vehicleColdStart) {
-            Log.d(TAG, "Auto-start: IN_VEHICLE cold start — bypassing indoor GPS gate")
-            launchTrackingService(vehicleColdStart = true)
-            return
-        }
+        // Vehicle cold-starts used to skip this gate outright, on the reasoning that a driver
+        // already moving would be wrongly suppressed in a parking garage. Removed, for two
+        // reasons.
+        //
+        // First, it was being exploited by the very case the gate exists to stop: Activity
+        // Recognition reported IN_VEHICLE from a phone indoors, the bypass waved it through, and
+        // a session of pure multipath began.
+        //
+        // Second, the garage case does not actually need it. The gate below only suppresses on a
+        // *recent* fix worse than GPS_INDOOR_ACCURACY_M, and it gives up after
+        // GPS_INDOOR_MAX_SUPPRESSIONS with a shortened retry each time — so a genuine drive
+        // through weak signal launches anyway, at worst a few retry cycles later. Nothing about
+        // being in a vehicle justifies skipping a check on whether the GPS is trustworthy.
 
         // GPS accuracy gate: a recent fix with accuracy > GPS_INDOOR_ACCURACY_M strongly
         // suggests the user is indoors (kitchen walk, climbing stairs, fidgeting).
@@ -526,8 +532,11 @@ class AutoStartMonitorService : LifecycleService() {
                     Log.d(TAG, "Auto-start: GPS indoor gate override after $indoorGateSuppressCount suppressions (accuracy=${accuracy}m) — launching anyway")
                 }
                 indoorGateSuppressCount = 0
-                Log.d(TAG, "Auto-start GPS gate passed (accuracy=${accuracy}m age=${ageMs / 1000}s) — launching TrackingService")
-                launchTrackingService(vehicleColdStart = false)
+                Log.d(TAG, "Auto-start GPS gate passed (accuracy=${accuracy}m age=${ageMs / 1000}s, " +
+                    "vehicleColdStart=$vehicleColdStart) — launching TrackingService")
+                // Preserve the cold-start hint: it only speeds up motor promotion once tracking
+                // is running, and the gate above has now vetted the launch either way.
+                launchTrackingService(vehicleColdStart)
             }
     }
 

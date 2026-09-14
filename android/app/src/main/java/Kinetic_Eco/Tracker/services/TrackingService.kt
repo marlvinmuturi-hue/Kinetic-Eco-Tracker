@@ -333,6 +333,14 @@ class TrackingService : LifecycleService() {
     private val DEAD_RECKON_GAP_THRESHOLD_MS = 3000L   // Start after 3s without GPS
     private val DEAD_RECKON_MAX_DURATION_MS = 60000L   // Max 60s extrapolation
     private var deadReckonStartMs = 0L
+    /**
+     * Distance (m) dead reckoning has credited since the last GPS fix, still unreconciled.
+     *
+     * Dead reckoning is an *estimate* of ground covered during a GPS outage. When the next fix
+     * lands it reports the true displacement across that whole outage — including the part
+     * already estimated — so without this the same stretch of road is paid for twice.
+     */
+    @Volatile private var deadReckonedSinceFixM = 0.0
 
     // Step-based distance fallback when GPS is weak (urban/indoor walking)
     /**
@@ -581,6 +589,7 @@ class TrackingService : LifecycleService() {
         stepsCorroborated = true
         motorLowSpeedSinceMs = 0L
         lastDrivingBandMs = 0L
+        deadReckonedSinceFixM = 0.0
         lastMotorSignatureMs = 0L
         motorSignatureRunSinceMs = 0L
         pedestrianToMotorRiseSinceMs = 0L
@@ -835,6 +844,8 @@ class TrackingService : LifecycleService() {
                 val deltaSec = 2.0  // 2s since last tick
                 val distanceDelta = scaledGpsDistanceMeters(smoothedSpeed * deltaSec, activity)
                 _sessionDistance.value += distanceDelta
+                // Remember it: the next fix measures this same interval and must not pay twice.
+                deadReckonedSinceFixM += distanceDelta
                 updateStats(distanceDelta, activity, smoothedSpeed.toDouble(), 0.0, 0.0)
             }
         }
@@ -1108,6 +1119,7 @@ class TrackingService : LifecycleService() {
         stepsCorroborated = true
         motorLowSpeedSinceMs = 0L
         lastDrivingBandMs = 0L
+        deadReckonedSinceFixM = 0.0
         lastMotorSignatureMs = 0L
         motorSignatureRunSinceMs = 0L
         pedestrianToMotorRiseSinceMs = 0L
@@ -3118,10 +3130,36 @@ class TrackingService : LifecycleService() {
 
             if (isActuallyMoving && meetsDistanceThreshold && dd > 0) {
                 val ddScaled = scaledGpsDistanceMeters(dd, refinedActivity)
-                _sessionDistance.value += ddScaled
+
+                // Reconcile against anything dead reckoning already estimated for this gap.
+                //
+                // `dd` is the displacement from the last GPS fix to this one, so it covers the
+                // entire outage. Dead reckoning has meanwhile been crediting 2 s of estimated
+                // travel every 2 s for the same stretch, and nothing subtracted it — the road
+                // was paid for twice. Over a 7 s gap that is 4 s estimated plus 7 s measured:
+                // 1.6x the true distance, which is the scale of over-reporting observed against
+                // a mapped route (3.06 km recorded for a 2.0 km drive).
+                //
+                // The estimate is provisional and the fix is ground truth, so settle up: credit
+                // only the difference. A negative difference means dead reckoning over-estimated
+                // (the vehicle slowed during the outage) and the excess is taken back out.
+                val credited = if (deadReckonedSinceFixM > 0.0) {
+                    val net = ddScaled - deadReckonedSinceFixM
+                    android.util.Log.d("TrackingService",
+                        "Dead-reckon reconcile: GPS says ${ddScaled.toInt()}m, " +
+                            "already estimated ${deadReckonedSinceFixM.toInt()}m → net ${net.toInt()}m")
+                    deadReckonedSinceFixM = 0.0
+                    net
+                } else {
+                    ddScaled
+                }
+                _sessionDistance.value = (_sessionDistance.value + credited).coerceAtLeast(0.0)
                 lastGpsDistanceUpdateMs = now
                 stepCountAtLastGps = lastStepCount
-                updateStats(ddScaled, refinedActivity, speed.toDouble(), elevationGainDelta, elevationLossDelta)
+                // Clamped: `credited` is negative when dead reckoning over-estimated, and the
+                // per-activity breakdown must not be driven below zero. The session total above
+                // absorbs the correction; the breakdown simply stops rather than reversing.
+                updateStats(credited.coerceAtLeast(0.0), refinedActivity, speed.toDouble(), elevationGainDelta, elevationLossDelta)
                 // Record route point on movement (in addition to time interval)
                 recordPathPointIfNeeded(filtered.latitude, filtered.longitude, routeAltitudeMeters, refinedActivity, now, position.accuracy)
             }
@@ -3137,6 +3175,10 @@ class TrackingService : LifecycleService() {
         previousAltitude = currentAltitude
         lastUpdateTime = now
         deadReckonStartMs = 0L  // Reset - we got GPS, no longer in gap
+        // Clear unconditionally, not only on the credited path above: a fix whose distance was
+        // rejected by a gate still measures the outage, and leaving the estimate outstanding
+        // would subtract it from some later, unrelated fix.
+        deadReckonedSinceFixM = 0.0
         
         // Record path point: first point immediately, then on position change or every PATH_RECORD_INTERVAL_MS
         // This ensures route displays even when autodetect shows IDLE (slow movement) or GPS is delayed

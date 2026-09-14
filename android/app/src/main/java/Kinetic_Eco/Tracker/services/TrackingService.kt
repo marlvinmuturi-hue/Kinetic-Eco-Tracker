@@ -342,10 +342,9 @@ class TrackingService : LifecycleService() {
      */
     @Volatile private var deadReckonedSinceFixM = 0.0
 
-    /** Wall clock of the last [updateStats] call; 0 before the first. */
-    private var lastStatsUpdateMs = 0L
-    /** Sub-second remainder carried between [updateStats] calls so short intervals are not lost. */
-    private var statsTimeCarryMs = 0L
+    /** Elevation change seen by the location path since the last timer tick, awaiting billing. */
+    private var pendingElevationGainM = 0.0
+    private var pendingElevationLossM = 0.0
 
     // Step-based distance fallback when GPS is weak (urban/indoor walking)
     /**
@@ -595,8 +594,8 @@ class TrackingService : LifecycleService() {
         motorLowSpeedSinceMs = 0L
         lastDrivingBandMs = 0L
         deadReckonedSinceFixM = 0.0
-        lastStatsUpdateMs = 0L
-        statsTimeCarryMs = 0L
+        pendingElevationGainM = 0.0
+        pendingElevationLossM = 0.0
         lastMotorSignatureMs = 0L
         motorSignatureRunSinceMs = 0L
         pedestrianToMotorRiseSinceMs = 0L
@@ -1127,8 +1126,8 @@ class TrackingService : LifecycleService() {
         motorLowSpeedSinceMs = 0L
         lastDrivingBandMs = 0L
         deadReckonedSinceFixM = 0.0
-        lastStatsUpdateMs = 0L
-        statsTimeCarryMs = 0L
+        pendingElevationGainM = 0.0
+        pendingElevationLossM = 0.0
         lastMotorSignatureMs = 0L
         motorSignatureRunSinceMs = 0L
         pedestrianToMotorRiseSinceMs = 0L
@@ -3508,52 +3507,37 @@ class TrackingService : LifecycleService() {
         val breakdown = currentStats.breakdown.toMutableMap()
         val currentBreakdown = breakdown[activity] ?: ActivityBreakdown()
 
-        // Elapsed seconds since the previous stats update, not a flat +1.
+        // Time is NOT this function's to keep. The 1 Hz timer in startTimer already books
+        // exactly one second per second against the current activity, which is both correct
+        // and authoritative; anything added here lands on top of it.
         //
-        // This used to add exactly one second per call, which made the field count *calls*
-        // rather than time. Its three callers run at unrelated cadences — dead reckoning every
-        // 2 s, a GPS fix every 1-6 s, and the step-distance path on step events — so the total
-        // bore no relation to the session. Measured on two real drives it ran 1.27x long in
-        // both: 326 s of mode time in a 255 s session, and 791 s in a 625 s one.
-        //
-        // The remainder is carried rather than truncated, so a burst of sub-second calls still
-        // accumulates correctly instead of contributing nothing. A long gap is capped so a
-        // suspended process cannot dump minutes into whichever activity happens to be current
-        // when it wakes.
-        val nowMs = System.currentTimeMillis()
-        val rawDeltaMs = if (lastStatsUpdateMs == 0L) 0L
-                         else (nowMs - lastStatsUpdateMs).coerceIn(0L, STATS_MAX_TIME_DELTA_MS)
-        lastStatsUpdateMs = nowMs
-        statsTimeCarryMs += rawDeltaMs
-        val elapsedSec = statsTimeCarryMs / 1000L
-        statsTimeCarryMs -= elapsedSec * 1000L
-
-        // Preserve existing steps when updating time and distance
+        // That double-count is why mode time ran 1.27x the session length on two measured
+        // drives. An earlier attempt to fix it by replacing the flat "+1 per call" with the
+        // real elapsed interval made it worse rather than better — total became duration plus
+        // duration, 1.89x and 1.76x on the next two drives — because it corrected the arithmetic
+        // of a writer that should not have been writing at all.
         breakdown[activity] = ActivityBreakdown(
-            time = currentBreakdown.time + elapsedSec,
+            time = currentBreakdown.time,               // owned by startTimer
             distance = currentBreakdown.distance + distanceDelta,
-            steps = currentBreakdown.steps // Preserve existing step count
+            steps = currentBreakdown.steps
         )
         
         val (emissions, conserved) = sessionManager.calculateCO2(distanceDelta, activity, vehicleProfile)
         
         // Use advanced calorie calculation with speed and elevation
-        val caloriesDelta = sessionManager.calculateCalories(
-            // Same interval the breakdown just booked — a flat 1 s here inflated calories by
-            // exactly the factor it inflated time by.
-            duration = elapsedSec,
-            activity = activity,
-            speedMps = if (speedMps > 0) speedMps else null,
-            elevationGain = if (activity == ActivityType.FLYING) 0.0 else elevationGainDelta,
-            elevationLoss = if (activity == ActivityType.FLYING) 0.0 else elevationLossDelta,
-            userProfile = userPhysicalProfile
-        )
+        // Calories follow time, so they belong to the timer for the same reason — billing them
+        // here as well double-counted them by exactly the factor time was inflated. The speed
+        // and elevation refinements this call used to supply are not lost: they are handed to
+        // the timer through pendingElevationGainM / pendingElevationLossM and _currentSpeed.
+        if (activity != ActivityType.FLYING) {
+            pendingElevationGainM += elevationGainDelta
+            pendingElevationLossM += elevationLossDelta
+        }
         
         _sessionStats.value = withElevationAndMilestones(currentStats.copy(
             totalDistance = currentStats.totalDistance + distanceDelta,
             co2Emissions = currentStats.co2Emissions + emissions,
             co2Conserved = currentStats.co2Conserved + conserved,
-            caloriesBurned = currentStats.caloriesBurned + caloriesDelta,
             breakdown = breakdown
         ))
     }
@@ -3600,9 +3584,17 @@ class TrackingService : LifecycleService() {
                         steps = currentBreakdown.steps // Preserve step count
                     )
                     
+                    // One second of calories per second, refined by whatever speed and
+                    // elevation change the location path has observed since the last tick.
+                    val gain = pendingElevationGainM; pendingElevationGainM = 0.0
+                    val loss = pendingElevationLossM; pendingElevationLossM = 0.0
+                    val tickSpeed = _currentSpeed.value.toDouble()
                     val caloriesDelta = sessionManager.calculateCalories(
                         duration = 1L,
                         activity = activity,
+                        speedMps = if (tickSpeed > 0) tickSpeed else null,
+                        elevationGain = gain,
+                        elevationLoss = loss,
                         userProfile = userPhysicalProfile
                     )
                     
@@ -4114,12 +4106,6 @@ class TrackingService : LifecycleService() {
          * transmits none. Set above SENSOR_STILL_ACCEL_THRESHOLD so stillness can never
          * qualify, but low enough that a cushioned seat on smooth tarmac still does.
          */
-        /**
-         * Longest interval (ms) a single stats update may bill. Beyond this the process was
-         * almost certainly suspended rather than the user genuinely doing one activity, and the
-         * time should not all land on whichever mode was current at wake-up.
-         */
-        private const val STATS_MAX_TIME_DELTA_MS = 15_000L
         private const val VEHICLE_SIGNATURE_MIN_ACCEL = 0.25f
         /** How long that signature must hold unbroken before it counts — filters knocks and handling. */
         private const val VEHICLE_SIGNATURE_CONFIRM_MS = 8_000L

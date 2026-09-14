@@ -52,8 +52,8 @@ android {
         applicationId = if (isSideloadTest) "Kinetic_Eco.Tracker" else "com.kineticecotracker"
         minSdk = 24
         targetSdk = 36
-        versionCode = 37
-        versionName = "V1.9.24"
+        versionCode = 38
+        versionName = "V1.9.25"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField("String", "FUNCTIONS_BASE_URL", "\"https://us-central1-gen-lang-client-0114974661.cloudfunctions.net\"")
